@@ -89,7 +89,7 @@ export async function messageViews(conversationId: string, userId: string, self:
     .where(and(
       eq(assistantActions.conversationId, conversationId),
       eq(assistantActions.userId, userId),
-      or(inArray(assistantActions.effect, ['write', 'paid']), and(eq(assistantActions.tool, 'open_finalize'), eq(assistantActions.status, 'done'))),
+      or(inArray(assistantActions.effect, ['write', 'paid', 'public']), and(eq(assistantActions.tool, 'open_finalize'), eq(assistantActions.status, 'done'))),
     ))
     .orderBy(asc(assistantActions.createdAt), asc(assistantActions.step))
   const actions = logged.filter((a) => a.effect !== 'read')

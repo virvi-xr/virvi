@@ -3,7 +3,7 @@ import { config } from '../../config.js'
 import { redact } from '../redact.js'
 import { TOOLS } from './index.js'
 import { inject, routeError } from './http.js'
-import { ToolError, type Before, type Call, type ToolCtx } from './types.js'
+import { needsCard, ToolError, type Before, type Call, type ToolCtx } from './types.js'
 
 export { inject, routeError }
 
@@ -38,7 +38,7 @@ export async function runTool(ctx: ToolCtx, name: string, rawArgs: unknown): Pro
       return { ok: true, status: 200, summary: redact(def.summarize(out, args), ctx.self, def.redactKeys), undo: null, after: null, orgName: null, label }
     }
     if (def.effect === 'write' && !def.before) throw new Error(`assistant tool ${name} is a write without before()`)
-    if (def.effect === 'paid' && !def.before) throw new Error(`assistant tool ${name} is paid without before()`)
+    if (needsCard(def.effect) && !def.before) throw new Error(`assistant tool ${name} is ${def.effect} without before()`)
     before = def.before ? await def.before(args, ctx) : null
 
     const planned = await def.call(args, ctx)

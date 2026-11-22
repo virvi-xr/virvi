@@ -415,6 +415,7 @@ describe('assistant routes', () => {
       const [w] = await db.insert(assistantActions).values(row({ createdAt: t(1) })).returning()
       const [p] = await db.insert(assistantActions).values(row({ createdAt: t(2), effect: 'paid', tool: 'studio_prompt', undo: null })).returning()
       await db.insert(assistantActions).values([
+        row({ createdAt: t(6), effect: 'public', tool: 'stub_public', undo: null }),
         row({ createdAt: t(3), effect: 'read' }),
         row({ createdAt: t(4), status: 'awaiting_confirmation', effect: 'paid' }),
         row({ createdAt: t(5), userId: other.id }),
@@ -422,11 +423,12 @@ describe('assistant routes', () => {
       const res = await activity()
       expect(res.statusCode).toBe(200)
       const body = res.json()
-      expect(body.items.map((i: any) => i.id)).toEqual([p.id, w.id])
+      expect(body.items.map((i: any) => i.effect)).toEqual(['public', 'paid', 'write'])
+      expect(body.items.map((i: any) => i.id).slice(1)).toEqual([p.id, w.id])
       expect(body.next).toBeNull()
-      expect(body.items[1]).toMatchObject({ canUndo: true, effect: 'write', conversationId: null, createdAt: t(1).toISOString(), status: 'done' })
-      expect(body.items[0]).toMatchObject({ canUndo: false, effect: 'paid' })
-      expect(body.items[0]).not.toHaveProperty('undo')
+      expect(body.items[2]).toMatchObject({ canUndo: true, effect: 'write', conversationId: null, createdAt: t(1).toISOString(), status: 'done' })
+      expect(body.items[1]).toMatchObject({ canUndo: false, effect: 'paid' })
+      expect(body.items[1]).not.toHaveProperty('undo')
     })
 
     it('pages with next and before without repeats or gaps, even for rows made in the same millisecond', async () => {

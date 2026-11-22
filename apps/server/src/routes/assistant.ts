@@ -13,7 +13,7 @@ import { runTurn } from '../assistant/loop.js'
 import { modelAvailable } from '../assistant/model.js'
 import { untrusted } from '../assistant/redact.js'
 import { openSse, type Sse } from '../assistant/sse.js'
-import type { ToolCtx } from '../assistant/tools/types.js'
+import { needsCard, type ToolCtx } from '../assistant/tools/types.js'
 
 const TEXT_MAX = 4000
 const CONVERSATIONS_LISTED = 50
@@ -136,7 +136,7 @@ export default async function assistantRoutes(app: FastifyInstance) {
     const rows = await db.select().from(assistantActions)
       .where(and(
         eq(assistantActions.userId, request.user.id),
-        inArray(assistantActions.effect, ['write', 'paid']),
+        inArray(assistantActions.effect, ['write', 'paid', 'public']),
         ne(assistantActions.status, 'awaiting_confirmation'),
         cursor
           ? cursor.id
@@ -224,7 +224,7 @@ export default async function assistantRoutes(app: FastifyInstance) {
       }
       const r = await approvePlan(ctx, planId, body.token, (action) => send({ type: 'action', action }))
       if ('error' in r && !sse) {
-        const e = (rows[0].effect === 'paid' ? CARD_APPROVE_ERRORS : APPROVE_ERRORS)[r.error]
+        const e = (needsCard(rows[0].effect) ? CARD_APPROVE_ERRORS : APPROVE_ERRORS)[r.error]
         return reply.status(e.status).send({ error: r.error, message: e.message })
       }
       const stream = sse ?? openSse(request, reply)

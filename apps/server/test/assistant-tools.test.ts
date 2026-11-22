@@ -60,7 +60,7 @@ describe('assistant tools, run as the owner', () => {
   })
 
   it('every paid tool has preview()', () => {
-    const paid = Object.values(TOOLS).filter((t) => t.effect === 'paid')
+    const paid = Object.values(TOOLS).filter((t) => t.effect === 'paid' || t.effect === 'public')
     expect(paid.map((t) => t.name)).toContain('send_studio_prompt')
     for (const def of paid) expect(def.preview, def.name).toBeTypeOf('function')
   })

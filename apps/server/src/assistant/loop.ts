@@ -13,7 +13,7 @@ import { callCostUsd, modelPrice } from './pricing.js'
 import { redact, untrusted } from './redact.js'
 import { TOOLS } from './tools/index.js'
 import { toolsForModel } from './tools/run.js'
-import type { ToolCtx } from './tools/types.js'
+import { needsCard, type ToolCtx } from './tools/types.js'
 import { assistantModel, INVALID_TOOL_JSON, MAX_TOKENS, type ModelParams, type ModelResult } from './model.js'
 import { contextPrompt, RULES } from './prompt.js'
 import { DEFAULT_TITLE, loadHistory, storeMessage, titleFrom, type Block, type StoredMessage } from './conversations.js'
@@ -186,8 +186,8 @@ export async function runTurn(
 
         const def = Object.hasOwn(TOOLS, use.name) ? TOOLS[use.name] : undefined
         const isWrite = def?.effect === 'write'
-        if (def?.effect === 'paid') {
-          // A paid call is its own confirmation card: never run here, never the turn's one direct write
+        if (def && needsCard(def.effect)) {
+          // A paid or public call is its own confirmation card: never run here, never the turn's one direct write
           if (opts.approval) { reply({ error: APPROVAL_WRITE }, true); continue }
           const card = await proposeCard(ctx, conversationId, use.name, use.input)
           if ('error' in card) { reply({ error: card.error }, true); continue }

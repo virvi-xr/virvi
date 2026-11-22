@@ -1,6 +1,6 @@
 // Virvi Assistant (LIV-155): types shared by the server and the dashboard.
 
-export type AssistantEffect = 'read' | 'write' | 'paid'
+export type AssistantEffect = 'read' | 'write' | 'paid' | 'public'
 export type AssistantActionStatus = 'planned' | 'awaiting_confirmation' | 'running' | 'done' | 'failed' | 'undone' | 'cancelled'
 
 export interface AssistantActionView {

@@ -38,6 +38,11 @@ export interface Before {
   orgName: string | null
 }
 
+/** A paid or public tool is never run from the model's call: it becomes a one-row confirmation card first. */
+export function needsCard(effect: AssistantEffect): boolean {
+  return effect === 'paid' || effect === 'public'
+}
+
 export interface ToolDef<A> {
   name: string
   description: string

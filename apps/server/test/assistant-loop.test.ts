@@ -497,9 +497,11 @@ describe('assistant turn loop', () => {
       paidApp.post('/__stub_paid', async () => { paidCalls++; return { ok: true } })
       await paidApp.ready()
       ;(TOOLS as Record<string, unknown>).stub_paid = stub
+      ;(TOOLS as Record<string, unknown>).stub_public = { ...stub, name: 'stub_public', effect: 'public' }
     })
     afterAll(async () => {
       delete (TOOLS as Record<string, unknown>).stub_paid
+      delete (TOOLS as Record<string, unknown>).stub_public
       await paidApp.close()
     })
     beforeEach(() => {
@@ -528,6 +530,26 @@ describe('assistant turn loop', () => {
       const views = await messageViews(conversationId, owner.id, ctx.self)
       expect(views[1].actions).toEqual([expect.objectContaining({ id: rows[0].id, tool: 'stub_paid', status: 'awaiting_confirmation', detail: 'Uses 1 of your 3 prompts left today.' })])
       expect(JSON.stringify(views)).not.toContain(plans[0].plan.token)
+    })
+
+    it('shows one card for a public call, keeps it in history, and refuses it in the approval continuation', async () => {
+      const inputs = script([tool('stub_public', { prompt: 'a raffle' }), text('Confirm it above.'), text('never reached')])
+      const events = await turn('Raffle it')
+      const plans = events.filter((e): e is Extract<AssistantStreamEvent, { type: 'plan' }> => e.type === 'plan')
+      expect(plans).toHaveLength(1)
+      expect(plans[0].plan.kind).toBe('card')
+      expect(paidCalls).toBe(0)
+      expect(lastResults(inputs[1])[0].content).toContain('the user to confirm')
+      const rows = (await db.select().from(assistantActions)).filter((r) => r.effect === 'public')
+      expect(rows).toHaveLength(1)
+      const views = await messageViews(conversationId, owner.id, ctx.self)
+      expect(views[1].actions).toEqual([expect.objectContaining({ id: rows[0].id, tool: 'stub_public', status: 'awaiting_confirmation' })])
+      await db.delete(assistantActions)
+      const again = script([tool('stub_public', { prompt: 'a raffle' }), text('Done.')])
+      const ev2 = await turn('(The user approved the plan. Results follow.)', undefined, { approval: true })
+      expect(lastResults(again[1])[0].content).toContain(APPROVAL_WRITE)
+      expect(ev2.some((e) => e.type === 'plan')).toBe(false)
+      expect(await db.select().from(assistantActions)).toHaveLength(0)
     })
 
     it('refuses a paid call in the approval continuation', async () => {

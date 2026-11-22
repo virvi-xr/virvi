@@ -392,9 +392,11 @@ describe('assistant confirmation cards', () => {
     })
     await app.ready()
     ;(TOOLS as Record<string, unknown>).stub_paid = stub
+    ;(TOOLS as Record<string, unknown>).stub_public = { ...stub, name: 'stub_public', effect: 'public', call: (a: { prompt: string }) => ({ method: 'POST', url: '/__stub_paid', body: a }) }
   })
   afterAll(async () => {
     delete (TOOLS as Record<string, unknown>).stub_paid
+    delete (TOOLS as Record<string, unknown>).stub_public
     await app.close()
   })
   beforeEach(async () => {
@@ -459,6 +461,22 @@ describe('assistant confirmation cards', () => {
   it('proposePlan refuses a paid step', async () => {
     const r = await proposePlan(ctx, null, [{ tool: 'stub_paid', args: { prompt: 'x' } }, { tool: 'stub_paid', args: { prompt: 'y' } }])
     expect(r).toEqual({ error: "Step 1: stub_paid needs its own confirmation, so it can't be in a plan. Call it on its own." })
+    expect(await db.select().from(assistantActions)).toHaveLength(0)
+  })
+
+  it('offers a card for a public tool, stores a public row, and runs it once on approval', async () => {
+    const c = await proposeCard(ctx, null, 'stub_public', { prompt: 'a raffle' })
+    if (!('kind' in c)) throw new Error(JSON.stringify(c))
+    expect(c.kind).toBe('card')
+    expect((await rowsOf(c.planId))[0]).toMatchObject({ effect: 'public', args: { prompt: 'a raffle' } })
+    expect(calls).toBe(0)
+    expect(await approvePlan(ctx, c.planId, c.token, () => {})).toEqual({ done: 1, failed: null })
+    expect(calls).toBe(1)
+  })
+
+  it('proposePlan refuses a public step', async () => {
+    const r = await proposePlan(ctx, null, [{ tool: 'stub_public', args: { prompt: 'x' } }, { tool: 'stub_public', args: { prompt: 'y' } }])
+    expect(r).toEqual({ error: "Step 1: stub_public needs its own confirmation, so it can't be in a plan. Call it on its own." })
     expect(await db.select().from(assistantActions)).toHaveLength(0)
   })
 

@@ -10,7 +10,7 @@ import { recordJobFailure } from '../errors/record.js'
 import { redact, redactText } from './redact.js'
 import { TOOLS } from './tools/index.js'
 import { inject, runTool, type ToolResult } from './tools/run.js'
-import { ToolError, type Call, type ToolCtx } from './tools/types.js'
+import { needsCard, ToolError, type Call, type ToolCtx } from './tools/types.js'
 
 export const PLAN_TTL_MS = 10 * 60 * 1000
 export const UNDO_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
@@ -120,7 +120,7 @@ export async function proposePlan(ctx: ToolCtx, conversationId: string | null, s
     const n = `Step ${i + 1}`
     const def = typeof s?.tool === 'string' ? enabled(s.tool) : undefined
     if (!def) return { error: `${n}: there's no tool called ${safe(String(s?.tool))}.` }
-    if (def.effect === 'paid') return { error: `${n}: ${def.name} needs its own confirmation, so it can't be in a plan. Call it on its own.` }
+    if (needsCard(def.effect)) return { error: `${n}: ${def.name} needs its own confirmation, so it can't be in a plan. Call it on its own.` }
     if (def.effect !== 'write' || !def.before) return { error: `${n}: ${def.name} only reads, so it doesn't belong in a plan. Call it directly.` }
     const parsed = def.input.safeParse(s.args ?? {})
     if (!parsed.success) {
@@ -180,7 +180,7 @@ export async function proposeCard(
   const safe = (text: string) => redact(text, ctx.self) as string
   const def = enabled(name)
   if (!def) return { error: `There's no tool called ${safe(String(name))}.` }
-  if (def.effect !== 'paid' || !def.before || !def.preview) return { error: `${def.name} isn't a paid tool, so it doesn't need a card. Call it directly.` }
+  if (!needsCard(def.effect) || !def.before || !def.preview) return { error: `${def.name} isn't a paid or public tool, so it doesn't need a card. Call it directly.` }
   const parsed = def.input.safeParse(args ?? {})
   if (!parsed.success) return { error: safe(parsed.error.issues.map((x) => (x.path.length ? `${x.path.join('.')}: ${x.message}` : x.message)).join('; ')) }
 
@@ -211,7 +211,7 @@ export async function proposeCard(
       planId,
       step: 1,
       tool: def.name,
-      effect: 'paid',
+      effect: def.effect as 'paid' | 'public',
       argsRedacted: redact(parsed.data, ctx.self) as object,
       args: parsed.data as object,
       argsHash: hash,
