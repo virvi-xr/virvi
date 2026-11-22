@@ -60,6 +60,9 @@ describe('entrypoint schema fallback: raffles', () => {
     await db.execute(sql.raw(`CREATE SCHEMA ${SCHEMA}`))
     try {
       await runFallback(statements)
+      // The sweep's partial index on due drafts
+      expect((await indexes(SCHEMA, 'raffles')).find((i) => i.indexname === 'raffles_opens_at_due_idx')?.def)
+        .toBe("CREATE INDEX raffles_opens_at_due_idx ON raffles USING btree (opens_at) WHERE ((status = 'draft'::text) AND (opens_at IS NOT NULL))")
       for (const t of TABLES) {
         expect(await columns(SCHEMA, t), t).toEqual(await columns('public', t))
         expect(await constraints(SCHEMA, t), t).toEqual(await constraints('public', t))

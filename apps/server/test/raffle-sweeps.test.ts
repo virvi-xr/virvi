@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { raffleDraws, raffleEntries, raffles, raffleSnapshots } from '../src/db/schema.js'
+import { raffleDraws, raffleEntries, raffles, raffleSnapshots, scenes } from '../src/db/schema.js'
 import { initBus } from '../src/realtime/bus.js'
 import { drawWinners } from '../src/raffles/draw.js'
 import { runRaffleSweep, scrubEndedRaffles } from '../src/raffles/sweeps.js'
@@ -10,8 +10,10 @@ import { TokenBucketLimiter } from '../src/analytics/limiter.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
 
-// takeSnapshot as written, except it throws for the raffle ids in this set
+// takeSnapshot as written, except it throws for the raffle ids in this set; openRaffle as written, after `beforeOpen`
+// (a change made between the sweep's read and its write)
 const failSnapshotFor = vi.hoisted(() => new Set<string>())
+const hooks = vi.hoisted(() => ({ beforeOpen: null as null | (() => Promise<void>) }))
 vi.mock('../src/raffles/service.js', async (importOriginal) => {
   const real = await importOriginal<typeof import('../src/raffles/service.js')>()
   return {
@@ -19,6 +21,10 @@ vi.mock('../src/raffles/service.js', async (importOriginal) => {
     takeSnapshot: async (...args: Parameters<typeof real.takeSnapshot>) => {
       if (failSnapshotFor.has(args[0])) throw new Error('snapshot exploded')
       return real.takeSnapshot(...args)
+    },
+    openRaffle: async (...args: Parameters<typeof real.openRaffle>) => {
+      if (hooks.beforeOpen) await hooks.beforeOpen()
+      return real.openRaffle(...args)
     },
   }
 })
@@ -42,6 +48,7 @@ describe('raffle sweeps, retention and delete-my-data (LIV-55)', () => {
     sceneId = (await createScene(host)).scene.id
   })
   afterEach(async () => {
+    hooks.beforeOpen = null
     initBus(null as any)
     await app.close()
   })
@@ -103,6 +110,36 @@ describe('raffle sweeps, retention and delete-my-data (LIV-55)', () => {
     expect(b.opensAt).toBeNull()
     expect(b.openError).toBe('This scene already has a raffle running. Close it first.')
     expect(b.openErrorAt).toEqual(now)
+  })
+
+  it('opening a draft clears an earlier failed opening, reason and time', async () => {
+    const now = new Date()
+    const r = await raffle({ status: 'draft', openedAt: null, opensAt: new Date(now.getTime() - 1000), openError: 'This scene already has a raffle running. Close it first.', openErrorAt: new Date(now.getTime() - DAY) })
+    expect(await runRaffleSweep(now)).toMatchObject({ opened: 1 })
+    expect(await row(r.id)).toMatchObject({ status: 'open', opensAt: null, openError: null, openErrorAt: null })
+  })
+
+  it('keeps a reschedule made between its read and its write when the opening is refused', async () => {
+    const now = new Date()
+    await raffle({ status: 'open' })
+    const blocked = await raffle({ status: 'draft', openedAt: null, opensAt: new Date(now.getTime() - 1000) })
+    const moved = new Date(now.getTime() + DAY)
+    hooks.beforeOpen = async () => { await db.update(raffles).set({ opensAt: moved }).where(eq(raffles.id, blocked.id)) }
+    expect(await runRaffleSweep(now)).toMatchObject({ opened: 0 })
+    const b = await row(blocked.id)
+    expect(b).toMatchObject({ status: 'draft', openError: null, openErrorAt: null })
+    expect(b.opensAt).toEqual(moved)
+  })
+
+  it('leaves a due draft in a deleted scene as a draft, still scheduled', async () => {
+    const now = new Date()
+    const r = await raffle({ status: 'draft', openedAt: null, opensAt: new Date(now.getTime() - 1000) })
+    await db.update(scenes).set({ deletedAt: new Date(now.getTime() - MIN) }).where(eq(scenes.id, sceneId))
+    expect(await runRaffleSweep(now)).toMatchObject({ opened: 0 })
+    const after = await row(r.id)
+    expect(after.status).toBe('draft')
+    expect(after.opensAt).toEqual(r.opensAt)
+    expect(after.openError).toBeNull()
   })
 
   it('two sweeps at once open a due draft once', async () => {

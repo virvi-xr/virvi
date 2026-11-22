@@ -2660,6 +2660,8 @@ export const raffles = pgTable('raffles', {
 }, (t) => ({
   oneActivePerScene: uniqueIndex('raffles_one_active_per_scene').on(t.sceneId).where(sql`status in ('open','drawn')`),
   autoSnapshotIdx: index('raffles_status_next_auto_snapshot_idx').on(t.status, t.nextAutoSnapshotAt),
+  // The sweep's due drafts (raffles/sweeps.ts)
+  opensDueIdx: index('raffles_opens_at_due_idx').on(t.opensAt).where(sql`status = 'draft' AND opens_at IS NOT NULL`),
 }))
 
 // wallet and displayName are nullable so the retention scrub can clear them

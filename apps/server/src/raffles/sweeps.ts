@@ -1,7 +1,7 @@
-import { and, eq, inArray, isNotNull, lte, or } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, lte, or } from 'drizzle-orm'
 import { AUTO_CLOSE_AFTER_DRAW_DAYS, AUTO_CLOSE_AFTER_OPEN_DAYS, RAFFLE_RETENTION_DAYS } from '@virvixr/shared'
 import { db } from '../db/connection.js'
-import { raffleEntries, raffles } from '../db/schema.js'
+import { raffleEntries, raffles, scenes } from '../db/schema.js'
 import { RaffleError, emitRaffleChanged, openRaffle, takeSnapshot } from './service.js'
 
 const DAY_MS = 86_400_000
@@ -10,12 +10,14 @@ const ACTIVE = ['open', 'drawn'] as const
 /**
  * Open the drafts whose `opens_at` has come, through the same openRaffle the host's button uses (its update is guarded
  * by `status = 'draft'`, so two instances sweeping at once open a raffle once). A scene that already has a raffle
- * running keeps the draft, with the reason for the host. Any other failure is tried again on the next sweep.
+ * running keeps the draft, with the reason for the host. Any other failure is tried again on the next sweep. A draft in a
+ * deleted scene (in the trash) stays a draft: nobody can enter it there.
  */
 async function openDueRaffles(now: Date): Promise<number> {
-  const due = await db.select().from(raffles).where(and(eq(raffles.status, 'draft'), isNotNull(raffles.opensAt), lte(raffles.opensAt, now)))
+  const due = await db.select({ row: raffles }).from(raffles).innerJoin(scenes, eq(scenes.id, raffles.sceneId))
+    .where(and(eq(raffles.status, 'draft'), isNotNull(raffles.opensAt), lte(raffles.opensAt, now), isNull(scenes.deletedAt)))
   let opened = 0
-  for (const row of due) {
+  for (const { row } of due) {
     try {
       await openRaffle(row, now)
       opened++

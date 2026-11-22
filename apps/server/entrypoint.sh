@@ -481,6 +481,7 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TABLE raffles ADD COLUMN IF NOT EXISTS opens_at TIMESTAMPTZ\`;
         await sql\`ALTER TABLE raffles ADD COLUMN IF NOT EXISTS open_error TEXT\`;
         await sql\`ALTER TABLE raffles ADD COLUMN IF NOT EXISTS open_error_at TIMESTAMPTZ\`;
+        await sql\`CREATE INDEX IF NOT EXISTS raffles_opens_at_due_idx ON raffles (opens_at) WHERE status = 'draft' AND opens_at IS NOT NULL\`;
         await sql\`CREATE TABLE IF NOT EXISTS raffle_entries (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), raffle_id UUID NOT NULL CONSTRAINT raffle_entries_raffle_id_raffles_id_fk REFERENCES raffles(id) ON DELETE CASCADE, user_id UUID NOT NULL CONSTRAINT raffle_entries_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, wallet TEXT, display_name TEXT, consent_version INTEGER NOT NULL, consented_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), seconds_present INTEGER NOT NULL DEFAULT 0, last_seen_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS raffle_entries_raffle_wallet_uq ON raffle_entries (raffle_id, wallet)\`;
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS raffle_entries_raffle_user_uq ON raffle_entries (raffle_id, user_id)\`;
