@@ -19,6 +19,7 @@ The assistant is part of paid plans, and it is rolling out to admin accounts fir
 - Your organizations, and the scenes in them, including their publishing status.
 - Preset schedules, events and analytics summaries.
 - A scene's recent errors.
+- Your Studio designs, their checker results, your prompts left and what finalizing would cost.
 - Your media, a scene's library, its streams and its scheduled showings.
 - These docs, when you ask how something works.
 
@@ -33,10 +34,38 @@ It can also give you "open" links that take you straight to the dashboard page y
 - Preset schedules: create and edit them.
 - Library items: add them and rename them.
 - Scheduled showings: create them.
+- Scenes: create a new, empty one in your personal account.
+- Studio designs: start one, and send it prompts. See [Making things](#making-things).
 
 ## What it can't do yet
 
-Deploying, publishing, editing events, giveaways, invites, deleting things, Studio designs, billing and branding are not available in this release. For those, it points you to the right page.
+Deploying, publishing, editing events, giveaways, invites, deleting things, finalizing or paying for Studio designs, billing and branding are not available in this release. For those, it points you to the right page.
+
+## Making things
+
+**Scenes.** Ask for a new scene and it creates an empty one in your personal account, with one preset (Default) that is live.
+
+**Studio designs.** Ask it to start a design and it creates one of three kinds: a **wearable**, an **emote**, or a **scene**, which means a building with its furniture. It uses your default agent for that kind unless you name one (Claude, Codex or Grok). A new design is empty until a prompt is sent.
+
+**Prompts.** Sending a Studio prompt uses your Studio prompts, so the assistant never sends one on its own. It shows a card first, and the prompt goes only after you press **Confirm**. The card says which prompts it uses:
+
+- "Uses 1 of your {n} prompts left today."
+- "Uses 1 gifted prompt ({n} left)."
+- "Uses 1 bought prompt ({n} left)."
+
+Asking it to fix what the checker found is free. The card says so: "This one is free: fixing what the checker found doesn't use your prompts." A prompt that ends in an error is given back.
+
+These prompts come out of your Studio allowance, not the assistant budget.
+
+**No prompts left.** There is no card. The assistant tells you your Studio prompts are used up and gives you a **Buy Studio prompts** link to the Studio page. Daily prompts reset at midnight UTC.
+
+**Finalizing.** The assistant never finalizes a design or takes payment. It can tell you the price and give you a **Finalize** link with the total, for example "Total $12". The link opens the normal finalize dialog in Studio, where you check the price and pay.
+
+## Assistant activity
+
+**Settings** has an **Assistant activity** section. It lists everything the assistant has changed for you, newest first, with the organization, the date and the status. Use **Undo** there where it still applies. Undo stays available for 7 days.
+
+Scenes and Studio designs the assistant creates can't be undone from the assistant. Change those yourself in the dashboard.
 
 ## Changes, plans and Undo
 
