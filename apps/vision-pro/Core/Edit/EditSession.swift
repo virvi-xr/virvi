@@ -1,4 +1,5 @@
 import Foundation
+import VirviARKit
 
 /// The item being edited. `elementId` and `sk` make up the renderer's item key; `kind` is the draft route's
 /// `element` ("image", "video", "model", "sound"). `sk` is the instance id, the one PUT /api/instances/:id takes.

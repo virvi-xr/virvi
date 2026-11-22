@@ -1,4 +1,5 @@
 import Foundation
+import VirviARKit
 
 /// Feeds the Alerts tab: every failure or refusal the edit session reports becomes an error alert, and each new feed
 /// scene is compared with the last for "Stream is live" / "Stream went offline". The newest alert is also the toast.

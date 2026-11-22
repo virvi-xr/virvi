@@ -1,3 +1,4 @@
+@testable import VirviARKit
 import AVFoundation
 import XCTest
 

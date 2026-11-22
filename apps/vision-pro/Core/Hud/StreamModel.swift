@@ -1,4 +1,5 @@
 import Foundation
+import VirviARKit
 
 struct StreamRow: Equatable {
     let elementId: String

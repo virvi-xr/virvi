@@ -1,4 +1,5 @@
 import Foundation
+import VirviARKit
 
 /// A scripted transport: each request is answered by the first handler whose path suffix matches,
 /// and every request is recorded.

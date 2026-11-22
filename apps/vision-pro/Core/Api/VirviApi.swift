@@ -1,4 +1,5 @@
 import Foundation
+import VirviARKit
 
 enum ApiError: Error, Equatable {
     case offline

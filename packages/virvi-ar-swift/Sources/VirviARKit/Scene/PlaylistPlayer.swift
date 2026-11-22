@@ -2,14 +2,14 @@ import AVFoundation
 
 /// Plays a playlist on one AVQueuePlayer: each video in turn, then the first again after the last (AVPlayerLooper only
 /// repeats a single item). Each video that plays to its end is queued again last, so the queue never runs dry.
-final class PlaylistPlayer {
-    let player = AVQueuePlayer()
+public final class PlaylistPlayer {
+    public let player = AVQueuePlayer()
     /// The items this player queued, so another player's end notifications are ignored.
     private var mine: Set<ObjectIdentifier> = []
     private let center: NotificationCenter
     private var observer: NSObjectProtocol?
 
-    init(urls: [URL], center: NotificationCenter = .default) {
+    public init(urls: [URL], center: NotificationCenter = .default) {
         self.center = center
         player.actionAtItemEnd = .advance
         for url in urls { enqueue(url) }
@@ -24,7 +24,7 @@ final class PlaylistPlayer {
     }
 
     /// `item` played to its end (the player moves on to the next one): queue a fresh copy of it last.
-    func ended(_ item: AVPlayerItem) {
+    public func ended(_ item: AVPlayerItem) {
         guard mine.remove(ObjectIdentifier(item)) != nil, let asset = item.asset as? AVURLAsset else { return }
         enqueue(asset.url)
     }

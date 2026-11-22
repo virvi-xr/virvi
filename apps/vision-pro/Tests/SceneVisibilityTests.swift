@@ -1,3 +1,4 @@
+@testable import VirviARKit
 import RealityKit
 import XCTest
 

@@ -1,3 +1,4 @@
+@testable import VirviARKit
 import simd
 import XCTest
 

@@ -1,3 +1,4 @@
+@testable import VirviARKit
 import XCTest
 
 /// Scheduled showings (LIV-87): the same moment for everyone, as packages/shared src/showings.ts works it out.

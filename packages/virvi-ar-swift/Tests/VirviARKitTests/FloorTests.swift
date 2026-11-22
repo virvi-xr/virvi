@@ -1,3 +1,4 @@
+@testable import VirviARKit
 import XCTest
 
 final class FloorTests: XCTestCase {

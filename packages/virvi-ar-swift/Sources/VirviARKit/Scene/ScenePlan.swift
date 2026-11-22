@@ -2,41 +2,67 @@ import Foundation
 
 /// Port of packages/hyperfy-app/src/plan.ts: which nodes to show for a Virvi scene snapshot.
 /// The scene is untyped JSON (from JSONSerialization), so the JS `typeof` checks are mirrored by hand.
-struct RenderItem: Equatable {
-    enum Kind: String { case video, image, model, audio }
+public struct RenderItem: Equatable {
+    public enum Kind: String { case video, image, model, audio }
 
     /// "\(elementSk):\(instanceSk)"
-    var key: String
+    public var key: String
     /// The element's name in Virvi, or the media file name when it has none.
-    var name: String
-    var kind: Kind
+    public var name: String
+    public var kind: Kind
     /// For video, image and model, the URL to show; for audio, the sound.
-    var src: String
-    var loop: Bool
-    var volume: Double
-    var width: Double
-    var height: Double
-    var transform: MappedTransform
-    var clickUrl: String?
+    public var src: String
+    public var loop: Bool
+    public var volume: Double
+    public var width: Double
+    public var height: Double
+    public var transform: MappedTransform
+    public var clickUrl: String?
     /// The element's and the instance's `sk` (what `key` is made of).
-    var elementId: String = ""
-    var instanceSk: String = ""
+    public var elementId: String = ""
+    public var instanceSk: String = ""
     /// The instance's transform as Virvi stores it (Decentraland scene-local, degrees), what an edit starts from.
-    var source = ItemTransform(position: .zero, rotation: .zero, scale: .one)
+    public var source = ItemTransform(position: .zero, rotation: .zero, scale: .one)
     /// The element type the draft and save routes take: "video", "image", "model" or "sound".
-    var elementKind = ""
+    public var elementKind = ""
     /// Playlist mode only (else empty): the videos to play in turn, starting with `src`, back to the first after the
     /// last. With one video, `loop` repeats it instead.
-    var playlist: [String] = []
+    public var playlist: [String] = []
     /// Schedule mode (LIV-87): the screen plays its showings; `resolveScheduled` turns it into what's on now.
-    var scheduled = false
+    public var scheduled = false
     /// Schedule mode: the image between shows, or nil for nothing.
-    var holdingImage: String?
+    public var holdingImage: String?
     /// A scheduled screen's video, once resolved: where the show is, so every visitor sees the same moment.
-    var play: ScheduledPlay?
+    public var play: ScheduledPlay?
+
+    public init(
+        key: String, name: String, kind: Kind, src: String, loop: Bool, volume: Double, width: Double, height: Double,
+        transform: MappedTransform, clickUrl: String? = nil, elementId: String = "", instanceSk: String = "",
+        source: ItemTransform = ItemTransform(position: .zero, rotation: .zero, scale: .one), elementKind: String = "",
+        playlist: [String] = [], scheduled: Bool = false, holdingImage: String? = nil, play: ScheduledPlay? = nil
+    ) {
+        self.key = key
+        self.name = name
+        self.kind = kind
+        self.src = src
+        self.loop = loop
+        self.volume = volume
+        self.width = width
+        self.height = height
+        self.transform = transform
+        self.clickUrl = clickUrl
+        self.elementId = elementId
+        self.instanceSk = instanceSk
+        self.source = source
+        self.elementKind = elementKind
+        self.playlist = playlist
+        self.scheduled = scheduled
+        self.holdingImage = holdingImage
+        self.play = play
+    }
 }
 
-typealias Props = [String: Any]
+public typealias Props = [String: Any]
 
 private let VIDEO_EXT = ["mp4", "m3u8"]
 private let IMAGE_EXT = ["png", "jpg", "jpeg", "webp"]
@@ -88,7 +114,7 @@ private func templateString(_ v: Any?) -> String {
 }
 
 /// Extension of the URL's path, lowercased; "" when there is none.
-func extOf(_ src: String) -> String {
+public func extOf(_ src: String) -> String {
     let path = src.split(omittingEmptySubsequences: false, whereSeparator: { $0 == "?" || $0 == "#" }).first.map(String.init) ?? ""
     guard let dot = path.lastIndex(of: ".") else { return "" }
     let ext = path[path.index(after: dot)...]
@@ -183,7 +209,7 @@ private func planElements(_ out: inout [RenderItem], _ elements: Any?, _ kind: R
 }
 
 /// The nodes to show for a scene snapshot (`scene` is the feed's `scene` object, nil for null).
-func planScene(_ scene: Props?) -> [RenderItem] {
+public func planScene(_ scene: Props?) -> [RenderItem] {
     var out: [RenderItem] = []
     guard let scene else { return out }
     planElements(&out, scene["videos"], .video)
@@ -193,13 +219,19 @@ func planScene(_ scene: Props?) -> [RenderItem] {
     return out
 }
 
-struct PlanDiff {
-    var add: [RenderItem] = []
-    var remove: [String] = []
-    var update: [RenderItem] = []
+public struct PlanDiff {
+    public var add: [RenderItem] = []
+    public var remove: [String] = []
+    public var update: [RenderItem] = []
+
+    public init(add: [RenderItem] = [], remove: [String] = [], update: [RenderItem] = []) {
+        self.add = add
+        self.remove = remove
+        self.update = update
+    }
 }
 
-func diffPlans(_ prev: [RenderItem], _ next: [RenderItem]) -> PlanDiff {
+public func diffPlans(_ prev: [RenderItem], _ next: [RenderItem]) -> PlanDiff {
     var before: [String: RenderItem] = [:]
     for item in prev { before[item.key] = item }
     let nextKeys = Set(next.map(\.key))

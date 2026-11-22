@@ -1,12 +1,7 @@
 import Foundation
+import VirviARKit
 
 enum PlaceKind: Equatable { case image, model }
-
-struct ItemTransform: Equatable {
-    var position: SIMD3<Double>
-    var rotation: SIMD3<Double>
-    var scale: SIMD3<Double>
-}
 
 /// JS `Math.round` (halves go up).
 private func jsRound(_ n: Double) -> Double { (n + 0.5).rounded(.down) }

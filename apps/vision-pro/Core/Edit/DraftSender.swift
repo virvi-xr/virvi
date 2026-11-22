@@ -1,4 +1,5 @@
 import Foundation
+import VirviARKit
 
 /// One live draft, as POST /api/ar/drafts takes it.
 struct DraftPayload: Equatable {

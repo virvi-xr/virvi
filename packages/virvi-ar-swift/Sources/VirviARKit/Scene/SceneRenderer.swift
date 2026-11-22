@@ -11,22 +11,24 @@ import UIKit
 /// gets its own entity carrying the mapped transform; planes and sounds take no scale (a plane's Virvi scale is its
 /// width and height), models take the scale and turn half a turn inside it (MODEL_TURN).
 /// Marks an item entity that can be edited locally; `bounds` is its visual bounds in its own space.
-struct EditableItemComponent: Component {
-    var bounds: BoundingBox
+public struct EditableItemComponent: Component {
+    public var bounds: BoundingBox
+
+    public init(bounds: BoundingBox) { self.bounds = bounds }
 }
 
 @MainActor
-final class SceneRenderer {
-    let root = Entity()
-    var soundOn = false {
+public final class SceneRenderer {
+    public let root = Entity()
+    public var soundOn = false {
         didSet { if soundOn != oldValue { rebuild() } }
     }
 
     /// Called once an item's visible content is in place (a model only after it has loaded), so platform code can
     /// fit collision shapes to it. Not called for sounds.
-    var onVisualsReady: ((String, Entity) -> Void)?
+    public var onVisualsReady: ((String, Entity) -> Void)?
     /// Called after each feed snapshot is applied, with what changed.
-    var onApplied: ((PlanDiff) -> Void)?
+    public var onApplied: ((PlanDiff) -> Void)?
 
     private var plan: [RenderItem] = []
     private var shown: [String: Entity] = [:]
@@ -36,7 +38,7 @@ final class SceneRenderer {
     /// Scheduled videos' drift guards, by item key (LIV-87).
     private var guards: [String: SeekGuard] = [:]
     /// The server's clock minus this headset's (ms), from the feed (LIV-87).
-    var serverOffsetMs: Int64 = 0
+    public var serverOffsetMs: Int64 = 0
 
     private func serverNow() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) + serverOffsetMs }
     private func uptimeMs() -> Int64 { Int64(ProcessInfo.processInfo.systemUptime * 1000) }
@@ -47,7 +49,7 @@ final class SceneRenderer {
     }
 
     /// Scheduled videos that have slipped from the shared show are moved back (with `SeekGuard`'s limits). Call often.
-    func keepScheduledInStep() {
+    public func keepScheduledInStep() {
         let now = uptimeMs()
         for item in plan {
             guard let p = item.play, let (player, _) = players[item.key], let g = guards[item.key] else { continue }
@@ -60,14 +62,14 @@ final class SceneRenderer {
         }
     }
 
-    init() {
+    public init() {
         root.name = "virvi-scene"
         EditableItemComponent.registerComponent()
     }
 
     /// `holding` are the keys being edited: their entities keep their current transform; everything else follows
     /// the plan.
-    func apply(_ next: [RenderItem], holding: Set<String> = []) {
+    public func apply(_ next: [RenderItem], holding: Set<String> = []) {
         let d = diffPlans(plan, next)
         for key in d.remove { remove(key) }
         for item in d.update {
@@ -91,13 +93,13 @@ final class SceneRenderer {
 
     // MARK: - Lookup (for local edits)
 
-    func entity(for key: String) -> Entity? { shown[key] }
-    func item(for key: String) -> RenderItem? { plan.first { $0.key == key } }
+    public func entity(for key: String) -> Entity? { shown[key] }
+    public func item(for key: String) -> RenderItem? { plan.first { $0.key == key } }
     /// What the last snapshot shows, in plan order.
-    var items: [RenderItem] { plan }
+    public var items: [RenderItem] { plan }
 
     /// The item key of `entity` or of the item entity it sits inside; nil when it isn't part of an item.
-    func key(of entity: Entity) -> String? {
+    public func key(of entity: Entity) -> String? {
         var e: Entity? = entity
         while let cur = e {
             if cur.parent === root { return shown[cur.name] === cur ? cur.name : nil }
@@ -107,13 +109,13 @@ final class SceneRenderer {
     }
 
     /// The element id and instance `sk` of the item `entity` belongs to; for picking.
-    func instanceKey(_ entity: Entity) -> (elementId: String, sk: String)? {
+    public func instanceKey(_ entity: Entity) -> (elementId: String, sk: String)? {
         guard let key = key(of: entity), let item = item(for: key) else { return nil }
         return (item.elementId, item.instanceSk)
     }
 
     /// The transform the feed gives an item's entity (what a local edit is reset to).
-    func feedTransform(for key: String) -> Transform? {
+    public func feedTransform(for key: String) -> Transform? {
         item(for: key).map(Self.transform(of:))
     }
 
@@ -128,7 +130,7 @@ final class SceneRenderer {
 
     /// The transform an item's entity shows for a local edit `t` (Virvi coordinates), as `transform(of:)` maps the
     /// feed's: models take the scale; planes were built at the feed's width and height, so they scale relative to it.
-    static func entityTransform(for item: RenderItem, _ t: ItemTransform) -> Transform {
+    public static func entityTransform(for item: RenderItem, _ t: ItemTransform) -> Transform {
         let m = toRealityKitTransform(position: Vec3(x: t.position.x, y: t.position.y, z: t.position.z),
                                       rotation: Vec3(x: t.rotation.x, y: t.rotation.y, z: t.rotation.z),
                                       scale: Vec3(x: t.scale.x, y: t.scale.y, z: t.scale.z))
@@ -329,8 +331,8 @@ enum RenderError: LocalizedError {
 }
 
 /// Downloads media to the caches folder once per URL; keeps the URL's extension so loaders can sniff it.
-actor Downloads {
-    static let shared = Downloads()
+public actor Downloads {
+    public static let shared = Downloads()
     private var inflight: [String: Task<URL, Error>] = [:]
     private let dir: URL = {
         let d = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("virvi-media", isDirectory: true)
@@ -338,7 +340,7 @@ actor Downloads {
         return d
     }()
 
-    func file(for src: String) async throws -> URL {
+    public func file(for src: String) async throws -> URL {
         if let t = inflight[src] { return try await t.value }
         let dir = self.dir
         let t = Task<URL, Error> {
@@ -359,5 +361,5 @@ actor Downloads {
 }
 
 extension simd_quatd {
-    var float: simd_quatf { simd_quatf(vector: SIMD4<Float>(vector)) }
+    public var float: simd_quatf { simd_quatf(vector: SIMD4<Float>(vector)) }
 }
