@@ -699,7 +699,12 @@ describe('assistant turn loop', () => {
 
   it('tells the model to give links with open_page or open_finalize, and that it never finalizes or pays', () => {
     expect(RULES).toContain('Use open_page or open_finalize to give the user links. Never write dashboard links or other URLs yourself.')
-    expect(RULES).toContain("You can't deploy or publish scenes, invite people, delete anything or change billing.")
+    expect(RULES).toContain('You can redeploy a scene to the destinations it already has (redeploy_scene, after get_scene_publishing; pass every destination unless the user names some)')
+    expect(RULES).toContain("You can't connect new destinations, remove collaborators, delete anything or change billing: offer the page with open_page.")
+    expect(RULES).toContain('open_page /publish?d=<id>')
+    expect(RULES).toContain('use explain_deploy_failure and say what went wrong in plain words')
+    expect(RULES).toContain('Wallets the user typed appear as [wallet 1], [wallet 2]')
+    expect(RULES).not.toContain("You can't deploy or publish scenes")
     expect(RULES).toContain('You never finalize or pay for a design: use open_finalize to give the user the finalize link with its price')
     expect(RULES).not.toMatch(/finalize or pay for anything yet/)
   })

@@ -19,6 +19,8 @@ The assistant is part of paid plans, and it is rolling out to admin accounts fir
 - Your organizations, and the scenes in them, including their publishing status.
 - Preset schedules, events and analytics summaries.
 - A scene's recent errors.
+- A scene's deploys, and why one failed.
+- Who has a role on a scene.
 - Your Studio designs, their checker results, your prompts left and what finalizing would cost.
 - Your media, a scene's library, its streams and its scheduled showings.
 - These docs, when you ask how something works.
@@ -42,10 +44,12 @@ Replies are formatted, with headings, lists, tables and code where they help. Li
 - BEAT drafts: create one. Paying for it is your step.
 - Shows: a saved checklist for an event. See [Setting up a show](#setting-up-a-show).
 - Studio designs: start one, and send it prompts. See [Making things](#making-things).
+- Deploys: redeploy a scene to the destinations it already has. See [Running things](#running-things).
+- Collaborators: give someone a role on a scene, or change theirs. See [Running things](#running-things).
 
 ## What it can't do yet
 
-Deploying, publishing, giveaways, invites, deleting things, finalizing or paying for Studio designs, billing and branding are not available in this release. For those, it points you to the right page.
+Connecting a new destination, removing a collaborator, giveaways, deleting things, finalizing or paying for Studio designs, billing and branding are not available in this release. For those, it points you to the right page. It can't sign a deploy for you either: a destination that needs your signature is always finished on its deploy page.
 
 ## Making things
 
@@ -72,6 +76,25 @@ These prompts come out of your Studio allowance, not the assistant budget.
 **No prompts left.** There is no card. The assistant tells you your Studio prompts are used up and gives you a **Buy Studio prompts** link to the Studio page. Daily prompts reset at midnight UTC.
 
 **Finalizing.** The assistant never finalizes a design or takes payment. It can tell you the price and give you a **Finalize** link with the total, for example "Total $12". The link opens the normal finalize dialog in Studio, where you check the price and pay.
+
+## Running things
+
+**Redeploying.** Ask it to redeploy a scene and it shows a card first. The card lists each destination, the World or the Genesis City parcels, and how each one goes out:
+
+- "Virvi deploys it now": Virvi deploys it for you when you press **Confirm**.
+- "you sign it on its deploy page": the assistant doesn't deploy it. It gives you a link to that destination's deploy page, where you sign it with your wallet.
+
+Unless you name some destinations, it redeploys to all the scene's destinations. It can only redeploy to destinations the scene already has. To connect a new one, use the scene's publishing page. If every destination needs your signature, there is no card, and the assistant sends you to the deploy pages. See [Who can sign for parcels](/docs/dashboard/scene-import/#who-can-sign-for-parcels) for which wallets can sign.
+
+If one destination fails, for example because Decentraland can't be reached or you aren't the World's owner, the others still deploy. The result lists what was deployed, what failed and why, and what is left for you to sign.
+
+**When a deploy fails.** Ask why, and the assistant reads the deploy and explains in plain words what went wrong and the next thing to try, such as shrinking a scene that is over the size limit, or redeploying in a few minutes when Decentraland couldn't be reached.
+
+**Collaborators.** Ask who has a role on a scene and it lists them with their roles (cohost, editor or viewer). Ask it to add someone, or to change their role, and it shows a card first, because this gives them access to the scene. The card says what the role allows. It adds one wallet at a time, and it can't change the scene's host. After you confirm there is an **Undo** button: it removes a collaborator it added, or puts back their old role. Undo refuses if the role was changed by hand since.
+
+**Removing a collaborator.** The assistant can't do this. Use the scene's **Roles** tab.
+
+**Wallets.** Paste a collaborator's wallet into the chat as you normally would. The assistant sees it only as a placeholder such as [wallet 1], and cards show it shortened, like `0x12ab…9f3e`, so check the start and end against the wallet you meant before you confirm.
 
 ## Setting up a show
 
