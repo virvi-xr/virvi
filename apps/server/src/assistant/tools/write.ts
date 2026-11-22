@@ -16,9 +16,9 @@ function write<A>(def: Omit<ToolDef<A>, 'effect'> & { before: NonNullable<ToolDe
 }
 
 /** GET `url` as the user; their refusal (403, 404) is the tool's. */
-export async function get(ctx: ToolCtx, url: string): Promise<Obj> {
+export async function get(ctx: ToolCtx, url: string, words?: Record<string, string>): Promise<Obj> {
   const res = await inject(ctx, { method: 'GET', url })
-  if (res.status >= 400) throw new ToolError(res.status, routeError(res.status, res.json))
+  if (res.status >= 400) throw new ToolError(res.status, routeError(res.status, res.json, words))
   return (res.json ?? {}) as Obj
 }
 

@@ -43,6 +43,8 @@ export interface ToolDef<A> {
   description: string
   input: z.ZodType<A>
   effect: AssistantEffect
+  /** Plain words for the route's refusal codes (routeError), for routes that answer with a code alone. */
+  refusals?: Record<string, string>
   /** Response keys dropped before the model sees it, on top of redact()'s own. */
   redactKeys?: string[]
   /**

@@ -7,7 +7,7 @@ import { db } from '../db/connection.js'
 import { assistantActions } from '../db/schema.js'
 import { config } from '../config.js'
 import { recordJobFailure } from '../errors/record.js'
-import { redact } from './redact.js'
+import { redact, redactText } from './redact.js'
 import { TOOLS } from './tools/index.js'
 import { inject, runTool, type ToolResult } from './tools/run.js'
 import { ToolError, type Call, type ToolCtx } from './tools/types.js'
@@ -53,6 +53,7 @@ export function actionView(row: Row): AssistantActionView {
     error: row.error,
     planId: row.planId,
     step: row.step,
+    detail: row.detail,
   }
 }
 
@@ -193,6 +194,9 @@ export async function proposeCard(
     throw err
   }
   if ('blocked' in preview) return preview
+  // The card shows what will be sent, whole: masked like every shown string, never shortened
+  const label = redactText(def.label(parsed.data), ctx.self)
+  const detail = redactText(preview.detail, ctx.self)
 
   const planId = randomUUID()
   const expiresAtMs = Date.now() + PLAN_TTL_MS
@@ -211,15 +215,15 @@ export async function proposeCard(
       argsRedacted: redact(parsed.data, ctx.self) as object,
       args: parsed.data as object,
       argsHash: hash,
-      label: def.label(parsed.data),
+      label,
       orgName,
-      detail: preview.detail,
+      detail,
       status: 'awaiting_confirmation',
       confirmationTokenHash: sha256(token),
       expiresAt: new Date(expiresAtMs),
     })
     .returning()
-  return { planId, kind: 'card', detail: preview.detail, steps: [actionView(row)], token, expiresAt: new Date(expiresAtMs).toISOString() }
+  return { planId, kind: 'card', detail, steps: [actionView(row)], token, expiresAt: new Date(expiresAtMs).toISOString() }
 }
 
 /** True when `token` is this server's signature over the plan's stored steps for this user. */

@@ -10,6 +10,11 @@ import { buildApp } from '../src/app.js'
 import { issueTrialSession } from '../src/auth/trial.js'
 import { setAssistantModel, type ModelResult } from '../src/assistant/model.js'
 import { resetDb } from './helpers/db.js'
+import { z } from 'zod'
+import type { FastifyRequest } from 'fastify'
+import { proposeCard } from '../src/assistant/actions.js'
+import { TOOLS } from '../src/assistant/tools/index.js'
+import type { ToolCtx, ToolDef } from '../src/assistant/tools/types.js'
 import { testApp, createUser, createScene, tokenFor, type TestUser } from './helpers/factories.js'
 
 const usage = { input_tokens: 50, output_tokens: 10 }
@@ -293,6 +298,35 @@ describe('assistant routes', () => {
       expect(await sceneName()).toBe('Old Lounge')
     })
 
+    it("says a card's refusals as a card: confirmed and sent, not a plan", async () => {
+      const stub: ToolDef<{ prompt: string }> = {
+        name: 'stub_card', description: 'test', input: z.object({ prompt: z.string() }), effect: 'paid',
+        before: async () => ({ undo: null, after: () => null, orgName: null }),
+        preview: async () => ({ detail: 'Uses 1 of your 3 prompts left today.' }),
+        call: () => ({ method: 'POST', url: '/__never' }), label: () => 'Send "a hat"', summarize: (r) => r,
+      }
+      ;(TOOLS as Record<string, unknown>).stub_card = stub
+      try {
+        const id = await newConversation()
+        const request = { headers: auth(owner), ip: '198.51.100.7' } as unknown as FastifyRequest
+        const ctx: ToolCtx = { app, request, user: { id: owner.id, email: owner.email, role: owner.role, orgId: null }, self: { email: owner.email, wallets: [] } }
+        const card = await proposeCard(ctx, id, 'stub_card', { prompt: 'a hat' })
+        if (!('kind' in card)) throw new Error('no card')
+        const approve = (token: string) => app.inject({ method: 'POST', url: `/api/assistant/plans/${card.planId}/approve`, headers: auth(owner), payload: { token } })
+        expect((await approve('nope')).json()).toEqual({ error: 'invalid_token', message: "This confirmation isn't valid. Ask the assistant again." })
+        await db.update(assistantActions).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(assistantActions.planId, card.planId))
+        const expired = await approve(card.token)
+        expect(expired.statusCode).toBe(410)
+        expect(expired.json()).toEqual({ error: 'expired', message: 'This expired. Ask again.' })
+        await db.update(assistantActions).set({ status: 'done' }).where(eq(assistantActions.planId, card.planId))
+        const used = await approve(card.token)
+        expect(used.statusCode).toBe(409)
+        expect(used.json()).toEqual({ error: 'used', message: 'This was already sent.' })
+      } finally {
+        delete (TOOLS as Record<string, unknown>).stub_card
+      }
+    })
+
     it('cancels a plan', async () => {
       const id = await newConversation()
       const presetId = (await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId) }))!.activePresetId!
@@ -411,6 +445,17 @@ describe('assistant routes', () => {
       expect(seen).toHaveLength(6)
       expect(new Set(seen).size).toBe(6)
       expect(new Set(seen.slice(1))).toEqual(new Set(ids))
+    })
+
+    it('has no next on a last page that is exactly full', async () => {
+      for (let i = 0; i < 4; i++) await db.insert(assistantActions).values(row({ createdAt: new Date(Date.UTC(2026, 10, 1, 0, 0, i)) }))
+      const first = (await activity('?limit=2')).json()
+      expect(first.items).toHaveLength(2)
+      expect(first.next).toEqual(expect.any(String))
+      const last = (await activity(`?limit=2&before=${encodeURIComponent(first.next)}`)).json()
+      expect(last.items).toHaveLength(2)
+      expect(last.next).toBeNull()
+      expect((await activity('?limit=4')).json().next).toBeNull()
     })
 
     it('accepts a plain ISO date for before', async () => {

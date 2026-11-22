@@ -4,7 +4,7 @@
 import { z } from 'zod'
 import { id, pick } from './read.js'
 import { get } from './write.js'
-import type { Before, ToolCtx, ToolDef } from './types.js'
+import { ToolError, type Before, type ToolCtx, type ToolDef } from './types.js'
 
 type Obj = Record<string, any>
 const list = (v: unknown): Obj[] => (Array.isArray(v) ? v : [])
@@ -18,7 +18,31 @@ const KIND_WORD: Record<(typeof KINDS)[number], string> = { wearable: 'a wearabl
 
 export const NO_PROMPTS = 'No Studio prompts left. They reset at midnight UTC, or the user can buy more.'
 export const FIX_CHECKS_FREE = "This one is free: fixing what the checker found doesn't use your prompts."
-const BUY_PROMPTS = { label: 'Buy Studio prompts', href: '/studio' }
+export const BUY_PROMPTS = { label: 'Buy Studio prompts', href: '/studio' }
+/** The Studio routes' own refusal for a paused account (pausedRefusal in routes/studio.ts). */
+export const STUDIO_PAUSED = 'Your studio access is paused'
+/** How much of a prompt's text its card label shows; the card's detail carries the rest. */
+export const LABEL_TEXT_MAX = 140
+
+/**
+ * Plain words for the codes the Studio routes refuse with (routes/studio.ts and studio/designs.ts queuePrompt). Codes
+ * that already come with words (open_design_limit, a paused account, trial_busy) pass through as they are.
+ */
+export const STUDIO_REFUSALS: Record<string, string> = {
+  not_found: "Studio isn't available right now.",
+  design_not_found: "That Studio design wasn't found, or it isn't shared with this user.",
+  viewer: 'This design is shared with the user to view only, so it can\'t be changed.',
+  archived: 'This design is archived. Unarchive it in Studio to work on it again.',
+  busy: "This design's agent is already working on a prompt. Wait for it to finish.",
+  nothing_to_fix: 'The checker found nothing to fix on this design.',
+  allowance: NO_PROMPTS,
+  cost_ceiling: "Studio has hit today's limit. Try again after midnight UTC.",
+  month_ceiling: "Studio has hit this month's limit for the user's plan. It comes back on the 1st (UTC), or the user can buy more prompts.",
+  account_required: 'This needs a Virvi account.',
+  checks_failed: "Some pieces haven't passed the checker yet, so they can't be finalized.",
+  nothing_to_pay: 'There is nothing left to finalize on this design.',
+  unknown_piece: "That piece isn't part of this design.",
+}
 
 const designArgs = z.object({ designId: id() })
 const none = z.object({})
@@ -36,7 +60,21 @@ export function promptCost(u: Obj): { detail: string } | { blocked: string; link
   return { blocked: NO_PROMPTS, link: BUY_PROMPTS }
 }
 
-const design = async (ctx: ToolCtx, designId: string): Promise<Obj> => (await get(ctx, `/api/studio/designs/${designId}`)).design ?? {}
+const design = async (ctx: ToolCtx, designId: string): Promise<Obj> => (await get(ctx, `/api/studio/designs/${designId}`, STUDIO_REFUSALS)).design ?? {}
+const clip = (t: string) => (t.length <= LABEL_TEXT_MAX ? t : `${t.slice(0, LABEL_TEXT_MAX - 1).trimEnd()}…`)
+
+/** What a prompt card says it sends: the start of the text (or the checker fix) as the label. */
+export function promptLabel(a: { text?: string; fixChecks?: boolean }): string {
+  return a.fixChecks ? 'Fix what the checker found' : `Send "${clip(a.text ?? '')}"`
+}
+
+/** The card's detail: the design and the cost, then the slots and, when the label had to cut it, the whole text. */
+export function promptDetail(name: string, cost: string, a: { text?: string; fixChecks?: boolean; selectedSlots?: string[] }): string {
+  const lines = [`"${name}": ${cost}`]
+  if (a.selectedSlots?.length) lines.push(`Slots: ${a.selectedSlots.join(', ')}`)
+  if (!a.fixChecks && a.text && clip(a.text) !== a.text) lines.push(a.text)
+  return lines.join('\n')
+}
 
 export const STUDIO_TOOLS: ToolDef<any>[] = [
   {
@@ -44,6 +82,7 @@ export const STUDIO_TOOLS: ToolDef<any>[] = [
     description: "The user's Studio designs (their own and ones shared with them): wearables, emotes and buildings (kind scene).",
     input: none,
     effect: 'read',
+    refusals: STUDIO_REFUSALS,
     call: () => ({ method: 'GET', url: '/api/studio/designs' }),
     label: () => 'List your Studio designs',
     summarize: (res) => list(res).map((d) => pick(d, ['id', 'name', 'kind', 'status'])),
@@ -54,6 +93,7 @@ export const STUDIO_TOOLS: ToolDef<any>[] = [
       "One Studio design: its pieces and their latest revision (with the checker's result), its last 5 revisions, the job running now (activeJob, null when none) and how the last prompt ended (lastPrompt).",
     input: designArgs,
     effect: 'read',
+    refusals: STUDIO_REFUSALS,
     call: (a) => ({ method: 'GET', url: `/api/studio/designs/${a.designId}` }),
     label: () => 'Read the Studio design',
     summarize: (res) => {
@@ -75,6 +115,7 @@ export const STUDIO_TOOLS: ToolDef<any>[] = [
     description: "The user's Studio prompts left (today's plus gifted plus bought), when today's reset, and their free finalizes.",
     input: none,
     effect: 'read',
+    refusals: STUDIO_REFUSALS,
     call: () => ({ method: 'GET', url: '/api/studio/usage' }),
     label: () => 'Check your Studio prompts',
     summarize: (res) => pick(res as Obj, ['promptsLeft', 'giftedPrompts', 'credits', 'resetsAt', 'freeFinalizes']),
@@ -85,8 +126,9 @@ export const STUDIO_TOOLS: ToolDef<any>[] = [
       "Start a new Studio design: a wearable, an emote, or a building with furniture (kind scene). It is empty until a prompt is sent. agent is left out unless the user names one.",
     input: z.object({ kind: z.enum(KINDS), name: z.string().trim().min(1).max(80), agent: z.enum(AGENTS).optional() }),
     effect: 'write',
+    refusals: STUDIO_REFUSALS,
     call: async (a, ctx) => {
-      const agent = a.agent ?? (await get(ctx, '/api/studio/defaults')).agents?.[a.kind] ?? 'claude'
+      const agent = a.agent ?? (await get(ctx, '/api/studio/defaults', STUDIO_REFUSALS)).agents?.[a.kind] ?? 'claude'
       return { method: 'POST', url: '/api/studio/designs', body: { kind: a.kind, name: a.name, agent } }
     },
     // Undoing a create would be a delete (archive), which the assistant doesn't do
@@ -107,6 +149,7 @@ export const STUDIO_TOOLS: ToolDef<any>[] = [
       })
       .refine((a) => (a.text !== undefined) !== (a.fixChecks === true), 'Give exactly one of text or fixChecks: true.'),
     effect: 'paid',
+    refusals: STUDIO_REFUSALS,
     call: (a) => ({
       method: 'POST',
       url: `/api/studio/designs/${a.designId}/prompts`,
@@ -117,12 +160,16 @@ export const STUDIO_TOOLS: ToolDef<any>[] = [
       await design(ctx, a.designId)
       return { undo: null, after: (res) => pick(res as Obj, ['jobId']), orgName: null }
     },
+    // A paused account can't send anything, free or not: refused here, so there's no card it couldn't confirm. The usage
+    // route doesn't say whether today's cost ceiling is hit; the prompt route's refusal (cost_ceiling) covers that.
     preview: async (a, ctx) => {
       const name = (await design(ctx, a.designId)).name
-      const cost = a.fixChecks ? { detail: FIX_CHECKS_FREE } : promptCost(await get(ctx, '/api/studio/usage'))
-      return 'blocked' in cost ? cost : { detail: `"${name}": ${cost.detail}` }
+      const usage = await get(ctx, '/api/studio/usage', STUDIO_REFUSALS)
+      if (usage.paused === true) throw new ToolError(403, STUDIO_PAUSED)
+      const cost = a.fixChecks ? { detail: FIX_CHECKS_FREE } : promptCost(usage)
+      return 'blocked' in cost ? cost : { detail: promptDetail(String(name ?? ''), cost.detail, a) }
     },
-    label: () => 'Send a Studio prompt',
+    label: promptLabel,
     summarize: (res) => pick(res as Obj, ['jobId']),
   },
   {
@@ -131,6 +178,7 @@ export const STUDIO_TOOLS: ToolDef<any>[] = [
       "What finalizing a Studio design's pieces would cost now: each line's price in cents (gift: paid by a free finalize), the total, Virvi credit applied and what is due. The assistant never finalizes: use open_finalize to link the user to it.",
     input: designArgs,
     effect: 'read',
+    refusals: STUDIO_REFUSALS,
     call: (a) => ({ method: 'GET', url: `/api/studio/designs/${a.designId}/finalize` }),
     label: () => 'Check the finalize price',
     summarize: (res) => {

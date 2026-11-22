@@ -44,6 +44,12 @@ const APPROVE_ERRORS = {
   expired: { status: 410, message: 'This plan expired. Ask again to get a fresh one.' },
   used: { status: 409, message: 'This plan already ran.' },
 } as const
+/** The same refusals for a card (one paid action): it is confirmed and sent, not approved and run. */
+const CARD_APPROVE_ERRORS = {
+  invalid_token: { status: 403, message: "This confirmation isn't valid. Ask the assistant again." },
+  expired: { status: 410, message: 'This expired. Ask again.' },
+  used: { status: 409, message: 'This was already sent.' },
+} as const
 
 /** Every route but /status: an API key is 403, hidden is 404, locked is 403. */
 async function guard(request: FastifyRequest, reply: FastifyReply) {
@@ -139,12 +145,14 @@ export default async function assistantRoutes(app: FastifyInstance) {
           : undefined,
       ))
       .orderBy(desc(created), desc(assistantActions.id))
-      .limit(limit)
-    const items: AssistantActivityItem[] = rows.map((r) => ({
+      // One more than the page: only a row past it means there is a next page
+      .limit(limit + 1)
+    const more = rows.length > limit
+    const items: AssistantActivityItem[] = rows.slice(0, limit).map((r) => ({
       ...actionView(r), createdAt: r.createdAt.toISOString(), conversationId: r.conversationId, effect: r.effect,
     }))
     const last = items[items.length - 1]
-    return { items, next: items.length === limit && last ? `${last.createdAt}_${last.id}` : null }
+    return { items, next: more && last ? `${last.createdAt}_${last.id}` : null }
   })
 
   app.post('/api/assistant/conversations', { preHandler: [authenticate, guard], config: perUser('assistant-conversation') }, async (request, reply) => {
@@ -216,7 +224,7 @@ export default async function assistantRoutes(app: FastifyInstance) {
       }
       const r = await approvePlan(ctx, planId, body.token, (action) => send({ type: 'action', action }))
       if ('error' in r && !sse) {
-        const e = APPROVE_ERRORS[r.error]
+        const e = (rows[0].effect === 'paid' ? CARD_APPROVE_ERRORS : APPROVE_ERRORS)[r.error]
         return reply.status(e.status).send({ error: r.error, message: e.message })
       }
       const stream = sse ?? openSse(request, reply)

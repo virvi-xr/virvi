@@ -17,6 +17,9 @@ import { callCostUsd } from '../src/assistant/pricing.js'
 import { TOOLS } from '../src/assistant/tools/index.js'
 import { ToolError, type ToolCtx, type ToolDef } from '../src/assistant/tools/types.js'
 import { resetDb } from './helpers/db.js'
+import { messageViews } from '../src/assistant/conversations.js'
+import { RULES } from '../src/assistant/prompt.js'
+import { BUY_PROMPTS, NO_PROMPTS } from '../src/assistant/tools/studio.js'
 import { testApp, createUser, createScene, tokenFor, type TestUser } from './helpers/factories.js'
 
 const usage = { input_tokens: 100, output_tokens: 20 }
@@ -470,7 +473,7 @@ describe('assistant turn loop', () => {
   describe('paid tool cards', () => {
     let paidApp: FastifyInstance
     let paidCalls = 0
-    let mode: 'ok' | 'blocked' | 'before404' = 'ok'
+    let mode: 'ok' | 'blocked' | 'noPrompts' | 'before404' = 'ok'
     const stub: ToolDef<{ prompt: string }> = {
       name: 'stub_paid',
       description: 'test',
@@ -480,7 +483,8 @@ describe('assistant turn loop', () => {
         if (mode === 'before404') throw new ToolError(404, 'Design not found')
         return { undo: null, after: () => null, orgName: 'Acme' }
       },
-      preview: async () => (mode === 'blocked' ? { blocked: 'No prompts left', link: { label: 'Buy Studio prompts', href: '/studio' } } : { detail: 'Uses 1 of your 3 prompts left today.' }),
+      preview: async () => (mode === 'blocked' ? { blocked: 'No prompts left', link: { label: 'Buy Studio prompts', href: '/studio' } }
+        : mode === 'noPrompts' ? { blocked: NO_PROMPTS, link: BUY_PROMPTS } : { detail: 'Uses 1 of your 3 prompts left today.' }),
       call: (a) => ({ method: 'POST', url: '/__stub_paid', body: a }),
       label: (a) => `Run stub: ${a.prompt}`,
       summarize: (r) => r,
@@ -520,6 +524,10 @@ describe('assistant turn loop', () => {
       const rows = await paidRows()
       expect(rows).toHaveLength(1)
       expect(rows[0].status).toBe('awaiting_confirmation')
+      // After a reload the card is still in the reply, waiting, with its detail (and no token)
+      const views = await messageViews(conversationId, owner.id, ctx.self)
+      expect(views[1].actions).toEqual([expect.objectContaining({ id: rows[0].id, tool: 'stub_paid', status: 'awaiting_confirmation', detail: 'Uses 1 of your 3 prompts left today.' })])
+      expect(JSON.stringify(views)).not.toContain(plans[0].plan.token)
     })
 
     it('refuses a paid call in the approval continuation', async () => {
@@ -569,6 +577,18 @@ describe('assistant turn loop', () => {
       expect(await paidRows()).toHaveLength(0)
     })
 
+    it('keeps the "Buy Studio prompts" link after a reload when a paid call found no prompts left, and only then', async () => {
+      mode = 'noPrompts'
+      script([tool('stub_paid', { prompt: 'a hat' }), text('You are out of prompts.')])
+      const events = await turn('Make a hat')
+      expect(events.find((e) => e.type === 'link')).toEqual({ type: 'link', ...BUY_PROMPTS, detail: NO_PROMPTS })
+      mode = 'blocked'
+      script([tool('stub_paid', { prompt: 'a hat' }), text('Something else.')])
+      await turn('Again')
+      const views = await messageViews(conversationId, owner.id, ctx.self)
+      expect(views.map((v) => v.links)).toEqual([[], [{ ...BUY_PROMPTS, detail: NO_PROMPTS }], [], []])
+    })
+
     it('passes on a route refusal as an error with no card', async () => {
       mode = 'before404'
       const inputs = script([tool('stub_paid', { prompt: 'a hat' }), text('Not found.')])
@@ -577,6 +597,13 @@ describe('assistant turn loop', () => {
       expect(lastResults(inputs[1])[0].content).toContain('Design not found')
       expect(lastResults(inputs[1])[0].is_error).toBe(true)
     })
+  })
+
+  it('tells the model to give links with open_page or open_finalize, and that it never finalizes or pays', () => {
+    expect(RULES).toContain('Use open_page or open_finalize to give the user links. Never write dashboard links or other URLs yourself.')
+    expect(RULES).toContain("You can't deploy or publish scenes, invite people, delete anything or change billing.")
+    expect(RULES).toContain('You never finalize or pay for a design: use open_finalize to give the user the finalize link with its price')
+    expect(RULES).not.toMatch(/finalize or pay for anything yet/)
   })
 
   it('open_finalize emits a link with the price as its detail', async () => {
@@ -588,7 +615,16 @@ describe('assistant turn loop', () => {
       await addRevision(d, 'hat')
       script([tool('open_finalize', { designId: d.id }), text('Finalize it there.')])
       const events = await turn('Finalize my cap')
-      expect(events.find((e) => e.type === 'link')).toEqual({ type: 'link', label: 'Finalize "Neon cap"', href: `/studio/${d.id}?step=finalize`, detail: expect.stringMatching(/^Total \$\d/) })
+      const link = events.find((e) => e.type === 'link')
+      expect(link).toEqual({ type: 'link', label: 'Finalize "Neon cap"', href: `/studio/${d.id}?step=finalize`, detail: expect.stringMatching(/^Total \$\d/) })
+      // The same link after a reload, from the call's action row; a refused call (someone else's design) adds none
+      const other = await createUser()
+      const theirs = await createDesign(other, { name: 'Not mine' })
+      script([tools(['open_finalize', { designId: theirs.id }], ['open_finalize', { designId: d.id }]), text('There.')])
+      await turn('Again')
+      const views = await messageViews(conversationId, owner.id, ctx.self)
+      const { type: _t, ...shown } = link as Extract<AssistantStreamEvent, { type: 'link' }>
+      expect(views.map((v) => v.links)).toEqual([[], [shown], [], [shown]])
     } finally {
       set('studioEnabled', prevStudio)
     }

@@ -9,17 +9,24 @@ export interface RedactSelf {
   wallets: string[];
 }
 
-export function redact(value: unknown, self: RedactSelf, extraKeys: string[] = []): unknown {
+/** Masks other people's emails and every 0x hex run of 40+ chars (wallets, tx hashes, signatures) but an exact own wallet. */
+function masker(self: RedactSelf): (s: string) => string {
   const ownEmail = self.email?.toLowerCase() ?? null;
   const ownWallets = new Set(self.wallets.map((w) => w.toLowerCase()));
-  const extra = new Set(extraKeys);
-
-  // Any 0x hex run of 40+ chars (wallets, tx hashes, signatures) is masked whole,
-  // except an exact own wallet.
-  const mask = (s: string): string =>
+  return (s) =>
     s
       .replace(EMAIL, (m) => (ownEmail && m.toLowerCase() === ownEmail ? m : '[email]'))
       .replace(WALLET, (m) => (ownWallets.has(m.toLowerCase()) ? m : '[wallet]'));
+}
+
+/** One piece of text masked as redact() masks strings, but never shortened: for text the user must see whole (a card). */
+export function redactText(text: string, self: RedactSelf): string {
+  return masker(self)(text);
+}
+
+export function redact(value: unknown, self: RedactSelf, extraKeys: string[] = []): unknown {
+  const extra = new Set(extraKeys);
+  const mask = masker(self);
 
   const str = (s: string): string => {
     let out = mask(s);

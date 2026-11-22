@@ -13,6 +13,8 @@ export interface AssistantActionView {
   error: string | null
   planId: string | null
   step: number | null
+  /** A card's line under its label: the design, the cost and what is sent. Null for everything but cards. */
+  detail: string | null
 }
 
 /** One row of the Settings activity list: an action plus when it ran and where. */
@@ -72,7 +74,7 @@ export interface AssistantMessageView {
   role: 'user' | 'assistant'
   text: string
   actions: AssistantActionView[]
-  /** `detail`: a line under the link (a Finalize total, why prompts ran out); only on links streamed live. */
+  /** `detail`: a line under the link (a Finalize total, why prompts ran out). */
   links: { label: string; href: string; detail?: string }[]
   createdAt: string
 }

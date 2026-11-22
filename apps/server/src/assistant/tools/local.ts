@@ -7,6 +7,7 @@ import { config } from '../../config.js'
 import { dollars } from '../../studio/pricing.js'
 import { id } from './read.js'
 import { get } from './write.js'
+import { STUDIO_REFUSALS } from './studio.js'
 import { ToolError, type ToolDef } from './types.js'
 
 const MAX_RESULTS = 3
@@ -117,9 +118,10 @@ export const LOCAL_TOOLS: ToolDef<any>[] = [
       throw new Error('open_finalize runs locally')
     },
     local: async (a, ctx) => {
-      const name = (await get(ctx, `/api/studio/designs/${a.designId}`)).design?.name
-      const quote = await get(ctx, `/api/studio/designs/${a.designId}/finalize`)
-      return { href: `/studio/${a.designId}?step=finalize`, label: `Finalize "${name}"`, detail: `Total ${dollars(Number(quote.totalCents) || 0)}` }
+      const name = (await get(ctx, `/api/studio/designs/${a.designId}`, STUDIO_REFUSALS)).design?.name
+      const quote = await get(ctx, `/api/studio/designs/${a.designId}/finalize`, STUDIO_REFUSALS)
+      const label = typeof name === 'string' && name.trim() ? `Finalize "${name}"` : 'Finalize the design'
+      return { href: `/studio/${a.designId}?step=finalize`, label, detail: `Total ${dollars(Number(quote.totalCents) || 0)}` }
     },
     label: () => 'Link to finalize a design',
     summarize: (res) => res,

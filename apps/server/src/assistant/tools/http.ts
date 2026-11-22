@@ -28,9 +28,13 @@ export async function inject(ctx: ToolCtx, call: Call): Promise<{ status: number
   return { status: res.statusCode, json }
 }
 
-/** The route's own words for a refusal: its message, else its error code. */
-export function routeError(status: number, json: unknown): string {
-  const o = (json ?? {}) as { message?: unknown; error?: unknown }
+/**
+ * The route's own words for a refusal: its message, else its error code. `words` turns a tool's route codes (Studio
+ * answers with codes such as design_not_found) into plain words; other routes pass none and are unchanged.
+ */
+export function routeError(status: number, json: unknown, words?: Record<string, string>): string {
+  const o = (json ?? {}) as { message?: unknown; error?: unknown; code?: unknown }
+  for (const c of [o.code, o.error]) if (words && typeof c === 'string' && Object.hasOwn(words, c)) return words[c]
   if (typeof o.message === 'string' && o.message) return o.message
   if (typeof o.error === 'string' && o.error) return o.error
   return `The request failed (${status}).`

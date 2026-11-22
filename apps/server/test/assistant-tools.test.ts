@@ -15,6 +15,8 @@ import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, createElement, createInstance, tokenFor, type TestUser } from './helpers/factories.js'
 import { addRevision, createDesign } from './helpers/studio.js'
 import { proposeCard } from '../src/assistant/actions.js'
+import { routeError } from '../src/assistant/tools/http.js'
+import { LABEL_TEXT_MAX, STUDIO_PAUSED, STUDIO_REFUSALS } from '../src/assistant/tools/studio.js'
 import { assistantActions, studioDesigns, studioKindDefaults } from '../src/db/schema.js'
 
 const IP = '198.51.100.23'
@@ -286,15 +288,15 @@ describe('assistant Studio tools', () => {
     ctx = ctxFor(app, owner)
   })
 
-  /** The owner's ctx with GET /api/studio/usage answered by `usage` (or refused, to prove it isn't read). */
-  const withUsage = (usage: Record<string, unknown> | 'unread') => ({
+  /** The owner's ctx with GET /api/studio/usage answered by `usage`, and any other GET in `routes` by its body. */
+  const withUsage = (usage: Record<string, unknown>, routes: Record<string, unknown> = {}) => ({
     ...ctx,
     app: {
       inject: async (opts: { url: string; method: string }) => {
         if (opts.method === 'GET' && opts.url === '/api/studio/usage') {
-          if (usage === 'unread') throw new Error('usage was read')
-          return { statusCode: 200, body: JSON.stringify({ credits: 0, giftedPrompts: 0, ...usage }) }
+          return { statusCode: 200, body: JSON.stringify({ credits: 0, giftedPrompts: 0, paused: false, ...usage }) }
         }
+        if (opts.method === 'GET' && Object.hasOwn(routes, opts.url)) return { statusCode: 200, body: JSON.stringify(routes[opts.url]) }
         return app.inject(opts as any)
       },
     } as unknown as FastifyInstance,
@@ -348,10 +350,51 @@ describe('assistant Studio tools', () => {
       const c = await proposeCard(withUsage(usage), null, 'send_studio_prompt', { designId: d.id, text: 'a neon cap' })
       expect(c, line).toMatchObject({ kind: 'card', detail: `"Neon cap": ${line}` })
       if (!('kind' in c)) throw new Error('no card')
-      expect(c.steps[0]).toMatchObject({ label: 'Send a Studio prompt', orgName: null })
+      expect(c.steps[0]).toMatchObject({ label: 'Send "a neon cap"', orgName: null, detail: `"Neon cap": ${line}` })
     }
-    const free = await proposeCard(withUsage('unread'), null, 'send_studio_prompt', { designId: d.id, fixChecks: true })
+    // Free even with nothing left
+    const free = await proposeCard(withUsage({ promptsLeft: 0 }), null, 'send_studio_prompt', { designId: d.id, fixChecks: true })
     expect(free).toMatchObject({ kind: 'card', detail: `"Neon cap": This one is free: fixing what the checker found doesn't use your prompts.` })
+    if (!('kind' in free)) throw new Error('no card')
+    expect(free.steps[0].label).toBe('Fix what the checker found')
+  })
+
+  it('send_studio_prompt cards show what is sent: the text (whole, under the cost when the label cuts it) and the slots, masked but never shortened', async () => {
+    const d = await createDesign(owner, { name: 'Neon cap' })
+    const long = `${'a glowing neon cap with rivets '.repeat(140)}for bob@example.com and ${owner.email}`.slice(-3990)
+    const c = await proposeCard(withUsage({ promptsLeft: 3 }), null, 'send_studio_prompt', { designId: d.id, text: long, selectedSlots: ['hat', 'eyewear'] })
+    if (!('kind' in c)) throw new Error('no card')
+    const label = c.steps[0].label
+    const masked = long.replace('bob@example.com', '[email]')
+    expect(label).toBe(`Send "${long.slice(0, LABEL_TEXT_MAX - 1).trimEnd()}…"`)
+    expect(c.detail).toBe(`"Neon cap": Uses 1 of your 3 prompts left today.\nSlots: hat, eyewear\n${masked}`)
+    expect(c.detail).toContain(owner.email)
+    expect(c.detail).not.toContain('bob@example.com')
+    const [row] = await db.select().from(assistantActions)
+    expect(row).toMatchObject({ label, detail: c.detail })
+    // A short text is all in the label, so the detail doesn't repeat it
+    const short = await proposeCard(withUsage({ promptsLeft: 3 }), null, 'send_studio_prompt', { designId: d.id, text: 'mail bob@example.com a hat' })
+    expect(short).toMatchObject({ detail: '"Neon cap": Uses 1 of your 3 prompts left today.', steps: [{ label: 'Send "mail [email] a hat"' }] })
+  })
+
+  it('send_studio_prompt for a paused account is refused in plain words, with no card, free or not', async () => {
+    const d = await createDesign(owner)
+    for (const args of [{ designId: d.id, text: 'a hat' }, { designId: d.id, fixChecks: true }]) {
+      expect(await proposeCard(withUsage({ promptsLeft: 5, paused: true }), null, 'send_studio_prompt', args)).toEqual({ error: STUDIO_PAUSED })
+    }
+    expect(await db.select().from(assistantActions)).toHaveLength(0)
+  })
+
+  it("passes the Studio routes' refusal codes on in plain words, and leaves other routes' errors as they were", async () => {
+    const other = await createUser()
+    const theirs = await createDesign(other)
+    expect(await runTool(ctx, 'get_design', { designId: theirs.id })).toMatchObject({ ok: false, status: 404, error: STUDIO_REFUSALS.design_not_found })
+    const d = await createDesign(owner)
+    // Nothing made yet, so nothing failed the checker
+    expect(await runTool(ctx, 'send_studio_prompt', { designId: d.id, fixChecks: true })).toMatchObject({ ok: false, status: 409, error: STUDIO_REFUSALS.nothing_to_fix })
+    expect(routeError(429, { error: 'cost_ceiling', code: 'cost_ceiling' }, STUDIO_REFUSALS)).toBe("Studio has hit today's limit. Try again after midnight UTC.")
+    expect(routeError(404, { error: 'design_not_found' })).toBe('design_not_found')
+    expect(routeError(403, { error: 'Your studio access is paused', code: 'studio_paused' }, STUDIO_REFUSALS)).toBe('Your studio access is paused')
   })
 
   it('send_studio_prompt with no prompts left is blocked, with a link to buy more and no row', async () => {
@@ -368,7 +411,7 @@ describe('assistant Studio tools', () => {
     const other = await createUser()
     const d = await createDesign(other)
     const c = await proposeCard(withUsage({ promptsLeft: 5 }), null, 'send_studio_prompt', { designId: d.id, text: 'a hat' })
-    expect(c).toEqual({ error: 'design_not_found' })
+    expect(c).toEqual({ error: STUDIO_REFUSALS.design_not_found })
     expect(await db.select().from(assistantActions)).toHaveLength(0)
   })
 
@@ -391,5 +434,8 @@ describe('assistant Studio tools', () => {
     expect((q.summary as any).lines).toMatchObject([{ category: 'hat', amountCents: expect.any(Number) }])
     const o = await runTool(ctx, 'open_finalize', { designId: d.id })
     expect(o).toMatchObject({ ok: true, summary: { href: `/studio/${d.id}?step=finalize`, label: 'Finalize "Neon cap"', detail: expect.stringMatching(/^Total \$\d/) } })
+    // A design read with no name never shows as "undefined"
+    const nameless = await runTool(withUsage({}, { [`/api/studio/designs/${d.id}`]: { design: { id: d.id } } }), 'open_finalize', { designId: d.id })
+    expect(nameless).toMatchObject({ ok: true, summary: { label: 'Finalize the design' } })
   })
 })

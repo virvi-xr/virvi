@@ -47,7 +47,7 @@ export async function runTool(ctx: ToolCtx, name: string, rawArgs: unknown): Pro
     let status = 200
     for (const call of calls) {
       const res = await inject(ctx, call)
-      if (res.status >= 400) return { ok: false, status: res.status, error: safe(routeError(res.status, res.json)), label, orgName: before?.orgName ?? null }
+      if (res.status >= 400) return { ok: false, status: res.status, error: safe(routeError(res.status, res.json, def.refusals)), label, orgName: before?.orgName ?? null }
       status = res.status
       results.push(res.json)
     }

@@ -2,12 +2,14 @@
 // after the account and page context block), the model's blocks verbatim (thinking signatures cover them; redacted when
 // shown), and the tool_result blocks the model was sent (as their own user-role rows), so the next turn can replay a
 // valid tool_use/tool_result sequence. Rows are only ever appended.
-import { and, asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, or } from 'drizzle-orm'
 import type { AssistantMessageView } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { assistantActions, assistantConversations, assistantMessages } from '../db/schema.js'
 import { actionView } from './actions.js'
 import { isDashboardPath } from './tools/local.js'
+import { BUY_PROMPTS, NO_PROMPTS } from './tools/studio.js'
+import { TOOLS } from './tools/index.js'
 import { redact, type RedactSelf } from './redact.js'
 import { CONTEXT_INTRO } from './prompt.js'
 
@@ -60,23 +62,47 @@ export function titleFrom(text: string): string {
   return t.length <= TITLE_MAX ? t : t.slice(0, TITLE_MAX - 1).trimEnd() + '…'
 }
 
+/** An open_finalize row's stored result, when it is a dashboard link. */
+function finalizeLink(summary: string | null): { href: string; label: string; detail?: string } | null {
+  try {
+    const o = JSON.parse(summary ?? 'null') as { href?: unknown; label?: unknown; detail?: unknown } | null
+    if (!o || typeof o.href !== 'string' || typeof o.label !== 'string' || !isDashboardPath(o.href)) return null
+    return { href: o.href, label: o.label, ...(typeof o.detail === 'string' ? { detail: o.detail } : {}) }
+  } catch {
+    return null
+  }
+}
+
 /**
  * What the panel shows: one view per message the user typed, and one per assistant reply (every model call and the
  * approval continuation up to the next typed message, merged). Tool results and the approval text stay hidden. A
- * reply's actions are the writes logged between its user message and the next one; its links are its open_page calls.
- * The model's blocks are stored verbatim (thinking signatures cover them), so what's shown is redacted here.
+ * reply's actions are the writes and cards logged between its user message and the next one. Its links are rebuilt
+ * as they were streamed: its open_page calls, its open_finalize results (from their action rows), and the "Buy Studio
+ * prompts" link for a paid call refused for having no prompts left. The model's blocks are stored verbatim (thinking
+ * signatures cover them), so what's shown is redacted here.
  */
 export async function messageViews(conversationId: string, userId: string, self: RedactSelf): Promise<AssistantMessageView[]> {
   const shown = (t: string) => redact(t, self) as string
   const rows = await db.select().from(assistantMessages).where(eq(assistantMessages.conversationId, conversationId))
     .orderBy(asc(assistantMessages.createdAt), asc(assistantMessages.id))
-  const actions = await db.select().from(assistantActions)
-    .where(and(eq(assistantActions.conversationId, conversationId), eq(assistantActions.userId, userId), eq(assistantActions.effect, 'write')))
+  const logged = await db.select().from(assistantActions)
+    .where(and(
+      eq(assistantActions.conversationId, conversationId),
+      eq(assistantActions.userId, userId),
+      or(inArray(assistantActions.effect, ['write', 'paid']), and(eq(assistantActions.tool, 'open_finalize'), eq(assistantActions.status, 'done'))),
+    ))
     .orderBy(asc(assistantActions.createdAt), asc(assistantActions.step))
+  const actions = logged.filter((a) => a.effect !== 'read')
+  const finalizes = logged.filter((a) => a.effect === 'read')
+  // The answers the model got, by call: a refused paid call's answer says why
+  const answers = new Map<string, Block>()
+  for (const r of rows) for (const b of blocks(r.content)) if (b.type === 'tool_result' && b.tool_use_id) answers.set(b.tool_use_id, b)
+  const noPrompts = `\n${JSON.stringify({ error: NO_PROMPTS })}\n`
 
   const views: AssistantMessageView[] = []
   let reply: AssistantMessageView | null = null
   let turnStart: Date | null = null
+  let turnFinalizes: typeof finalizes = []
   const typed = rows.filter((r) => isUserText(r) && !isApproval(r))
   for (const r of rows) {
     if (isUserText(r) && !isApproval(r)) {
@@ -89,17 +115,29 @@ export async function messageViews(conversationId: string, userId: string, self:
     if (!reply) {
       reply = { id: r.id, role: 'assistant', text: '', actions: [], links: [], createdAt: r.createdAt.toISOString() }
       const next = typed.find((t) => turnStart && t.createdAt > turnStart)
-      reply.actions = actions
-        .filter((a) => (!turnStart || a.createdAt >= turnStart) && (!next || a.createdAt < next.createdAt))
-        .map(actionView)
+      const inTurn = (a: { createdAt: Date }) => (!turnStart || a.createdAt >= turnStart) && (!next || a.createdAt < next.createdAt)
+      reply.actions = actions.filter(inTurn).map(actionView)
+      turnFinalizes = finalizes.filter(inTurn)
       views.push(reply)
     }
     const text = shown(textOf(r.content))
     if (text) reply.text = reply.text ? `${reply.text}\n\n${text}` : text
     for (const b of blocks(r.content)) {
       const input = (b.input ?? {}) as { path?: unknown; label?: unknown }
-      if (b.type === 'tool_use' && b.name === 'open_page' && typeof input.path === 'string' && typeof input.label === 'string' && isDashboardPath(input.path)) {
+      if (b.type !== 'tool_use') continue
+      if (b.name === 'open_page' && typeof input.path === 'string' && typeof input.label === 'string' && isDashboardPath(input.path)) {
         reply.links.push({ label: shown(input.label), href: input.path })
+      } else if (b.name === 'open_finalize') {
+        // Its done row for the same design, in call order (a refused call has none): the link it returned
+        const designId = (b.input as { designId?: unknown } | null)?.designId
+        const i = turnFinalizes.findIndex((a) => (a.argsRedacted as { designId?: unknown } | null)?.designId === designId)
+        const link = i === -1 ? null : finalizeLink(turnFinalizes.splice(i, 1)[0].resultSummary)
+        if (link) reply.links.push({ label: shown(link.label), href: link.href, ...(link.detail ? { detail: shown(link.detail) } : {}) })
+      } else if (b.name && Object.hasOwn(TOOLS, b.name) && TOOLS[b.name].effect === 'paid') {
+        const answer = b.id ? answers.get(b.id) : undefined
+        if (answer?.is_error && typeof answer.content === 'string' && answer.content.includes(noPrompts)) {
+          reply.links.push({ ...BUY_PROMPTS, detail: NO_PROMPTS })
+        }
       }
     }
   }
