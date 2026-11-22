@@ -12,7 +12,7 @@ import { streamAssistant } from '@/lib/assistant/sse'
 import { ActionRow, refusalMessage } from './ActionRow'
 import { PlanCard, type PlanPhase } from './PlanCard'
 import { MessageLinks } from './MessageLinks'
-import { approveRefused, budgetLine, isExpiredCode, lockedCopy, needsReapproval, REAPPROVE, tokenExpiresWithin } from './copy'
+import { approveRefused, budgetLine, isExpiredCode, lockedCopy, reapproveCopy, tokenExpiresWithin } from './copy'
 
 const EMPTY: PanelState = { messages: [], streaming: false, plan: null, budget: null, error: null }
 
@@ -283,7 +283,7 @@ export function AssistantPanel({ access, open, onClose, onRefresh }: { access: A
                   <div className={m.role === 'user' ? 'max-w-[85%] rounded-lg bg-gray-800 px-3 py-2 text-sm text-gray-100' : 'w-full space-y-2'}>
                     {m.text && <p className={`whitespace-pre-wrap break-words text-sm ${m.role === 'user' ? '' : 'text-gray-200'}`}>{m.text}</p>}
                     {actions.length > 0 && <ul className="space-y-1.5">{actions.map((a) => <ActionRow key={a.id} action={a} onUndo={undoOne} />)}</ul>}
-                    {needsReapproval(actions) && <p className="text-xs text-gray-400">{REAPPROVE}</p>}
+                    {reapproveCopy(actions) && <p className="text-xs text-gray-400">{reapproveCopy(actions)}</p>}
                     <MessageLinks links={m.links} onOpen={go} />
                   </div>
                 </div>

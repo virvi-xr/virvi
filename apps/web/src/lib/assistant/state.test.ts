@@ -3,7 +3,7 @@ import type { AssistantActionView, AssistantActivityItem, AssistantStreamEvent }
 import { appendActivity, planSteps, reduce, replaceActivity, safeHref, startReply, type PanelState } from './state'
 
 const empty: PanelState = { messages: [], streaming: true, plan: null, budget: null, error: null }
-const act = (o: Partial<AssistantActionView> = {}): AssistantActionView => ({ id: 'a1', tool: 't', label: 'L', orgName: null, status: 'running', canUndo: false, error: null, planId: null, step: null, ...o })
+const act = (o: Partial<AssistantActionView> = {}): AssistantActionView => ({ id: 'a1', tool: 't', label: 'L', orgName: null, status: 'running', canUndo: false, error: null, planId: null, step: null, detail: null, ...o })
 const run = (events: AssistantStreamEvent[], s = empty) => events.reduce(reduce, s)
 
 describe('reduce', () => {

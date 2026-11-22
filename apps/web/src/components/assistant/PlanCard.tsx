@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import type { AssistantActionView, AssistantPlanView } from '@virvixr/shared'
 import { ActionRow, refusalMessage } from './ActionRow'
-import { approveLabel } from './copy'
+import { approveLabel, expiredCopy } from './copy'
 
 /** `refused`: the approve call was turned away before any step ran (the plan card shows why). */
 export type PlanPhase = 'pending' | 'approved' | 'cancelled' | 'refused'
@@ -58,12 +58,12 @@ export function PlanCard({ plan, steps, phase, expired: refusedExpired, busy, er
     <section aria-label={card ? 'Confirm' : 'Plan'} className="rounded-lg border border-gray-700 bg-gray-950 p-3">
       <ol className="space-y-1.5">
         {steps.map((s, i) => (
-          <ActionRow key={s.id} action={s} number={card ? undefined : i + 1} detail={card && phase !== 'approved' ? plan.detail : null}
+          <ActionRow key={s.id} action={s} number={card ? undefined : i + 1}
             onUndo={phase === 'approved' ? onUndoStep : undefined} />
         ))}
       </ol>
       {expired ? (
-        <p className="mt-3 text-sm text-yellow-300" role="status">This plan expired. Ask again to get a fresh one.</p>
+        <p className="mt-3 text-sm text-yellow-300" role="status">{expiredCopy(plan)}</p>
       ) : phase === 'cancelled' ? (
         <p className="mt-3 text-sm text-gray-400" role="status">{card ? 'Cancelled.' : 'Plan cancelled.'}</p>
       ) : phase === 'refused' ? (

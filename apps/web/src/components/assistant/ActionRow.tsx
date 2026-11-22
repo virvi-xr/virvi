@@ -19,8 +19,11 @@ export function refusalMessage(err: unknown): string {
   return e?.body?.message || e?.message || 'Something went wrong.'
 }
 
-/** One change the assistant made (or tried): label, organisation, an optional `detail` line, status, and Undo while it can be undone. */
-export function ActionRow({ action, number, detail, onUndo }: { action: AssistantActionView; number?: number; detail?: string | null; onUndo?: (id: string) => Promise<void> }) {
+/**
+ * One change the assistant made (or tried): label, organisation, a card's detail (the design, cost and what is sent),
+ * an optional `note` line (the date in Settings), status, and Undo while it can be undone.
+ */
+export function ActionRow({ action, number, note, onUndo }: { action: AssistantActionView; number?: number; note?: string | null; onUndo?: (id: string) => Promise<void> }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const s = STATUS[action.status] ?? STATUS.planned
@@ -43,7 +46,8 @@ export function ActionRow({ action, number, detail, onUndo }: { action: Assistan
         <div className="min-w-0 flex-1">
           <p className="break-words text-sm text-gray-100">{action.label}</p>
           {action.orgName && <p className="text-xs text-gray-500">{action.orgName}</p>}
-          {detail && <p className="mt-0.5 text-xs text-gray-400">{detail}</p>}
+          {action.detail && <p className="mt-0.5 whitespace-pre-line break-words text-xs text-gray-400">{action.detail}</p>}
+          {note && <p className="mt-0.5 text-xs text-gray-400">{note}</p>}
           {action.status === 'failed' && action.error && <p className="mt-1 text-xs text-red-300">{action.error}</p>}
         </div>
         <Badge tone={s.tone}>{s.label}</Badge>

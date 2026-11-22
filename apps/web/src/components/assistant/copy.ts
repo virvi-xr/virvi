@@ -48,10 +48,22 @@ export function tokenExpiresWithin(token: string, ms: number, now = Date.now()):
 }
 
 export const REAPPROVE = 'Ask again to approve this plan.'
+export const RECONFIRM = 'Ask again to confirm this.'
 
-/** Steps still waiting for an approval this panel can no longer give (the plan's token only lives in its stream). */
-export function needsReapproval(actions: Array<{ status: string }>): boolean {
-  return actions.some((a) => a.status === 'awaiting_confirmation')
+/**
+ * What a reply's history says under rows still waiting after a reload (the token only lives in its stream, so this
+ * panel can no longer approve them), or null when none is. A card's row is the
+ * only one with a detail, so a waiting row with one is a card: confirmed, not approved.
+ */
+export function reapproveCopy(actions: Array<{ status: string; detail: string | null }>): string | null {
+  const waiting = actions.filter((a) => a.status === 'awaiting_confirmation')
+  if (!waiting.length) return null
+  return waiting.every((a) => a.detail !== null) ? RECONFIRM : REAPPROVE
+}
+
+/** What a plan or card says once it has expired. */
+export function expiredCopy(plan: Pick<AssistantPlanView, 'kind'>): string {
+  return plan.kind === 'card' ? 'This expired. Ask again.' : 'This plan expired. Ask again to get a fresh one.'
 }
 
 /** Whether an approve run ended refused: an error and no step that got as far as running. */

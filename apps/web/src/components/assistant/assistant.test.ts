@@ -5,7 +5,8 @@ import type { AssistantActionView, AssistantActivityItem, AssistantPlanView } fr
 import { PlanCard, type PlanPhase } from './PlanCard'
 import { MessageLinks } from './MessageLinks'
 import { ActivityList } from '../../app/(dashboard)/settings/AssistantActivity'
-import { activityDate, approveLabel, budgetLine, lockedCopy, planButtonLabel, tokenExpiresWithin, approveRefused, isExpiredCode, needsReapproval, REAPPROVE } from './copy'
+import { ActionRow } from './ActionRow'
+import { activityDate, approveLabel, budgetLine, lockedCopy, planButtonLabel, tokenExpiresWithin, approveRefused, isExpiredCode, reapproveCopy, REAPPROVE, RECONFIRM } from './copy'
 
 describe('budgetLine', () => {
   it('shows what is left when not warning', () => {
@@ -59,18 +60,23 @@ describe('approveRefused', () => {
   })
 })
 
-describe('needsReapproval', () => {
+describe('reapproveCopy', () => {
   it('asks again for steps still waiting after a reload, and not for anything else', () => {
     expect(REAPPROVE).toBe('Ask again to approve this plan.')
-    expect(needsReapproval([{ status: 'done' }, { status: 'awaiting_confirmation' }])).toBe(true)
-    expect(needsReapproval([{ status: 'done' }, { status: 'cancelled' }])).toBe(false)
-    expect(needsReapproval([])).toBe(false)
+    expect(reapproveCopy([{ status: 'done', detail: null }, { status: 'awaiting_confirmation', detail: null }])).toBe(REAPPROVE)
+    expect(reapproveCopy([{ status: 'done', detail: null }, { status: 'cancelled', detail: 'x' }])).toBeNull()
+    expect(reapproveCopy([])).toBeNull()
+  })
+  it('asks to confirm a card (the only row with a detail), never to approve a plan', () => {
+    expect(RECONFIRM).toBe('Ask again to confirm this.')
+    expect(reapproveCopy([{ status: 'awaiting_confirmation', detail: '"Neon cap": Uses 1 of your 3 prompts left today.' }])).toBe(RECONFIRM)
   })
 })
 
-const step = (o: Partial<AssistantActionView> = {}): AssistantActionView => ({ id: 's1', tool: 'send_studio_prompt', label: 'Send a prompt to Blue jacket', orgName: 'Acme', status: 'awaiting_confirmation', canUndo: false, error: null, planId: 'c1', step: 0, ...o })
+const COST = 'Uses 1 of your 3 prompts left today.'
+const step = (o: Partial<AssistantActionView> = {}): AssistantActionView => ({ id: 's1', tool: 'send_studio_prompt', label: 'Send a prompt to Blue jacket', orgName: 'Acme', status: 'awaiting_confirmation', canUndo: false, error: null, planId: 'c1', step: 0, detail: COST, ...o })
 const FUTURE = '2999-01-01T00:00:00Z'
-const card: AssistantPlanView = { planId: 'c1', kind: 'card', detail: 'Uses 1 of your 3 prompts left today.', steps: [step()], token: 't', expiresAt: FUTURE }
+const card: AssistantPlanView = { planId: 'c1', kind: 'card', detail: COST, steps: [step()], token: 't', expiresAt: FUTURE }
 const noop = () => {}
 const renderCard = (plan: AssistantPlanView, phase: PlanPhase, steps = plan.steps) => renderToStaticMarkup(createElement(PlanCard, {
   plan, steps, phase, busy: false, error: null, onApprove: noop, onCancel: noop, onUndoStep: async () => {}, onUndoAll: async () => {},
@@ -104,16 +110,35 @@ describe('PlanCard as a card', () => {
     expect(html).not.toContain('>Confirm<')
   })
 
-  it('says it expired the way a plan does', () => {
+  it('says it expired as a card, not a plan', () => {
     const html = renderCard({ ...card, expiresAt: '2000-01-01T00:00:00Z' }, 'pending')
-    expect(html).toContain('This plan expired. Ask again to get a fresh one.')
+    expect(html).toContain('This expired. Ask again.')
+    expect(html).not.toContain('plan')
     expect(html).not.toContain('>Confirm<')
+    const plan: AssistantPlanView = { ...card, kind: 'plan', detail: null, expiresAt: '2000-01-01T00:00:00Z', steps: [step({ detail: null }), step({ id: 's2', detail: null })] }
+    expect(renderCard(plan, 'pending')).toContain('This plan expired. Ask again to get a fresh one.')
+  })
+
+  it("shows the card's detail on separate lines (the text it sends included)", () => {
+    const detail = '"Neon cap": Uses 1 of your 3 prompts left today.\nSlots: hat\na neon cap with rivets'
+    const html = renderCard({ ...card, detail, steps: [step({ detail })] }, 'pending')
+    expect(html).toContain('whitespace-pre-line')
+    expect(html).toContain('a neon cap with rivets')
   })
 
   it('a plan still offers its count button and Undo all', () => {
-    const plan: AssistantPlanView = { ...card, kind: 'plan', detail: null, steps: [step({ planId: 'p' }), step({ id: 's2', planId: 'p' })] }
+    const plan: AssistantPlanView = { ...card, kind: 'plan', detail: null, steps: [step({ planId: 'p', detail: null }), step({ id: 's2', planId: 'p', detail: null })] }
     expect(renderCard(plan, 'pending')).toContain('Do these 2 changes')
     expect(renderCard(plan, 'approved', plan.steps.map((s) => ({ ...s, status: 'done' as const })))).toContain('Undo all')
+  })
+})
+
+describe('ActionRow', () => {
+  it("shows a waiting card's detail in the history (it has no token there, so no Confirm)", () => {
+    const html = renderToStaticMarkup(createElement(ActionRow, { action: step() }))
+    expect(html).toContain(COST)
+    expect(html).toContain('Waiting')
+    expect(html).not.toContain('Confirm')
   })
 })
 
@@ -135,7 +160,21 @@ describe('activityDate', () => {
 
 describe('ActivityList', () => {
   const item = (id: string, o: Partial<AssistantActivityItem> = {}): AssistantActivityItem => ({ ...step({ id, status: 'done', planId: null, step: null }), createdAt: '2026-11-20T09:05:00Z', conversationId: null, effect: 'write', ...o })
-  const render = (props: Partial<Parameters<typeof ActivityList>[0]>) => renderToStaticMarkup(createElement(ActivityList, { list: null, loadingMore: false, error: null, onMore: noop, onUndo: async () => {}, ...props }))
+  const render = (props: Partial<Parameters<typeof ActivityList>[0]>) => renderToStaticMarkup(createElement(ActivityList, { list: null, loadingMore: false, error: null, onMore: noop, onRetry: noop, onUndo: async () => {}, ...props }))
+
+  it('shows why the first page failed, with Try again', () => {
+    const html = render({ list: null, error: 'The server is down.' })
+    expect(html).toContain('The server is down.')
+    expect(html).toContain('Try again')
+    expect(html).not.toContain('Loading…')
+    expect(render({ list: { items: [item('a')], next: 'cur' }, error: 'Load more failed.' })).not.toContain('Try again')
+  })
+
+  it("shows a card's detail with its date", () => {
+    const html = render({ list: { items: [item('a', { effect: 'paid', detail: '"Neon cap": Uses 1 gifted prompt (2 left).' })], next: null } })
+    expect(html).toContain('Uses 1 gifted prompt (2 left).')
+    expect(html).toContain('Nov 2026')
+  })
 
   it('says nothing has happened yet', () => {
     expect(render({ list: { items: [], next: null } })).toContain('Nothing yet. Changes the assistant makes show here.')

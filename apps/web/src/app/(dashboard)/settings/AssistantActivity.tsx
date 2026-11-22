@@ -6,13 +6,17 @@ import { appendActivity, replaceActivity, type ActivityState } from '@/lib/assis
 import { ActionRow, refusalMessage } from '@/components/assistant/ActionRow'
 import { activityDate } from '@/components/assistant/copy'
 
-/** The rows, newest first: each change with its organization, date, status and Undo; "Load more" while there are older ones. */
-export function ActivityList({ list, loadingMore, error, onMore, onUndo }: {
-  /** null while the first page loads */
+/**
+ * The rows, newest first: each change with its organization, date, status and Undo; "Load more" while there are older
+ * ones. When the first page failed, its error and Try again.
+ */
+export function ActivityList({ list, loadingMore, error, onMore, onRetry, onUndo }: {
+  /** null while the first page loads, or when it failed (`error`) */
   list: ActivityState | null
   loadingMore: boolean
   error: string | null
   onMore: () => void
+  onRetry: () => void
   onUndo: (id: string) => Promise<void>
 }) {
   return (
@@ -26,10 +30,16 @@ export function ActivityList({ list, loadingMore, error, onMore, onUndo }: {
           <p className="text-sm text-gray-500">Nothing yet. Changes the assistant makes show here.</p>
         ) : (
           <ul className="space-y-1.5">
-            {list.items.map((a) => <ActionRow key={a.id} action={a} detail={activityDate(a.createdAt)} onUndo={onUndo} />)}
+            {list.items.map((a) => <ActionRow key={a.id} action={a} note={activityDate(a.createdAt)} onUndo={onUndo} />)}
           </ul>
         )}
         {error && <p className="mt-2 text-sm text-red-300" role="alert">{error}</p>}
+        {list === null && error && (
+          <button type="button" onClick={onRetry} disabled={loadingMore}
+            className="mt-3 rounded border border-gray-700 px-3 py-1.5 text-sm text-gray-300 hover:text-white disabled:opacity-50">
+            {loadingMore ? 'Loading…' : 'Try again'}
+          </button>
+        )}
         {list?.next && (
           <button type="button" onClick={onMore} disabled={loadingMore}
             className="mt-3 rounded border border-gray-700 px-3 py-1.5 text-sm text-gray-300 hover:text-white disabled:opacity-50">
@@ -62,6 +72,18 @@ export function AssistantActivity() {
     return () => { live = false }
   }, [api])
 
+  const retry = async () => {
+    setLoadingMore(true)
+    setError(null)
+    try {
+      setList(appendActivity(null, await api.getAssistantActivity()))
+    } catch (err) {
+      setError(refusalMessage(err))
+    } finally {
+      setLoadingMore(false)
+    }
+  }
+
   const more = async () => {
     if (!list?.next) return
     setLoadingMore(true)
@@ -82,5 +104,5 @@ export function AssistantActivity() {
   }
 
   if (!shown) return null
-  return <ActivityList list={list} loadingMore={loadingMore} error={error} onMore={more} onUndo={undo} />
+  return <ActivityList list={list} loadingMore={loadingMore} error={error} onMore={more} onRetry={retry} onUndo={undo} />
 }
