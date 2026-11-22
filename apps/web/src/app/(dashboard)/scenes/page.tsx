@@ -6,6 +6,7 @@ import { useEffect, useState, Suspense } from 'react'
 import Link from 'next/link'
 import SceneEditorPage from './[sceneId]/client'
 import { ArrowUpRightIcon, CheckIcon, CopyIcon, GridIcon, ListIcon, PlusIcon, ScenesIcon, TrashIcon, UploadIcon } from '@/components/icons'
+import { StudioTabs } from '@/components/studio/StudioTabs'
 import { DeleteSceneDialog } from '@/components/scenes/DeleteSceneDialog'
 import { RecentlyDeleted } from '@/components/scenes/RecentlyDeleted'
 import { deletedToast, restoredNote, type DeletedScene } from '@/lib/scene-delete'
@@ -131,8 +132,9 @@ function ScenesContent() {
 
   return (
     <div className="mx-auto max-w-7xl">
+      <StudioTabs active="scenes" />
       <PageHeader
-        crumbs={['Workspace', 'Scenes']}
+        crumbs={['Studio', 'Scenes']}
         title="Scenes"
         count={loading ? undefined : countLabel(scenes.length)}
         subtitle="Manage your virtual worlds."

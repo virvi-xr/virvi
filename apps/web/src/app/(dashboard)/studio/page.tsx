@@ -1,5 +1,6 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -9,11 +10,13 @@ import { countLabel } from '@/lib/format'
 import { AgentPicker } from './AgentPicker'
 import { startingAgent } from '@/lib/studio-ratings'
 import { KindPicker } from '@/components/KindPicker'
+import { StudioTabs } from '@/components/studio/StudioTabs'
 import { acceptRefusal, peopleRefusal, roleLabel, splitDesigns, type MyInvite, type PastPackage } from '@/lib/studio-people'
 import { saveBlob } from './[designId]/PaidRevisions'
 import {
-  DEFAULT_AGENT, agentLabel, categoryLabel, designBadge, giftRedeemMessage, giftRedeemSuccess, kindLabel, refusalMessage, relativeTime, usageLine,
-  type Refusal, type StudioDesign, type StudioKind, type StudioUsage,
+  DEFAULT_AGENT, agentLabel, categoryLabel, choiceBody, choiceKind, designBadge, designKindLabel, designTabFor, designTabNoun, designTabTitle,
+  filterDesigns, giftRedeemMessage, giftRedeemSuccess, refusalMessage, relativeTime, usageLine,
+  type DesignChoice, type DesignTab, type Refusal, type StudioDesign, type StudioKind, type StudioUsage,
 } from '@/lib/studio'
 
 // A design page is /studio/<id>: the static export has one page for every design, which the server serves for any id,
@@ -21,6 +24,16 @@ import {
 const designHref = (id: string) => `/studio/${id}/`
 
 export default function StudioPage() {
+  // The tab comes from ?kind= (LIV-200): useSearchParams, so switching tabs on this page re-renders it
+  return (
+    <Suspense fallback={<Skeleton />}>
+      <StudioContent />
+    </Suspense>
+  )
+}
+
+function StudioContent() {
+  const tab = designTabFor(useSearchParams().get('kind'))
   const { token, user } = useAuth()
   const api = useApi()
   const [archived, setArchived] = useState(false)
@@ -52,16 +65,19 @@ export default function StudioPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, archived])
 
-  const lists = designs ? splitDesigns(designs) : null
+  const lists = designs ? splitDesigns(filterDesigns(designs, tab)) : null
+  const title = designTabTitle(tab)
+  const noun = designTabNoun(tab)
   // A trial can't be invited or leave a design, and these routes are an account's: asking would open the sign-up sheet
   const account = !!token && !user?.trial
   return (
     <div className="mx-auto max-w-7xl">
+      <StudioTabs active={tab} />
       <PageHeader
-        crumbs={['Workspace', 'Design Studio']}
-        title="Design Studio"
+        crumbs={['Studio', title]}
+        title={title}
         count={lists ? countLabel(lists.mine.length) : undefined}
-        subtitle={usage ? usageLine(usage) : 'Design Decentraland wearables, emotes, buildings and furniture with an agent.'}
+        subtitle={usage ? usageLine(usage) : 'Design Decentraland wearables, emotes, buildings and decor with an agent.'}
         actions={
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => setShowRedeem((v) => !v)} aria-expanded={showRedeem}
@@ -79,7 +95,7 @@ export default function StudioPage() {
 
       {showRedeem && <RedeemCode onRedeemed={() => api.getStudioUsage().then(setUsage).catch(() => {})} onClose={() => setShowRedeem(false)} />}
 
-      {showCreate && <NewDesign onCancel={() => setShowCreate(false)} />}
+      {showCreate && <NewDesign key={tab} initial={tab === 'all' ? 'wearable' : tab} onCancel={() => setShowCreate(false)} />}
 
       {account && <Invites />}
 
@@ -96,10 +112,10 @@ export default function StudioPage() {
         <Skeleton />
       ) : lists.mine.length === 0 && lists.shared.length === 0 ? (
         archived ? (
-          <p className="text-gray-500">No archived designs.</p>
+          <p className="text-gray-500">No archived {noun}.</p>
         ) : (
-          <EmptyState icon={<SparkleIcon size={32} />} title="No designs yet"
-            body="Describe a wearable, an emote, a building or furniture, and an agent builds it for Decentraland."
+          <EmptyState icon={<SparkleIcon size={32} />} title={`No ${noun} yet`}
+            body={emptyBody(tab)}
             action={<PrimaryButton onClick={() => setShowCreate(true)}><PlusIcon size={16} /> New design</PrimaryButton>} />
         )
       ) : (
@@ -109,7 +125,7 @@ export default function StudioPage() {
               {lists.mine.map((d) => <DesignCard key={d.id} d={d} />)}
             </div>
           ) : (
-            <p className="text-gray-500">{archived ? 'None of your own designs are archived.' : 'You have no designs of your own yet.'}</p>
+            <p className="text-gray-500">{archived ? `None of your own ${noun} are archived.` : `You have no ${noun} of your own yet.`}</p>
           )}
           {lists.shared.length > 0 && (
             <section aria-labelledby="shared-heading" className="mt-8">
@@ -127,6 +143,15 @@ export default function StudioPage() {
   )
 }
 
+const EMPTY_BODY: Record<DesignTab, string> = {
+  all: 'Describe a wearable, an emote, a building or decor, and an agent builds it for Decentraland.',
+  wearable: 'Describe a wearable, and an agent builds it for Decentraland.',
+  emote: 'Describe an emote, and an agent animates it for Decentraland.',
+  building: 'Describe a building, and an agent builds it for your scenes.',
+  decor: 'Describe decor for a room, and an agent builds it for your scenes.',
+}
+const emptyBody = (tab: DesignTab) => EMPTY_BODY[tab]
+
 function DesignCard({ d }: { d: StudioDesign }) {
   const badge = designBadge(d)
   const shared = !!d.role && d.role !== 'owner'
@@ -136,7 +161,7 @@ function DesignCard({ d }: { d: StudioDesign }) {
         <h3 className="truncate font-semibold">{d.name}</h3>
         <Badge tone={badge.tone}>{badge.label}</Badge>
       </div>
-      <p className="mt-2 text-sm text-gray-400">{kindLabel(d.kind)} · {agentLabel(d.agent)}</p>
+      <p className="mt-2 text-sm text-gray-400">{designKindLabel(d)} · {agentLabel(d.agent)}</p>
       {shared && <p className="mt-1 truncate text-sm text-gray-400">{d.ownerName?.trim() ? `${d.ownerName.trim()}’s design` : 'Shared with you'} · {roleLabel(d.role!)}</p>}
       <p className="mt-1 text-xs text-gray-500">{d.lastJobAt ? `Last worked on ${relativeTime(d.lastJobAt, new Date())}` : `Started ${relativeTime(d.createdAt, new Date())}`}</p>
     </a>
@@ -286,9 +311,14 @@ function RedeemCode({ onRedeemed, onClose }: { onRedeemed: () => void; onClose: 
   )
 }
 
-function NewDesign({ onCancel }: { onCancel: () => void }) {
+const NAME_PLACEHOLDER: Record<DesignChoice, string> = {
+  wearable: 'Untitled design', emote: 'Untitled emote', building: 'Untitled building', decor: 'Untitled decor',
+}
+
+function NewDesign({ initial, onCancel }: { initial: DesignChoice; onCancel: () => void }) {
   const api = useApi()
-  const [kind, setKind] = useState<StudioKind>('wearable')
+  const [choice, setChoice] = useState<DesignChoice>(initial)
+  const kind = choiceKind(choice)
   const [agent, setAgent] = useState<string>(DEFAULT_AGENT)
   // The admin's default agent for each kind (LIV-142), until the person picks one themselves
   const [defaults, setDefaults] = useState<Partial<Record<StudioKind, string | null>> | null>(null)
@@ -310,7 +340,7 @@ function NewDesign({ onCancel }: { onCancel: () => void }) {
     setBusy(true)
     setRefusal(null)
     try {
-      const d = await api.createStudioDesign({ kind, agent, ...(name.trim() ? { name: name.trim() } : {}) })
+      const d = await api.createStudioDesign({ ...choiceBody(choice), agent, ...(name.trim() ? { name: name.trim() } : {}) })
       window.location.assign(designHref(d.id))
     } catch (err) {
       setRefusal(refusalMessage(err as never, new Date()))
@@ -322,7 +352,7 @@ function NewDesign({ onCancel }: { onCancel: () => void }) {
     <form onSubmit={create} className="mb-6 space-y-4 rounded-lg border border-gray-800 bg-gray-900 p-4">
       <fieldset>
         <legend className="mb-2 text-sm text-gray-400">What are you making?</legend>
-        <KindPicker value={kind} onChange={setKind} />
+        <KindPicker value={choice} onChange={setChoice} />
       </fieldset>
       <fieldset>
         <legend className="mb-2 text-sm text-gray-400">Who builds it?</legend>
@@ -331,7 +361,7 @@ function NewDesign({ onCancel }: { onCancel: () => void }) {
       <label className="block">
         <span className="mb-2 block text-sm text-gray-400">Name (optional)</span>
         <input type="text" value={name} onChange={(e) => setName(e.target.value)} maxLength={120}
-          placeholder={kind === 'emote' ? 'Untitled emote' : kind === 'scene' ? 'Untitled scene piece' : 'Untitled design'}
+          placeholder={NAME_PLACEHOLDER[choice]}
           className="w-full max-w-md rounded-md border border-gray-800 bg-gray-950 px-4 py-2 text-white outline-none focus:border-blue-400" />
       </label>
       {refusal && (

@@ -16,7 +16,7 @@ import type { AuthChain } from '@dcl/crypto'
 import type { ParcelGrant, ParcelRevoke } from './parcel-grant'
 import type { ArFileFormat, ArMounting } from './ar'
 import { adminDesignsQuery, type AdminDesign } from './studio-support'
-import type { AdminWallEntry, WallState, AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminHelpRequest, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioMember, StudioMessage, StudioSet, StudioUpload, StudioUsage } from './studio'
+import type { AdminWallEntry, WallState, AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminHelpRequest, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, SceneShape, StudioDesign, StudioDetail, StudioKind, StudioMember, StudioMessage, StudioSet, StudioUpload, StudioUsage } from './studio'
 import type { PromptHelp } from './studio-prompt'
 import type { NotificationItem } from './notifications'
 import type { InviteLinkView, InviteRole, InviteTarget, MyInvite, PastPackage, StudioInvite } from './studio-people'
@@ -1082,7 +1082,7 @@ function useRealApi() {
     // Design Studio
     getStudioUsage: () => apiFetch<StudioUsage>('/api/studio/usage'),
     getStudioDesigns: (archived = false) => apiFetch<StudioDesign[]>(`/api/studio/designs${archived ? '?archived=true' : ''}`),
-    createStudioDesign: (body: { kind: StudioKind; agent: string; name?: string }) =>
+    createStudioDesign: (body: { kind: StudioKind; sceneShape?: SceneShape; agent: string; name?: string }) =>
       apiFetch<StudioDesign>('/api/studio/designs', { method: 'POST', body: JSON.stringify(body) }),
     getStudioDesign: (id: string) => apiFetch<StudioDetail>(`/api/studio/designs/${id}`),
     // 👍 / 👎 on a revision (LIV-142), and a 👎's free try-again
