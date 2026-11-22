@@ -20,8 +20,10 @@ public struct EditableItemComponent: Component {
 @MainActor
 public final class SceneRenderer {
     public let root = Entity()
+    /// Video and sound play muted until this is on. Changing it acts in place: the videos already playing are
+    /// unmuted or muted and the sounds started or stopped, and nothing else is touched.
     public var soundOn = false {
-        didSet { if soundOn != oldValue { rebuild() } }
+        didSet { if soundOn != oldValue { applySound() } }
     }
 
     /// Called once an item's visible content is in place (a model only after it has loaded), so platform code can
@@ -94,6 +96,8 @@ public final class SceneRenderer {
     // MARK: - Lookup (for local edits)
 
     public func entity(for key: String) -> Entity? { shown[key] }
+    /// A video item's player; for tests.
+    func player(for key: String) -> AVPlayer? { players[key]?.0 }
     public func item(for key: String) -> RenderItem? { plan.first { $0.key == key } }
     /// What the last snapshot shows, in plan order.
     public var items: [RenderItem] { plan }
@@ -145,11 +149,17 @@ public final class SceneRenderer {
         return Transform(scale: scale, rotation: m.orientation.float, translation: SIMD3<Float>(m.position))
     }
 
-    private func rebuild() {
-        let current = plan
-        for item in current { remove(item.key) }
-        plan = []
-        apply(current)
+    private func applySound() {
+        for (player, _) in players.values { player.isMuted = !soundOn }
+        for item in plan where item.kind == .audio {
+            guard let group = shown[item.key] else { continue }
+            // A new token, so a sound still loading from before the change is dropped.
+            let token = UUID()
+            tokens[item.key] = token
+            group.stopAllAudio()
+            group.components.remove(SpatialAudioComponent.self)
+            addSound(item, to: group, alive: { [weak self] in self?.tokens[item.key] == token })
+        }
     }
 
     // MARK: - Items
