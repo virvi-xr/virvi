@@ -13,7 +13,7 @@ export type GiveawayClaimStatus = (typeof GIVEAWAY_CLAIM_STATUSES)[number]
 export const GIVEAWAY_PAUSE_REASONS = ['low_gas', 'not_minter', 'not_approved', 'rpc_down'] as const
 export type GiveawayPauseReason = (typeof GIVEAWAY_PAUSE_REASONS)[number]
 
-export const GIVEAWAY_FAIL_REASONS = ['sold_out', 'reverted', 'ended'] as const
+export const GIVEAWAY_FAIL_REASONS = ['sold_out', 'reverted', 'ended', 'replaced', 'item_removed'] as const
 export type GiveawayFailReason = (typeof GIVEAWAY_FAIL_REASONS)[number]
 
 /** The gas estimate per minted token, used for "claims covered". */

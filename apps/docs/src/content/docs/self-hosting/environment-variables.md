@@ -192,6 +192,17 @@ These connect the server to the [streaming media server](/docs/self-hosting/dock
 | `DCL_WORLDS_URL` | `https://worlds-content-server.decentraland.org` | Worlds content server. |
 | `DCL_MAP_MANIFEST_URL` | `https://abgen-cdn.decentraland.org/LOD/lods-unity/manifests` | Where map snapshots are looked up. |
 
+## Wearable giveaways
+
+Automatic wearable giveaways (see [Drops](/docs/dashboard/drops/)) mint from a wallet the server makes for each giveaway. They are off unless `GIVEAWAY_WALLET_SECRET` is set; the server starts normally without it.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `GIVEAWAY_WALLET_SECRET` | none | 64 hex characters (`openssl rand -hex 32`). Seals each giveaway wallet's private key. Unset, automatic giveaways are off. A malformed value stops the server from starting. Back it up: if you lose it, the POL in every giveaway wallet is lost. |
+| `GIVEAWAY_GAS_KEY` | none | Private key (32-byte hex) of the shared gas-tank wallet that tops up giveaways of paid accounts. Unset, every host funds their own giveaway wallet. A malformed key stops the server from starting. |
+| `GIVEAWAY_GAS_TANK_MIN_POL` | `5` | The gas tank's floor on Polygon, in POL. Below it, top-ups stop and admins are warned. |
+| `GIVEAWAY_JOB_EVERY_MS` | `15000` | How often the minting job runs, in milliseconds. |
+
 ## Hosted Hyperfy worlds
 
 Optional. "Create a hosted world" appears only when `HYPERFY_INFRA_PROVIDER=fly` and all of these are set: `FLY_API_TOKEN`, `FLY_WORLDS_ORG`, `HYPERFY_IMAGE`, `HYPERFY_WORLDS_DB_URL_TEMPLATE` (a `postgres://` URL containing `{user}` and `{password}`), `HYPERFY_ASSETS_S3_URI`, `HYPERFY_ASSETS_BASE_URL`, `HYPERFY_ROUTER_DOMAIN` and `HYPERFY_SECRET_KEY` (32 bytes of hex). `HYPERFY_WORLDS_DB_MODE` is `fly-job` (default with Fly; uses the `HYPERFY_DB_JOB_APP` app, default `vlm-worlds-db-jobs`) or `direct` (needs `HYPERFY_WORLDS_DATABASE_URL`).
