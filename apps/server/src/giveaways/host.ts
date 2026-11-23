@@ -10,7 +10,7 @@ import { giveawayClaimMints, giveawayClaims, giveawayItems, giveaways, giveawayS
 import type { Actor } from '../auth/actor.js'
 import { verifiedWalletsOf } from '../analytics/claims.js'
 import { mayRunBeatsIn, sceneExists } from '../beats/service.js'
-import { GIVEAWAY_TRANSFER_GAS, GiveawayRpcError, giveawayChainClient } from './chain.js'
+import { GIVEAWAY_TRANSFER_GAS, GiveawayRpcError, giveawayChainClient, type GiveawayChainClient } from './chain.js'
 import { GiveawayError } from './errors.js'
 import { newGiveawayWallet } from './keys.js'
 import { creatorItems } from './marketplace.js'
@@ -78,8 +78,7 @@ function parseTime(v: unknown, label: string): Date | null {
 
 type ItemRef = { contractAddress: string; itemId: string }
 
-async function checkItems(g: GiveawayRow, items: ItemRef[]): Promise<GiveawayMintCheck[]> {
-  const client = giveawayChainClient(g.chain)
+async function checkItems(g: GiveawayRow, items: ItemRef[], client: GiveawayChainClient = giveawayChainClient(g.chain)): Promise<GiveawayMintCheck[]> {
   return Promise.all(items.map(async ({ contractAddress, itemId }) => {
     if (!g.walletAddress) return { contractAddress, itemId, state: 'not_minter' as const, remaining: 0 }
     const s = await client.itemState(contractAddress, itemId, g.walletAddress)
@@ -95,12 +94,12 @@ const byItem = (a: { contractAddress: string | null; itemId: string | null }, b:
 
 /**
  * Reads every item's minter state on chain and stores it on the item (mintState, remaining, checkedAt). Items without a
- * contract (rows from before LIV-194) are left out. Throws the chain's GiveawayRpcError.
+ * contract (rows from before LIV-194) are left out. Throws the chain's GiveawayRpcError. `client` defaults to the chain's.
  */
-export async function mintCheck(g: GiveawayRow): Promise<GiveawayMintCheck[]> {
+export async function mintCheck(g: GiveawayRow, client?: GiveawayChainClient): Promise<GiveawayMintCheck[]> {
   const rows = (await db.select().from(giveawayItems).where(eq(giveawayItems.giveawayId, g.id))).sort(byItem)
   const refs = rows.filter((r) => r.contractAddress && r.itemId)
-  const results = await checkItems(g, refs.map((r) => ({ contractAddress: r.contractAddress!, itemId: r.itemId! })))
+  const results = await checkItems(g, refs.map((r) => ({ contractAddress: r.contractAddress!, itemId: r.itemId! })), client)
   const now = new Date()
   for (const [i, r] of refs.entries()) {
     await db.update(giveawayItems).set({ mintState: results[i].state, remaining: results[i].remaining, checkedAt: now }).where(eq(giveawayItems.id, r.id))

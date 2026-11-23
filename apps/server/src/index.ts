@@ -24,6 +24,7 @@ import { startAnalyticsJobs } from './analytics/jobs.js'
 import { initBus } from './realtime/bus.js'
 import { installProcessErrorHandlers, startErrorJobs } from './errors/jobs.js'
 import { startBeatJobs } from './beats/job.js'
+import { startGiveawayJob } from './giveaways/job.js'
 import { BEAT_JOB_EVERY_MS } from '@virvixr/shared'
 
 async function main() {
@@ -129,6 +130,10 @@ async function main() {
   if (config.beats.enabled) {
     startBeatJobs()
     console.log(`[virvi-server] BEAT minting job every ${BEAT_JOB_EVERY_MS}ms`)
+  }
+  if (config.giveaways.enabled) {
+    startGiveawayJob()
+    console.log(`[virvi-server] Giveaway minting job every ${config.giveaways.jobEveryMs}ms`)
   }
 
   console.log(`[virvi-server] Ready at ${config.publicUrl}`)

@@ -35,7 +35,7 @@ describe('giveaway funding (LIV-194)', () => {
     for (let i = 0; i < items; i++) await db.insert(giveawayItems).values({ giveawayId: g.id, contractAddress: randomWallet(), itemId: String(i) })
     return g
   }
-  async function tx(g: typeof giveaways.$inferSelect, kind: 'topup' | 'mint' | 'withdraw', over: Partial<typeof giveawayTxs.$inferInsert>) {
+  async function tx(g: typeof giveaways.$inferSelect, kind: 'topup' | 'mint' | 'withdraw' | 'return', over: Partial<typeof giveawayTxs.$inferInsert>) {
     await db.insert(giveawayTxs).values({ giveawayId: g.id, chain: 'polygon', kind, fromAddress: randomWallet(), toAddress: g.walletAddress!, status: 'confirmed', ...over })
   }
 
@@ -43,11 +43,11 @@ describe('giveaway funding (LIV-194)', () => {
     it('counts gas against Virvi top-ups first and never pays out the float', () => {
       const acc = (topUps: string, gas: string) => {
         const topUpsWei = pol(topUps), coveredGasWei = pol(gas)
-        return { topUpsWei, coveredGasWei, virviUnspentWei: topUpsWei > coveredGasWei ? topUpsWei - coveredGasWei : 0n }
+        return { topUpsWei, coveredGasWei, returnedWei: 0n, virviUnspentWei: topUpsWei > coveredGasWei ? topUpsWei - coveredGasWei : 0n }
       }
       expect(withdrawableWei(pol('2'), acc('1', '0.3'))).toBe(pol('1.3'))
       expect(withdrawableWei(pol('1'), acc('0.2', '0.5'))).toBe(pol('1'))
-      expect(withdrawableWei(pol('0.5'), { topUpsWei: pol('0.7'), coveredGasWei: 0n, virviUnspentWei: pol('0.7') })).toBe(0n)
+      expect(withdrawableWei(pol('0.5'), { topUpsWei: pol('0.7'), coveredGasWei: 0n, returnedWei: 0n, virviUnspentWei: pol('0.7') })).toBe(0n)
     })
   })
 
@@ -65,18 +65,27 @@ describe('giveaway funding (LIV-194)', () => {
       await tx(other, 'topup', { valueWei: pol('3').toString() })
 
       const acc = await accounting(g.id)
-      expect(acc).toEqual({ topUpsWei: pol('1'), coveredGasWei: pol('0.3'), virviUnspentWei: pol('0.7') })
+      expect(acc).toEqual({ topUpsWei: pol('1'), coveredGasWei: pol('0.3'), returnedWei: 0n, virviUnspentWei: pol('0.7') })
       expect(withdrawableWei(pol('2'), acc)).toBe(pol('1.3'))
     })
 
     it('is zero for a giveaway with no transactions, and never negative', async () => {
       const g = await giveaway()
-      expect(await accounting(g.id)).toEqual({ topUpsWei: 0n, coveredGasWei: 0n, virviUnspentWei: 0n })
+      expect(await accounting(g.id)).toEqual({ topUpsWei: 0n, coveredGasWei: 0n, returnedWei: 0n, virviUnspentWei: 0n })
       await tx(g, 'topup', { valueWei: pol('0.2').toString() })
       await tx(g, 'mint', { feeWei: pol('0.5').toString(), covered: true })
       const acc = await accounting(g.id)
       expect(acc.virviUnspentWei).toBe(0n)
       expect(withdrawableWei(pol('1'), acc)).toBe(pol('1'))
+    })
+
+    it('takes confirmed returns (value and fee) off the float', async () => {
+      const g = await giveaway()
+      await tx(g, 'topup', { valueWei: pol('1').toString() })
+      await tx(g, 'mint', { feeWei: pol('0.1').toString(), covered: true })
+      await tx(g, 'return', { valueWei: pol('0.5').toString(), feeWei: pol('0.01').toString() })
+      await tx(g, 'return', { valueWei: pol('0.3').toString(), status: 'sent' }) // not confirmed
+      expect(await accounting(g.id)).toEqual({ topUpsWei: pol('1'), coveredGasWei: pol('0.1'), returnedWei: pol('0.51'), virviUnspentWei: pol('0.39') })
     })
   })
 

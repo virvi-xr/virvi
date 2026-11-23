@@ -13,7 +13,7 @@ import { giveawayChainClient } from './chain.js'
  */
 
 export type GiveawayRow = typeof giveaways.$inferSelect
-export interface GiveawayAccounting { topUpsWei: bigint; coveredGasWei: bigint; virviUnspentWei: bigint }
+export interface GiveawayAccounting { topUpsWei: bigint; coveredGasWei: bigint; returnedWei: bigint; virviUnspentWei: bigint }
 export interface GiveawayFunding {
   balanceWei: string; withdrawableWei: string; claimsCovered: number; covered: boolean; tankMissing: boolean; lowGas: boolean
 }
@@ -32,15 +32,21 @@ export async function ownerIsPaid(ownerId: string): Promise<boolean> {
   return sub.status === 'active' && (PAID_TIERS as readonly string[]).includes(sub.tier)
 }
 
-/** Confirmed top-ups from the tank, and the fees of confirmed mints whose gas the tank covered. */
+/**
+ * Confirmed top-ups from the tank, the fees of confirmed mints whose gas the tank covered, and what confirmed returns
+ * sent back to the tank (value plus their fee, which the float paid).
+ */
 export async function accounting(giveawayId: string): Promise<GiveawayAccounting> {
   const [row] = await db.select({
     topUps: sql<string>`coalesce(sum(${giveawayTxs.valueWei}) filter (where ${giveawayTxs.kind} = 'topup'), 0)::text`,
     coveredGas: sql<string>`coalesce(sum(${giveawayTxs.feeWei}) filter (where ${giveawayTxs.kind} = 'mint' and ${giveawayTxs.covered}), 0)::text`,
+    returned: sql<string>`coalesce(sum(${giveawayTxs.valueWei} + coalesce(${giveawayTxs.feeWei}, 0)) filter (where ${giveawayTxs.kind} = 'return'), 0)::text`,
   }).from(giveawayTxs).where(and(eq(giveawayTxs.giveawayId, giveawayId), eq(giveawayTxs.status, 'confirmed')))
   const topUpsWei = BigInt(row?.topUps ?? '0')
   const coveredGasWei = BigInt(row?.coveredGas ?? '0')
-  return { topUpsWei, coveredGasWei, virviUnspentWei: topUpsWei > coveredGasWei ? topUpsWei - coveredGasWei : 0n }
+  const returnedWei = BigInt(row?.returned ?? '0')
+  const spent = coveredGasWei + returnedWei
+  return { topUpsWei, coveredGasWei, returnedWei, virviUnspentWei: topUpsWei > spent ? topUpsWei - spent : 0n }
 }
 
 /** The host's share of the balance: max(0, balance − Virvi's unspent float). */
