@@ -5,6 +5,7 @@ import {
 import { db } from '../db/connection.js'
 import { giveawayClaimMints, giveawayClaims, giveawayItems, giveaways, giveawayScenes, giveawayTxs } from '../db/schema.js'
 import { checkInDelta } from '../presence/attendance.js'
+import { beatLiveSince } from '../beats/live.js'
 import { isVirviAdmin } from '../auth/admin.js'
 import { isWalletBlocked } from '../auth/wallet-blocks.js'
 import { platformCheck } from '../beats/platform-checks.js'
@@ -68,8 +69,10 @@ async function visible(g: GiveawayRow, exec: Exec = db): Promise<boolean> {
 
 async function itemsOf(exec: Exec, giveawayId: string): Promise<ItemRow[]> {
   const rows = await exec.select().from(giveawayItems).where(eq(giveawayItems.giveawayId, giveawayId))
+  // Item ids are decimal strings: by length, then as strings, is numeric order without parsing (a bad id can't throw)
+  const id = (r: ItemRow) => r.itemId ?? ''
   return rows.sort((a, b) => (a.contractAddress ?? '').toLowerCase().localeCompare((b.contractAddress ?? '').toLowerCase()) ||
-    Number(BigInt(a.itemId ?? '0') - BigInt(b.itemId ?? '0')))
+    id(a).length - id(b).length || (id(a) < id(b) ? -1 : id(a) > id(b) ? 1 : 0))
 }
 
 /** Why a running giveaway takes no new claim, or null when it does: `closed` at the cap, `sold_out` without supply. */
@@ -79,8 +82,9 @@ async function shut(exec: Exec, g: GiveawayRow, items: ItemRow[]): Promise<'clos
   const past = counted.reduce((n, r) => n + r.n, 0)
   if (g.claimCap !== null && past >= g.claimCap) return 'closed'
   const queued = counted.filter((r) => r.status && QUEUED.includes(r.status)).reduce((n, r) => n + r.n, 0)
-  // Every item must be mintable (the last mint check) with supply left beyond the claims already queued
-  if (!items.length || items.some((i) => !i.contractAddress || !i.itemId || i.mintState !== 'ready' || i.remaining === null || i.remaining <= queued)) {
+  // Sold out: an item the last mint check found sold out, or whose supply the queued claims already take. A recoverable
+  // pause (not_minter, not_approved, low gas) keeps the card: claims queue and mint once it's fixed
+  if (!items.length || items.some((i) => !i.contractAddress || !i.itemId || i.mintState === 'sold_out' || i.remaining === null || i.remaining <= queued)) {
     return 'sold_out'
   }
   return null
@@ -212,16 +216,22 @@ function inWindowSeconds(g: GiveawayRow, now: Date, addSeconds: number): number 
   return to > from ? Math.floor((to - from) / 1000) : 0
 }
 
-/** A check-in: the time since the last one (checkInDelta, capped) counts while the claim is `present`, inside the window. */
+/**
+ * A check-in: the time since the last one (checkInDelta, capped) counts while the claim is `present`, but only the part
+ * inside the window and since the user's live room connection from this scene opened (beats/live.ts, the same store
+ * BEATs use). With no live connection the check-in is accepted and credits nothing.
+ */
 export async function checkInGiveaway(sceneId: string, id: string, userId: string, now = new Date()): Promise<{ giveaway: VisitorGiveaway }> {
   const g = await giveawayOnScene(sceneId, id)
+  const liveSince = await beatLiveSince(sceneId, userId)
   await db.transaction(async (tx) => {
     const [claim] = await tx.select().from(giveawayClaims).where(and(eq(giveawayClaims.giveawayId, g.id), eq(giveawayClaims.userId, userId))).for('update')
     if (!claim) throw notTracking()
     if (claim.status !== 'present') return
     const { accepted, addSeconds } = checkInDelta(claim.lastSeenAt, now)
     if (!accepted) return
-    const add = inWindowSeconds(g, now, addSeconds)
+    const live = liveSince === null ? 0 : Math.max(0, Math.min(addSeconds, Math.floor((now.getTime() - liveSince) / 1000)))
+    const add = inWindowSeconds(g, now, live)
     await tx.update(giveawayClaims).set({ lastSeenAt: now, secondsPresent: sql`coalesce(${giveawayClaims.secondsPresent}, 0) + ${add}` })
       .where(eq(giveawayClaims.id, claim.id))
   })

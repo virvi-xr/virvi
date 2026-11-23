@@ -85,6 +85,8 @@ export class VirviSceneRoom extends Room {
   private beatLive: Map<string, { userId: string; since: number }> = new Map()
   /** Whether the scene has a BEAT in its card window (paid or live): presence is only written while it does (M-9). */
   private beatOpen = false
+  /** The scene has an open giveaway: its check-ins need the same live mark (LIV-194). */
+  private giveawayOpen = false
   private accessCache: Map<string, { access: SceneAccess; at: number }> = new Map()
   private lastAccess: Map<string, VenueAccessMessage> = new Map()
   private onVenueEventBound = (e: VenueEvent) => this.onVenueEvent(e)
@@ -453,13 +455,19 @@ export class VirviSceneRoom extends Room {
     await this.markBeatLive(client, actor)
   }
 
-  /** A signed-in visitor on a scene pass for this scene counts as live in the scene for BEAT check-ins from now on. */
+  /** Live presence backs BEAT and giveaway check-ins alike: tracked while either is switched on. */
+  private liveTracked() {
+    return config.beats.enabled || config.giveaways.enabled
+  }
+
+  /** A signed-in visitor on a scene pass for this scene counts as live in the scene for BEAT and giveaway check-ins from now on. */
   private async markBeatLive(client: Client, actor: Actor) {
-    if (!this.sceneId || !config.beats.enabled || !actor?.userId || !this.passExpiry.has(client.sessionId)) return
+    if (!this.sceneId || !this.liveTracked() || !actor?.userId || !this.passExpiry.has(client.sessionId)) return
     if (!this.clientMeta.has(client.sessionId)) return // left while joining
     const entry = { userId: actor.userId, since: Date.now() }
     this.beatLive.set(client.sessionId, entry)
-    if (!this.beatOpen) return // tracked, but only written once the scene has a BEAT open (the refresh looks again)
+    // Tracked, but only written once the scene has a BEAT or a giveaway open (the refresh looks again)
+    if (!this.beatOpen && !this.giveawayOpen) return
     try {
       await markBeatLive(this.sceneId, entry.userId, entry.since)
     } catch (err) {
@@ -469,21 +477,23 @@ export class VirviSceneRoom extends Room {
 
   /**
    * Keeps each live user's mark from expiring, with the time their oldest open connection here opened. Only while the
-   * scene has a BEAT open (M-9), and never for a connection whose scene pass expired without a renewal: it stops counting.
+   * scene has a BEAT or a giveaway open (M-9), and never for a connection whose scene pass expired without a renewal: it
+   * stops counting.
    */
   private async refreshBeatLive() {
-    if (!config.beats.enabled || !this.beatLive.size) return
+    if (!this.liveTracked() || !this.beatLive.size) return
     const now = Date.now()
     for (const sessionId of [...this.beatLive.keys()]) {
       const exp = this.passExpiry.get(sessionId)
       if (!exp || exp <= now) this.dropBeatLive(sessionId)
     }
     try {
-      this.beatOpen = (await availableBeat(this.sceneId)) !== null
+      this.beatOpen = config.beats.enabled && (await availableBeat(this.sceneId)) !== null
+      this.giveawayOpen = config.giveaways.enabled && (await availableGiveaway(this.sceneId)) !== null
     } catch {
       return
     }
-    if (!this.beatOpen) return
+    if (!this.beatOpen && !this.giveawayOpen) return
     const oldest = new Map<string, number>()
     for (const { userId, since } of this.beatLive.values()) oldest.set(userId, Math.min(since, oldest.get(userId) ?? since))
     for (const [userId, since] of oldest) {
@@ -524,7 +534,9 @@ export class VirviSceneRoom extends Room {
   private async sendGiveawayAvailable(client: Client) {
     if (!this.sceneId || !config.giveaways.enabled) return
     try {
-      client.send('giveaway_available', { giveaway: await availableGiveaway(this.sceneId) })
+      const giveaway = await availableGiveaway(this.sceneId)
+      this.giveawayOpen = giveaway !== null
+      client.send('giveaway_available', { giveaway })
     } catch (err) {
       console.error('[VirviSceneRoom] giveaway availability failed:', err)
     }

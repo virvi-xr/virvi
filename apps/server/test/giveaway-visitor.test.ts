@@ -6,6 +6,7 @@ import { db } from '../src/db/connection.js'
 import { giveawayClaimMints, giveawayClaims, giveawayItems, giveaways, giveawayScenes, giveawayTxs, walletBlocks } from '../src/db/schema.js'
 import { issueScenePass, sceneClaims } from '../src/auth/scene-pass.js'
 import { setBeatPlatformCheckForTests } from '../src/beats/platform-checks.js'
+import { clearBeatLive, markBeatLive } from '../src/beats/live.js'
 import { availableGiveaway } from '../src/giveaways/visitor.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, randomWallet, testApp, type TestUser } from './helpers/factories.js'
@@ -59,6 +60,9 @@ describe('giveaway visitor routes (LIV-194)', () => {
   interface Visitor { user: TestUser; wallet: string; pass: (sceneId?: string) => string }
   async function visitor(wallet = randomWallet()): Promise<Visitor> {
     const user = await createUser({ wallet })
+    // In the scene's room since long ago (live presence; the check-in tests cover it)
+    await markBeatLive(sceneA, user.id, 1)
+    await markBeatLive(sceneB, user.id, 1)
     return { user, wallet: wallet.toLowerCase(), pass: (sceneId = sceneA) => issueScenePass(app, user as any, wallet, { sceneId, locationId: null }).accessToken }
   }
   const go = (method: string, url: string, token: string, payload?: unknown) =>
@@ -146,7 +150,7 @@ describe('giveaway visitor routes (LIV-194)', () => {
       expect((await current(v)).json().giveaway).toMatchObject({ id: g.id, test: true })
     })
 
-    it('closes when the claims queued reach an item\'s remaining supply, or an item can no longer be minted', async () => {
+    it('closes when the claims queued reach an item\'s remaining supply, or an item is sold out', async () => {
       const g = await seed({}, [sceneA], 1)
       const first = await present(g, 600)
       expect((await claim(first, g)).statusCode).toBe(200)
@@ -158,8 +162,29 @@ describe('giveaway visitor routes (LIV-194)', () => {
       const g2 = await seed({}, [sceneB])
       const late = await visitor()
       expect((await current(late, sceneB)).json().giveaway).toMatchObject({ id: g2.id })
-      await db.update(giveawayItems).set({ mintState: 'not_minter' }).where(and(eq(giveawayItems.giveawayId, g2.id), eq(giveawayItems.itemId, '1')))
+      await db.update(giveawayItems).set({ mintState: 'sold_out' }).where(and(eq(giveawayItems.giveawayId, g2.id), eq(giveawayItems.itemId, '1')))
       expect((await current(late, sceneB)).json()).toEqual({ giveaway: null })
+    })
+
+    it('a recoverable pause (not_minter, not_approved) keeps the card and takes claims, which wait', async () => {
+      const g = await seed()
+      await db.update(giveawayItems).set({ mintState: 'not_minter' }).where(and(eq(giveawayItems.giveawayId, g.id), eq(giveawayItems.itemId, '1')))
+      await db.update(giveawayItems).set({ mintState: 'not_approved' }).where(and(eq(giveawayItems.giveawayId, g.id), eq(giveawayItems.contractAddress, C2)))
+      await db.update(giveaways).set({ pausedReason: 'not_minter', pausedAt: new Date() }).where(eq(giveaways.id, g.id))
+      const v = await visitor()
+      expect((await current(v)).json().giveaway).toMatchObject({ id: g.id })
+      await present(g, 600, v)
+      const res = await claim(v, g)
+      expect(res.statusCode, res.body).toBe(200)
+      expect(res.json().giveaway.claim.status).toBe('waiting')
+    })
+
+    it('a non-numeric item id does not break the card', async () => {
+      const g = await seed()
+      await db.update(giveawayItems).set({ itemId: 'not-a-number' }).where(and(eq(giveawayItems.giveawayId, g.id), eq(giveawayItems.itemId, '1')))
+      const res = await current(await visitor())
+      expect(res.statusCode, res.body).toBe(200)
+      expect(res.json().giveaway.items).toHaveLength(3)
     })
 
     it('a sent claim carries its transaction link', async () => {
@@ -240,6 +265,23 @@ describe('giveaway visitor routes (LIV-194)', () => {
   })
 
   describe('check-in', () => {
+    it('with no live room connection a check-in is accepted and adds nothing; with one it adds time', async () => {
+      const g = await seed()
+      const v = await present(g, 0)
+      await clearBeatLive(sceneA, v.user.id)
+      const back = () => db.update(giveawayClaims).set({ lastSeenAt: at(-30_000) }).where(eq(giveawayClaims.userId, v.user.id))
+      await back()
+      const none = await checkin(v, g)
+      expect(none.statusCode, none.body).toBe(200)
+      expect(none.json().giveaway.claim.secondsPresent).toBe(0)
+      // Live only for the last 10 seconds: only those count
+      await markBeatLive(sceneA, v.user.id, Date.now() - 10_000)
+      await back()
+      const some = (await checkin(v, g)).json().giveaway.claim.secondsPresent
+      expect(some).toBeGreaterThanOrEqual(9)
+      expect(some).toBeLessThanOrEqual(11)
+    })
+
     it('adds the time since the last check-in', async () => {
       const g = await seed()
       const v = await present(g, 0)
