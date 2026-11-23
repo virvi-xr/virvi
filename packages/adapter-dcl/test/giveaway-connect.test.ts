@@ -18,7 +18,7 @@ const giveaway = (over: Partial<VisitorGiveaway> = {}): VisitorGiveaway => ({
   id: 'g1', name: 'Winter drop', items: [{ name: 'Scarf', thumbnail: null, rarity: null }], endsAt: null, minPresentSeconds: 300, test: false, claim: null, ...over,
 })
 const claim = (status: NonNullable<VisitorGiveaway['claim']>['status'], secondsPresent = 0, txUrl: string | null = null) =>
-  ({ claim: { status, secondsPresent, txUrl, failReason: null } })
+  ({ claim: { status, secondsPresent, txUrl, failReason: null, delayed: false } })
 const httpError = (status: number, body: Record<string, unknown>) => new Error(`HTTP ${status}: ${JSON.stringify(body)}`)
 const flush = () => new Promise((r) => setTimeout(r, 0))
 const clock = { ms: Date.parse('2026-11-23T10:00:00.000Z') }

@@ -29,7 +29,7 @@ When a visitor claims, Virvi mints one of each item in the giveaway to that visi
    - **Name.**
    - **Items:** choose the wearables to give away, from collections you created. They are found through the wallets linked to your account, so link the wallet that created the collection first. A visitor gets **one of every item** in the giveaway.
    - **Starts** and **Ends** (optional). Leave them empty to start when you switch it on and run until you switch it off.
-   - **Claim limit** (optional): the most people who can claim. Leave it empty for no limit.
+   - **Claim limit** (optional): the most people who can claim. Leave it empty for no limit. Claims that failed don't count toward it.
    - **Minimum minutes in the scene** (optional): how long a visitor must stay in your scene before they can claim.
    - **Scenes:** the scenes where visitors see the giveaway.
 3. Add the giveaway's wallet as a minter (next section), fund it if you need to, then switch the giveaway on.
@@ -70,6 +70,8 @@ Only your own POL can be sent back. Fees Virvi covered are never part of it.
 
 You can't delete a giveaway that still holds your POL. Send it back first (or leave it if it's too small to be worth sending).
 
+To delete your Virvi account, delete your giveaways first. That way no POL is left in a wallet nobody can reach.
+
 ## What visitors see
 
 When a giveaway is open in a scene (switched on, inside its dates, with claims and wearables left), a **giveaway card** appears. It shows the items' names and pictures and what the visitor needs.
@@ -103,7 +105,7 @@ During these pauses visitors can still claim. Claims wait, the card shows **On i
 
 ## Ending a giveaway
 
-Switch it off, or let its end date pass. When it ends, anything still waiting is sent first. Deleting it needs your leftover POL sent back first, and any claims still waiting are cancelled, so visitors' pending sends don't arrive.
+Switch it off, or let its end date pass. Either way new claims stop, and anything already waiting is still sent. Deleting it needs your leftover POL sent back first, and any claims still waiting are cancelled, so visitors' pending sends don't arrive.
 
 ## Not available
 

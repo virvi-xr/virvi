@@ -106,7 +106,14 @@ export function giveawayState(
   }
 }
 
-const FAIL_REASONS: Record<string, string> = { sold_out: 'this giveaway ran out.' }
+/** A final failure's short reason (anything else reads "something went wrong."). */
+const FAIL_REASONS: Record<string, string> = {
+  sold_out: 'this giveaway ran out.',
+  ended: 'this giveaway ended.',
+  item_removed: 'the host removed an item.',
+  reverted: 'the collection refused the mint.',
+  replaced: 'Virvi is checking what happened.',
+}
 
 export function giveawayCardView(g: CardGiveaway | null, ui: GiveawayUi, now: number = Date.now()): GiveawayViewModel {
   const state = giveawayState(g, ui, now)
@@ -139,7 +146,8 @@ function view(g: VisitorGiveaway, state: GiveawayCardState, ui: GiveawayUi, now:
     case 'ready':
       return { ...base, actions: [{ id: 'claim', label: 'Claim' }, { id: 'stop', label: STOP_LABEL }] }
     case 'sending':
-      return { ...base, line: 'On its way.' }
+      // Paused (a recoverable problem the host can fix) or waiting a while: it will still go out
+      return { ...base, line: c?.delayed ? 'Still sending.' : 'On its way.' }
     case 'sent': {
       const txUrl = c?.txUrl ?? null
       return { ...base, line: 'Sent ✓', txUrl, actions: txUrl ? [{ id: 'view_tx', label: 'View' }] : [] }

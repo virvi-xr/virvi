@@ -10,7 +10,7 @@ const giveaway = (over: Partial<VisitorGiveaway> = {}): VisitorGiveaway => ({
   endsAt: null, minPresentSeconds: 300, test: false, claim: null, ...over,
 })
 const claim = (status: NonNullable<VisitorGiveaway['claim']>['status'], over: Partial<NonNullable<VisitorGiveaway['claim']>> = {}) =>
-  ({ claim: { status, secondsPresent: 0, txUrl: null, failReason: null, ...over } })
+  ({ claim: { status, secondsPresent: 0, txUrl: null, failReason: null, delayed: false, ...over } })
 const ui = (over: Partial<GiveawayUi> = {}): GiveawayUi => ({ ...initialGiveawayUi(false, WALLET), ...over })
 const httpError = (status: number, body: Record<string, unknown>) => new Error(`HTTP ${status}: ${JSON.stringify(body)}`)
 
@@ -74,6 +74,12 @@ describe('giveaway card (LIV-194)', () => {
     }
   })
 
+  it('a delayed claim (paused, or waiting a while) says Still sending.', () => {
+    for (const s of ['waiting', 'minting'] as const) {
+      expect(giveawayCardView(giveaway(claim(s, { delayed: true })), ui())).toMatchObject({ state: 'sending', line: 'Still sending.', actions: [] })
+    }
+  })
+
   it('sent: Sent ✓ and View opens the tx', () => {
     const tx = 'https://polygonscan.com/tx/0xabc'
     expect(giveawayCardView(giveaway(claim('waiting')), ui()).actions).toEqual([])
@@ -83,7 +89,10 @@ describe('giveaway card (LIV-194)', () => {
 
   it('failed: the reason text', () => {
     expect(giveawayCardView(giveaway(claim('failed', { failReason: 'sold_out' })), ui())).toMatchObject({ state: 'failed', line: "Couldn't send: this giveaway ran out.", actions: [] })
-    expect(giveawayCardView(giveaway(claim('failed', { failReason: 'reverted' })), ui()).line).toBe("Couldn't send: something went wrong.")
+    expect(giveawayCardView(giveaway(claim('failed', { failReason: 'ended' })), ui()).line).toBe("Couldn't send: this giveaway ended.")
+    expect(giveawayCardView(giveaway(claim('failed', { failReason: 'item_removed' })), ui()).line).toBe("Couldn't send: the host removed an item.")
+    expect(giveawayCardView(giveaway(claim('failed', { failReason: 'reverted' })), ui()).line).toBe("Couldn't send: the collection refused the mint.")
+    expect(giveawayCardView(giveaway(claim('failed', { failReason: 'replaced' })), ui()).line).toBe("Couldn't send: Virvi is checking what happened.")
     expect(giveawayCardView(giveaway(claim('failed')), ui()).line).toBe("Couldn't send: something went wrong.")
   })
 
