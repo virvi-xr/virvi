@@ -2,6 +2,7 @@
  * Sample data for the guest demos (LIV-91 phase 2): a 2×2-parcel sample World with a week of visits, a sample scene with
  * three events, and one giveaway with items and claims. Pure and deterministic: the same `now` gives the same data.
  */
+import type { GiveawayChain, GiveawayClaimStatus, GiveawayMintState } from '@virvixr/shared'
 import type { AnalyticsLocation, HeatCell } from '../analytics/types'
 
 const HOUR = 3_600_000
@@ -21,15 +22,34 @@ export interface DemoEvent {
   id: string; name: string; description: string | null; startTime: string | null; endTime: string | null; timezone: string
   createdAt: string; updatedAt: string
 }
-export interface DemoGiveaway { id: string; name: string; enabled: boolean; claimLimit: number; createdAt: string; updatedAt: string }
+/** A sample automatic giveaway (LIV-194), as the demo keeps it; the store builds the host view from it. */
+export interface DemoGiveaway {
+  id: string; name: string; chain: GiveawayChain; enabled: boolean; walletAddress: string
+  startsAt: string | null; endsAt: string | null; claimCap: number | null; minPresentSeconds: number
+  sceneIds: string[]
+  /** The giveaway wallet's POL, all of it the host's (the demo is a free account). */
+  balanceWei: string
+  createdAt: string; updatedAt: string
+}
 export interface DemoItem {
-  id: string; giveawayId: string; name: string | null; imageUrl: string | null; contractAddress: string | null; tokenId: string | null
-  metadata: unknown; createdAt: string
+  id: string; giveawayId: string; contractAddress: string; itemId: string; name: string; imageUrl: string | null; rarity: string | null
+  mintState: GiveawayMintState; remaining: number
 }
 export interface DemoClaim {
-  id: string; giveawayId: string; itemId: string; userId: string; walletAddress: string | null
-  status: 'completed' | 'pending' | 'failed'; claimedAt: string
+  id: string; giveawayId: string; wallet: string; status: GiveawayClaimStatus; failReason: string | null
+  claimedAt: string | null; sentAt: string | null
 }
+/** The demo host's own wearables, which the item picker lists. */
+export const DEMO_CREATOR_ITEMS: ReadonlyArray<{ contractAddress: string; itemId: string; name: string; rarity: string; available: number }> = [
+  { contractAddress: '0x00000000000000000000000000000000000000d1', itemId: '0', name: 'Neon visor', rarity: 'rare', available: 4980 },
+  { contractAddress: '0x00000000000000000000000000000000000000d1', itemId: '1', name: 'Star jacket', rarity: 'epic', available: 980 },
+  { contractAddress: '0x00000000000000000000000000000000000000d1', itemId: '2', name: 'Glow sneakers', rarity: 'uncommon', available: 9900 },
+  { contractAddress: '0x00000000000000000000000000000000000000d2', itemId: '0', name: 'Comet cap', rarity: 'legendary', available: 99 },
+]
+/** The demo host's verified wallet, where sent-back POL goes. */
+export const DEMO_HOST_WALLET = '0x00000000000000000000000000000000000de111'
+const DEMO_GIVEAWAY_WALLET = '0x0000000000000000000000000000000000de6a11'
+
 /** What a guest can change in the demo; this part is kept in the browser. */
 export interface DemoEditable {
   events: DemoEvent[]
@@ -154,16 +174,24 @@ export function demoFixtures(now: number): DemoData {
     { id: 'demo-event-2', name: 'Gallery walk', description: 'A guided tour of the sample gallery.', startTime: iso(now - HOUR), endTime: iso(now + 2 * HOUR), timezone: 'UTC', createdAt: created, updatedAt: created },
     { id: 'demo-event-3', name: 'Community meetup', description: 'Meet other builders and share your scenes.', startTime: iso(day + 3 * DAY + 18 * HOUR), endTime: iso(day + 3 * DAY + 20 * HOUR), timezone: 'UTC', createdAt: created, updatedAt: created },
   ]
-  const giveaway: DemoGiveaway = { id: 'demo-giveaway-1', name: 'Opening night wearables', enabled: true, claimLimit: 1, createdAt: created, updatedAt: created }
-  const items: DemoItem[] = ['Neon visor', 'Star jacket', 'Glow sneakers'].map((name, i) => ({
-    id: `demo-item-${i + 1}`, giveawayId: giveaway.id, name, imageUrl: null,
-    contractAddress: '0x0000000000000000000000000000000000000000', tokenId: String(i + 1), metadata: null, createdAt: created,
+  const giveaway: DemoGiveaway = {
+    id: 'demo-giveaway-1', name: 'Opening night wearables', chain: 'polygon', enabled: true, walletAddress: DEMO_GIVEAWAY_WALLET,
+    startsAt: null, endsAt: null, claimCap: 100, minPresentSeconds: 300, sceneIds: [DEMO_SCENE_ID],
+    balanceWei: '1500000000000000000', createdAt: created, updatedAt: created,
+  }
+  const items: DemoItem[] = DEMO_CREATOR_ITEMS.slice(0, 3).map((c, i) => ({
+    id: `demo-item-${i + 1}`, giveawayId: giveaway.id, contractAddress: c.contractAddress, itemId: c.itemId, name: c.name, imageUrl: null,
+    rarity: c.rarity, mintState: 'ready', remaining: c.available,
   }))
-  const statuses: DemoClaim['status'][] = ['completed', 'completed', 'completed', 'pending', 'failed']
-  const claims: DemoClaim[] = statuses.map((status, i) => ({
-    id: `demo-claim-${i + 1}`, giveawayId: giveaway.id, itemId: items[i % items.length].id, userId: `demo-visitor-${i + 1}`,
-    walletAddress: null, status, claimedAt: iso(day - 5 * DAY + 19 * HOUR + (i + 1) * 9 * 60_000),
-  }))
+  const statuses: GiveawayClaimStatus[] = ['sent', 'sent', 'sent', 'waiting', 'failed']
+  const claims: DemoClaim[] = statuses.map((status, i) => {
+    const claimedAt = iso(day - 5 * DAY + 19 * HOUR + (i + 1) * 9 * 60_000)
+    return {
+      id: `demo-claim-${i + 1}`, giveawayId: giveaway.id, wallet: `0x${String(i + 1).repeat(4)}…${String(i + 1).repeat(4)}`, status,
+      failReason: status === 'failed' ? 'sold_out' : null, claimedAt,
+      sentAt: status === 'sent' ? iso(Date.parse(claimedAt) + 60_000) : null,
+    }
+  })
 
   return {
     location, scene, visits, cells: [...cells.values()], hotspots,

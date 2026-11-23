@@ -18,6 +18,8 @@ import type { ArFileFormat, ArMounting } from './ar'
 import { adminDesignsQuery, type AdminDesign } from './studio-support'
 import type { AdminWallEntry, WallState, AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminHelpRequest, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, SceneShape, StudioDesign, StudioDetail, StudioKind, StudioMember, StudioMessage, StudioSet, StudioUpload, StudioUsage } from './studio'
 import type { PromptHelp } from './studio-prompt'
+import type { GiveawayAvailability, CreatorItem as GiveawayCreatorItem, GiveawayClaimsPage, GiveawaySendBack, GiveawaySummary } from './drops'
+import type { GiveawayChain, HostGiveaway } from '@virvixr/shared'
 import type { NotificationItem } from './notifications'
 import type { InviteLinkView, InviteRole, InviteTarget, MyInvite, PastPackage, StudioInvite } from './studio-people'
 import type { AdminIdeaCounts, PromptIdeas } from './studio-ideas'
@@ -603,21 +605,30 @@ function useRealApi() {
     setAnalyticsWalletVisibility: (id: string, on: boolean) =>
       apiFetch<{ scene: { id: string; walletVisibility: boolean } }>(`/api/analytics/locations/${id}`, { method: 'PATCH', body: JSON.stringify({ walletVisibility: on }) }),
 
-    // Giveaways
-    getGiveaways: () => apiFetch<{ giveaways: any[] }>('/api/giveaways'),
-    getGiveaway: (id: string) => apiFetch<{ giveaway: any }>(`/api/giveaways/${id}`),
-    createGiveaway: (data: { name: string; enabled?: boolean; claimLimit?: number }) =>
-      apiFetch<{ giveaway: any }>('/api/giveaways', { method: 'POST', body: JSON.stringify(data) }),
-    updateGiveaway: (id: string, data: { name?: string; enabled?: boolean; claimLimit?: number }) =>
-      apiFetch<{ giveaway: any }>(`/api/giveaways/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    // Automatic giveaways (Drops, LIV-194)
+    getGiveawayAvailability: () => apiFetch<GiveawayAvailability>('/api/giveaways/availability'),
+    getGiveaways: () => apiFetch<{ giveaways: GiveawaySummary[] }>('/api/giveaways'),
+    getGiveaway: (id: string) => apiFetch<HostGiveaway>(`/api/giveaways/${encodeURIComponent(id)}`),
+    createGiveaway: (data: { name: string; chain?: GiveawayChain }) =>
+      apiFetch<{ giveaway: GiveawaySummary }>('/api/giveaways', { method: 'POST', userAction: true, body: JSON.stringify(data) }),
+    updateGiveaway: (id: string, data: { name?: string; enabled?: boolean; startsAt?: string | null; endsAt?: string | null; claimCap?: number | null; minPresentSeconds?: number }) =>
+      apiFetch<HostGiveaway>(`/api/giveaways/${encodeURIComponent(id)}`, { method: 'PATCH', userAction: true, body: JSON.stringify(data) }),
     deleteGiveaway: (id: string) =>
-      apiFetch(`/api/giveaways/${id}`, { method: 'DELETE' }),
-    addGiveawayItem: (giveawayId: string, data: { name?: string; imageUrl?: string; contractAddress?: string; tokenId?: string; metadata?: unknown }) =>
-      apiFetch<{ item: any }>(`/api/giveaways/${giveawayId}/items`, { method: 'POST', body: JSON.stringify(data) }),
-    deleteGiveawayItem: (giveawayId: string, itemId: string) =>
-      apiFetch(`/api/giveaways/${giveawayId}/items/${itemId}`, { method: 'DELETE' }),
-    getGiveawayClaims: (giveawayId: string) =>
-      apiFetch<{ claims: any[] }>(`/api/giveaways/${giveawayId}/claims`),
+      apiFetch<{ id: string; deleteState: 'returning' }>(`/api/giveaways/${encodeURIComponent(id)}`, { method: 'DELETE', userAction: true }),
+    getGiveawayCreatorItems: (chain: GiveawayChain) =>
+      apiFetch<{ items: GiveawayCreatorItem[] }>(`/api/giveaways/creator-items?chain=${encodeURIComponent(chain)}`),
+    setGiveawayItems: (id: string, items: { contractAddress: string; itemId: string }[]) =>
+      apiFetch<HostGiveaway>(`/api/giveaways/${encodeURIComponent(id)}/items`, { method: 'PUT', userAction: true, body: JSON.stringify({ items }) }),
+    setGiveawayScenes: (id: string, sceneIds: string[]) =>
+      apiFetch<HostGiveaway>(`/api/giveaways/${encodeURIComponent(id)}/scenes`, { method: 'PUT', userAction: true, body: JSON.stringify({ sceneIds }) }),
+    getGiveawayClaims: (id: string, cursor?: string | null) =>
+      apiFetch<GiveawayClaimsPage>(`/api/giveaways/${encodeURIComponent(id)}/claims${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
+    sendBackGiveaway: (id: string, toWallet: string) =>
+      apiFetch<GiveawaySendBack>(`/api/giveaways/${encodeURIComponent(id)}/send-back`, { method: 'POST', userAction: true, body: JSON.stringify({ toWallet }) }),
+    /** The wallets POL can go back to: the account's verified wallets that can still sign in. */
+    getGiveawaySendBackWallets: () =>
+      apiFetch<{ wallets: { address: string; blocked?: boolean }[] }>('/api/auth/wallets')
+        .then(({ wallets }) => ({ wallets: wallets.filter((w) => !w.blocked).map((w) => w.address) })),
 
     // Account
     updateProfile: (displayName: string) =>
