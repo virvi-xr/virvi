@@ -52,6 +52,9 @@ export interface VisitorGiveaway {
   claim: null | { status: GiveawayClaimStatus; secondsPresent: number; txUrl: string | null; failReason: string | null }
 }
 
+/** The room's `giveaway_available` for guests (who can't use REST): the scene's open giveaway, name and test flag only. */
+export interface AvailableGiveaway { name: string; test: boolean }
+
 export type GiveawayMintState = 'ready' | 'not_minter' | 'not_approved' | 'sold_out'
 
 /** What a host sees of one giveaway (never the wallet's key). */

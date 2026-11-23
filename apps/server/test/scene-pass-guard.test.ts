@@ -18,8 +18,15 @@ describe('scene pass guard', () => {
   let app: Awaited<ReturnType<typeof testApp>>
   const prevBeats = config.beats
   // BEAT routes are dark (404 before any guard) unless enabled: the walks need them answering
-  beforeEach(async () => { await resetDb(); ;(config as any).beats = { ...config.beats, enabled: true }; app = await testApp() })
-  afterEach(async () => { ;(config as any).beats = prevBeats; await app.close() })
+  const prevGiveaways = config.giveaways
+  // Giveaway routes answer 503 giveaways_off before any guard unless switched on, likewise
+  beforeEach(async () => {
+    await resetDb()
+    ;(config as any).beats = { ...config.beats, enabled: true }
+    ;(config as any).giveaways = { ...config.giveaways, enabled: true }
+    app = await testApp()
+  })
+  afterEach(async () => { ;(config as any).beats = prevBeats; ;(config as any).giveaways = prevGiveaways; await app.close() })
 
   it('every route without scenePass config refuses a scene pass (route walk)', async () => {
     const owner = await createUser({ wallet: '0x00000000000000000000000000000000000000a1' })

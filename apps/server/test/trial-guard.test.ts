@@ -94,8 +94,15 @@ describe('trial guard', () => {
   let app: Awaited<ReturnType<typeof testApp>>
   const prevBeats = config.beats
   // BEAT routes are dark (404 before any guard) unless enabled: the walk needs them answering
-  beforeEach(async () => { await resetDb(); ;(config as any).beats = { ...config.beats, enabled: true }; app = await testApp() })
-  afterEach(async () => { ;(config as any).beats = prevBeats; await app.close() })
+  const prevGiveaways = config.giveaways
+  beforeEach(async () => {
+    await resetDb()
+    ;(config as any).beats = { ...config.beats, enabled: true }
+    // Giveaway routes answer 503 giveaways_off before any guard unless switched on
+    ;(config as any).giveaways = { ...config.giveaways, enabled: true }
+    app = await testApp()
+  })
+  afterEach(async () => { ;(config as any).beats = prevBeats; ;(config as any).giveaways = prevGiveaways; await app.close() })
 
   const routes = () => (app as any).registeredRoutes as Array<{ method: string; url: string; trial: boolean }>
 

@@ -3,7 +3,10 @@ import { config } from '../config.js'
 import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { isAdminRequest } from '../auth/admin.js'
+import { fromParam } from '../auth/scene-from.js'
+import { sceneExists } from '../beats/service.js'
 import { GiveawayError } from './errors.js'
+import { checkInGiveaway, claimGiveaway, currentGiveaway, stopGiveaway, trackGiveaway } from './visitor.js'
 import {
   createGiveaway, deleteGiveaway, giveawayAvailability, hostView, listClaims, listCreatorItems, listGiveaways, sendBack, setItems, setScenes,
   updateGiveaway, type GiveawayCaller,
@@ -12,9 +15,11 @@ import {
 const AVAILABILITY = '/api/giveaways/availability'
 
 /**
- * Automatic giveaway host routes (LIV-194). Every route is for a signed-in account: no route declares a scene pass, so
+ * Automatic giveaway routes (LIV-194). Every host route is for a signed-in account: no host route declares a scene pass, so
  * Decentraland, Hyperfy, AR and studio passes are refused by authenticate, and trials too (403 account_required).
  * Without GIVEAWAY_WALLET_SECRET every route but availability answers 503 giveaways_off.
+ * Visitor routes (`/api/scenes/:sceneId/giveaway/...`) take a scene pass bound to `:sceneId`, as the BEAT visitor routes
+ * do, for a giveaway on that scene (404 otherwise).
  */
 export default async function giveawayRoutes(app: FastifyInstance) {
   app.addHook('onRequest', async (request, reply) => {
@@ -63,4 +68,46 @@ export default async function giveawayRoutes(app: FastifyInstance) {
 
   app.post<Id>('/api/giveaways/:id/send-back', async (request, reply) =>
     run(reply, async () => sendBack(await caller(request), request.params.id, body(request)), 202))
+
+  // ── Visitors ───────────────────────────────────────────────────────────────
+
+  const sceneScoped = { config: { scenePass: { sceneFrom: fromParam('sceneId') } } }
+  /** The caller's pass is a scene pass bound to this scene (the middleware already refused one for another scene). */
+  const inScene = (request: FastifyRequest, sceneId: string) => request.user.kind === 'scene' && request.user.sceneId === sceneId
+  const sceneOnly = (reply: FastifyReply) => reply.status(403).send({ error: 'scene_pass_required', message: 'Do this from inside the scene.' })
+  /** The pass's platform: a scene pass is Decentraland's unless it says it came another way (Hyperfy's `via`). */
+  const platformOf = (request: FastifyRequest) => ((request.user as { via?: string }).via ?? 'decentraland')
+  type Visit = { Params: { sceneId: string; id: string } }
+
+  app.get<{ Params: { sceneId: string } }>('/api/scenes/:sceneId/giveaway/current', sceneScoped, async (request, reply) => {
+    if (!(await sceneExists(request.params.sceneId))) return reply.status(404).send({ error: 'not_found', message: 'Scene not found.' })
+    return run(reply, async () => ({ giveaway: await currentGiveaway(request.params.sceneId, request.user.id) }))
+  })
+
+  app.post<Visit>('/api/scenes/:sceneId/giveaway/:id/track', sceneScoped, async (request, reply) => {
+    const { sceneId, id } = request.params
+    if (!inScene(request, sceneId)) return sceneOnly(reply)
+    const { wallet, verified, displayName } = request.user
+    const c = { userId: request.user.id, wallet: wallet && verified === true ? wallet : null, signInName: displayName ?? null, platform: platformOf(request), ip: request.ip }
+    return run(reply, () => trackGiveaway(sceneId, id, c, body(request).consentVersion))
+  })
+
+  app.post<Visit>('/api/scenes/:sceneId/giveaway/:id/checkin', sceneScoped, async (request, reply) => {
+    const { sceneId, id } = request.params
+    if (!inScene(request, sceneId)) return sceneOnly(reply)
+    return run(reply, () => checkInGiveaway(sceneId, id, request.user.id))
+  })
+
+  app.post<Visit>('/api/scenes/:sceneId/giveaway/:id/claim', sceneScoped, async (request, reply) => {
+    const { sceneId, id } = request.params
+    if (!inScene(request, sceneId)) return sceneOnly(reply)
+    return run(reply, () => claimGiveaway(sceneId, id, { userId: request.user.id, platform: platformOf(request), ip: request.ip }))
+  })
+
+  // Stopping acts only on the caller's own claim, so a signed-in account may do it too (as for BEATs)
+  app.delete<Visit>('/api/scenes/:sceneId/giveaway/:id/track', sceneScoped, async (request, reply) =>
+    run(reply, async () => {
+      await stopGiveaway(request.params.sceneId, request.params.id, request.user.id)
+      return null
+    }, 204))
 }

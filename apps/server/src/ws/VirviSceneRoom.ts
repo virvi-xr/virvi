@@ -4,6 +4,7 @@ const { Room } = _require('colyseus') as any
 type Client = any
 import { activeRaffle, publicRaffle } from '../raffles/service.js'
 import { availableBeat } from '../beats/visitor.js'
+import { availableGiveaway } from '../giveaways/visitor.js'
 import { beatLiveTiming, clearBeatLive, markBeatLive } from '../beats/live.js'
 import { eq, and, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
@@ -448,6 +449,7 @@ export class VirviSceneRoom extends Room {
     await this.sendVenueAccess(client)
     await this.sendCurrentRaffle(client)
     await this.sendBeatAvailable(client)
+    await this.sendGiveawayAvailable(client)
     await this.markBeatLive(client, actor)
   }
 
@@ -515,6 +517,16 @@ export class VirviSceneRoom extends Room {
       client.send('beat_available', { beat })
     } catch (err) {
       console.error('[VirviSceneRoom] beat availability failed:', err)
+    }
+  }
+
+  /** Guests can't use REST: tell them on join whether the scene has an open giveaway (name and test flag only). */
+  private async sendGiveawayAvailable(client: Client) {
+    if (!this.sceneId || !config.giveaways.enabled) return
+    try {
+      client.send('giveaway_available', { giveaway: await availableGiveaway(this.sceneId) })
+    } catch (err) {
+      console.error('[VirviSceneRoom] giveaway availability failed:', err)
     }
   }
 
