@@ -99,7 +99,7 @@ Virvi pauses a giveaway rather than lose claims. The giveaway's status reads **P
 - **Paused: an item is waiting for curation:** the collection isn't approved yet. The page says **Waiting for curation**.
 - **Paused: Polygon isn't answering:** the blockchain connection kept failing. Virvi keeps trying.
 
-During these pauses visitors can still claim. Claims wait, the card shows **On its way**, and they are sent once the problem is fixed.
+During these pauses visitors can still claim. Claims wait, the card shows **Still sending**, and they are sent once the problem is fixed.
 
 **Sold out** is final. If any item runs out, the giveaway closes to new claims, and claims still waiting fail with "Sold out" rather than sending part of the set.
 

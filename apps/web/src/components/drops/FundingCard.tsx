@@ -47,7 +47,7 @@ export function FundingCard({ giveaway: g, disabled, onSent }: { giveaway: HostG
 
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-gray-800 pt-4">
         {wallets && wallets.length === 0 ? (
-          <p className="text-sm text-gray-500">Link a wallet to the owner's account to send POL back.</p>
+          <p className="text-sm text-gray-500">Link a wallet to the giveaway owner's account to send POL back.</p>
         ) : (
           <>
             <SelectField label="Send to" value={to} onChange={setTo} className="w-56">

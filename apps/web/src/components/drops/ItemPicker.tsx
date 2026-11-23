@@ -62,13 +62,13 @@ export function ItemPicker({ giveaway: g, onSaved }: { giveaway: HostGiveaway; o
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Choose items" className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-lg border border-gray-800 bg-gray-900 p-4">
         <h2 className="text-lg font-semibold">Choose items</h2>
         <p className="mb-3 text-sm text-gray-400">
-          Wearables and emotes from collections you created, with a wallet linked to your account. Pick up to {ITEMS_MAX}.
+          Wearables and emotes from collections the giveaway owner created, with a wallet linked to their account. Pick up to {ITEMS_MAX}.
         </p>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {!items ? (
             <p role="status" className="text-sm text-gray-400">Loading your items…</p>
           ) : items.length === 0 ? (
-            <p className="text-sm text-gray-500">No published items found for the wallets linked to your account.</p>
+            <p className="text-sm text-gray-500">No published items found for the wallets linked to the giveaway owner's account.</p>
           ) : (
             <ul className="space-y-1">
               {items.map((i) => {
@@ -84,7 +84,7 @@ export function ItemPicker({ giveaway: g, onSaved }: { giveaway: HostGiveaway; o
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm">{i.name}</span>
                         <span className="block text-xs text-gray-500">
-                          {i.missing ? 'In this giveaway; not in your published items any more' : [i.rarity, `${i.available.toLocaleString('en-US')} left`].filter(Boolean).join(' · ')}
+                          {i.missing ? 'Not published by the owner any more. Untick it to save' : [i.rarity, `${i.available.toLocaleString('en-US')} left`].filter(Boolean).join(' · ')}
                         </span>
                       </span>
                     </label>
