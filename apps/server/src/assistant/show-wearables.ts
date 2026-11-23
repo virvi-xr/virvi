@@ -27,7 +27,8 @@ export type FindItems = (creators: string[]) => Promise<MarketItem[]>
 export const WATCH_DAYS = 90
 export const SWEEP_SHOWS_MAX = 200
 const PAGE = 50
-const TIMEOUT_MS = 10_000
+/** How long a Marketplace call may take (shared with the giveaway item picker). */
+export const MARKETPLACE_TIMEOUT_MS = 10_000
 const MAX_BYTES = 2 * 1024 * 1024
 const NAME_MAX = 80
 const CONTRACT = /^0x[0-9a-f]{40}$/
@@ -54,7 +55,7 @@ export function pickWearable(items: MarketItem[], since: Date, designName: strin
 }
 
 /** Read at most `max` bytes of the body; null when it is bigger. */
-async function readCapped(res: Response, max: number): Promise<string | null> {
+export async function readCapped(res: Response, max: number): Promise<string | null> {
   const reader = res.body?.getReader()
   if (!reader) return ''
   const chunks: Uint8Array[] = []
@@ -83,7 +84,7 @@ export function marketplaceFind(fetchImpl: typeof fetch = fetch): FindItems {
     const q = new URLSearchParams({ first: String(PAGE), sortBy: 'newest', category: 'wearable' })
     for (const c of creators) q.append('creator', c.toLowerCase())
     const res = await fetchImpl(`${config.dclMarketplaceApiUrl}/v1/items?${q}`, {
-      redirect: 'error', signal: AbortSignal.timeout(TIMEOUT_MS), headers: { accept: 'application/json' },
+      redirect: 'error', signal: AbortSignal.timeout(MARKETPLACE_TIMEOUT_MS), headers: { accept: 'application/json' },
     })
     if (res.status !== 200) {
       await res.body?.cancel().catch(() => {})

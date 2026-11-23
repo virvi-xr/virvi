@@ -81,7 +81,8 @@ export default async function eventRoutes(app: FastifyInstance) {
             with: { scene: true },
           },
           giveawayLinks: {
-            with: { giveaway: true },
+            // Never the giveaway wallet's sealed key (LIV-194)
+            with: { giveaway: { columns: { walletKeyEnc: false } } },
           },
         },
       })
