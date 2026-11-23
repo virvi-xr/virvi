@@ -30,7 +30,7 @@ When a visitor claims, Virvi mints one of each item in the giveaway to that visi
    - **Items:** choose the wearables to give away, from collections you created. They are found through the wallets linked to your account, so link the wallet that created the collection first. A visitor gets **one of every item** in the giveaway.
    - **Starts** and **Ends** (optional). Leave them empty to start when you switch it on and run until you switch it off.
    - **Claim limit** (optional): the most people who can claim. Leave it empty for no limit.
-   - **Minimum minutes present** (optional): how long a visitor must stay in your scene before they can claim.
+   - **Minimum minutes in the scene** (optional): how long a visitor must stay in your scene before they can claim.
    - **Scenes:** the scenes where visitors see the giveaway.
 3. Add the giveaway's wallet as a minter (next section), fund it if you need to, then switch the giveaway on.
 
@@ -39,7 +39,7 @@ When a visitor claims, Virvi mints one of each item in the giveaway to that visi
 The giveaway's page shows its wallet address, with buttons to copy it and to open it on Polygonscan. Next to each item you see whether it can be minted:
 
 - **Can mint:** ready.
-- **Add this address as a minter in the Builder:** the giveaway can't mint this item yet.
+- **Add 0x1234…abcd as a minter in the Builder** (with the giveaway wallet's short address): the giveaway can't mint this item yet.
 - **Sold out:** all copies of the item have been minted.
 
 To add the minter:
@@ -58,7 +58,7 @@ If you later take the minter right away, or it runs out, the giveaway pauses (se
 Each send costs a little POL. How it's paid depends on your plan.
 
 - **Free plan:** you send POL to the giveaway's wallet address yourself. The page shows the balance and about how many claims it covers. It warns you when the balance covers fewer than 10 claims.
-- **Paid plans (Creator, Pro and Studio):** Virvi covers the fee. It keeps the giveaway's wallet topped up for you, with no monthly limit. The page shows **Gas covered by your plan**. If you also send POL, it stays yours.
+- **Paid plans (Creator, Pro and Studio):** Virvi covers the fee. It keeps the giveaway's wallet topped up for you, with no monthly limit. The page says **Gas is covered by your plan.** If you also send POL, it stays yours.
 
 If your paid plan ends, the giveaway goes back to the free-plan way: you fund it. POL that Virvi put in remains Virvi's and can't be sent back to you.
 
@@ -90,19 +90,20 @@ The giveaway's page lists every claim with its status: waiting, minting, sent or
 
 ## Pauses
 
-Virvi pauses a giveaway rather than lose claims, and says why on its page:
+Virvi pauses a giveaway rather than lose claims. The giveaway's status reads **Paused**, with the reason:
 
-- **Low gas:** the wallet has too little POL (free plan). Send more.
-- **Not a minter / Not approved:** the giveaway's wallet can't mint an item, or the collection isn't approved. Fix it in the Builder.
-- **Network trouble:** the blockchain connection kept failing. Virvi keeps trying.
+- **Paused: not enough POL for gas:** the wallet has too little POL. Send more. This also happens on a paid plan when the server has no gas cover set up yet; the page then says "Gas cover isn't set up on this server yet" and you fund the wallet yourself.
+- **Paused: an item needs the minter step:** the giveaway's wallet can't mint an item. Add it as a minter in the Builder.
+- **Paused: an item is waiting for curation:** the collection isn't approved yet. The page says **Waiting for curation**.
+- **Paused: Polygon isn't answering:** the blockchain connection kept failing. Virvi keeps trying.
 
-During these pauses visitors can still claim. Claims wait, the card shows **Still sending**, and they are sent once the problem is fixed.
+During these pauses visitors can still claim. Claims wait, the card shows **On its way**, and they are sent once the problem is fixed.
 
 **Sold out** is final. If any item runs out, the giveaway closes to new claims, and claims still waiting fail with "Sold out" rather than sending part of the set.
 
 ## Ending a giveaway
 
-Switch it off, or let its end date pass. When it ends, anything still waiting is sent first. Deleting it needs your leftover POL sent back first.
+Switch it off, or let its end date pass. When it ends, anything still waiting is sent first. Deleting it needs your leftover POL sent back first, and any claims still waiting are cancelled, so visitors' pending sends don't arrive.
 
 ## Not available
 
