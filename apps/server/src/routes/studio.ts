@@ -206,12 +206,16 @@ export default async function studioRoutes(app: FastifyInstance) {
   })
 
   app.post('/api/studio/designs', trialWork, async (request, reply) => {
-    const b = (request.body ?? {}) as { kind?: unknown; agent?: unknown; name?: unknown }
+    const b = (request.body ?? {}) as { kind?: unknown; agent?: unknown; name?: unknown; sceneShape?: unknown }
     const err = agentError(b.agent)
     if (err) return reply.status(400).send({ error: err })
     if (b.kind !== 'wearable' && b.kind !== 'emote' && b.kind !== 'scene') return reply.status(400).send({ error: 'kind must be wearable, emote or scene' })
     if (b.name !== undefined && (typeof b.name !== 'string' || !b.name.trim() || b.name.length > MAX_NAME)) {
       return reply.status(400).send({ error: `name must be 1-${MAX_NAME} characters` })
+    }
+    if (b.sceneShape !== undefined) {
+      if (b.kind !== 'scene') return reply.status(400).send({ error: 'Only a scene design takes a shape.' })
+      if (b.sceneShape !== 'building' && b.sceneShape !== 'decor') return reply.status(400).send({ error: 'sceneShape must be building or decor' })
     }
     if (await isTrialUser(request.user.id)) {
       if ((await totalDesignCount(request.user.id)) >= config.trialDesigns) {
@@ -223,9 +227,13 @@ export default async function studioRoutes(app: FastifyInstance) {
     }
     const [d] = await db.insert(studioDesigns).values({
       ownerId: request.user.id,
-      name: typeof b.name === 'string' ? b.name.trim() : b.kind === 'emote' ? 'Untitled emote' : b.kind === 'scene' ? 'Untitled scene piece' : 'Untitled design',
+      name: typeof b.name === 'string' ? b.name.trim()
+        : b.kind === 'emote' ? 'Untitled emote'
+        : b.kind === 'scene' ? (b.sceneShape ? `Untitled ${b.sceneShape}` : 'Untitled scene piece')
+        : 'Untitled design',
       kind: b.kind,
       agent: b.agent as string,
+      sceneShape: b.kind === 'scene' ? (b.sceneShape as string | undefined) ?? null : null,
     }).returning()
     return reply.status(201).send(publicDesign(d))
   })

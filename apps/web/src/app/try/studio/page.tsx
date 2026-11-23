@@ -8,14 +8,15 @@ import { KindPicker } from '@/components/KindPicker'
 import { PrimaryButton } from '@/components/ui'
 import { Turnstile, type TurnstileHandle } from '@/components/Turnstile'
 import { beginTrial } from '@/lib/trial'
-import { keepUnsent, refusalMessage, type StudioKind } from '@/lib/studio'
+import { choiceBody, choiceKind, keepUnsent, refusalMessage, type DesignChoice } from '@/lib/studio'
 import { startingAgent } from '@/lib/studio-ratings'
 
 const MAX_PROMPT = 4000
-const PLACEHOLDERS: Record<StudioKind, string> = {
+const PLACEHOLDERS: Record<DesignChoice, string> = {
   wearable: 'A neon bomber jacket with glowing seams',
   emote: 'A victory dance with a spin and a fist pump',
-  scene: 'A small ramen shop with a paper lantern sign',
+  building: 'A small ramen shop with a paper lantern sign',
+  decor: 'A low wooden table with two floor cushions',
 }
 
 /** The public way in: describe something, and the first prompt starts a trial (no account, no sign-in redirect). */
@@ -25,14 +26,14 @@ export default function TryStudioPage() {
   const apiRef = useRef(api)
   apiRef.current = api
   const router = useRouter()
-  const [kind, setKind] = useState<StudioKind>('wearable')
+  const [kind, setKind] = useState<DesignChoice>('wearable')
   const [text, setText] = useState('')
   const [botToken, setBotToken] = useState<string | null>(null)
   const turnstile = useRef<TurnstileHandle>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Set once the trial session exists: the effect below runs with an api that carries its token
-  const [go, setGo] = useState<{ kind: StudioKind; text: string } | null>(null)
+  const [go, setGo] = useState<{ kind: DesignChoice; text: string } | null>(null)
 
   // A signed-in account has the real Studio
   useEffect(() => {
@@ -46,7 +47,7 @@ export default function TryStudioPage() {
       try {
         // An admin's default agent for the kind (LIV-142), else Claude Code, as trials always started on
         const defaults = await apiRef.current.getStudioDefaults().then((r) => r.agents).catch(() => null)
-        const d = await apiRef.current.createStudioDesign({ kind: go.kind, agent: startingAgent(go.kind, defaults, 'claude') })
+        const d = await apiRef.current.createStudioDesign({ ...choiceBody(go.kind), agent: startingAgent(choiceKind(go.kind), defaults, 'claude') })
         // The design page is one static page for every id, loaded in full (as the Studio's own links do)
         try {
           await apiRef.current.sendStudioPrompt(d.id, { text: go.text })

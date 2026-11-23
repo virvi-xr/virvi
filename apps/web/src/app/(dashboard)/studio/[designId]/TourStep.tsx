@@ -53,7 +53,7 @@ export default function TourStep({ designId, detail, onChanged, viewOnly = false
           <p className="absolute inset-0 flex items-center justify-center px-8 text-center text-sm text-gray-400">The walk-through hasn’t been rendered yet.</p>
         ) : (
           <p className="absolute inset-0 flex items-center justify-center px-8 text-center text-sm text-gray-400" aria-live="polite">
-            Walking through the building with its furniture in place. It takes about a minute.
+            Walking through the building with its decor in place. It takes about a minute.
           </p>
         )}
       </div>

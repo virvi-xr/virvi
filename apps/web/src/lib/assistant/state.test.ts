@@ -47,7 +47,7 @@ describe('startReply', () => {
 
 describe('safeHref', () => {
   it('accepts dashboard paths only', () => {
-    for (const h of ['/scenes', '/scenes?id=abc', '/scenes/_?id=s1', '/events', '/command-center']) expect(safeHref(h), h).toBe(true)
+    for (const h of ['/scenes', '/scenes?id=abc', '/scenes/_?id=s1', '/events', '/command-center', '/sync?scene=s1', '/drops', '/virvi-cities', '/cities', '/deploy', '/giveaways']) expect(safeHref(h), h).toBe(true)
     for (const h of ['https://evil.example', 'javascript:alert(1)', '//evil.example', '/admin', '/scenes/../admin', '/scenes\\..\\admin', '/scenes/%2e%2e/admin', '/scenes/%2E/x']) expect(safeHref(h), h).toBe(false)
   })
 })

@@ -5,14 +5,16 @@
  */
 import type { Api as RealApi } from '../api'
 import type { AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, TimeseriesPoint } from '../analytics/types'
-import { demoFixtures, type DemoData, type DemoEditable, type DemoEvent, type DemoGiveaway } from './fixtures'
+import { GIVEAWAY_CLAIM_STATUSES, GIVEAWAY_GAS_PER_ITEM, giveawayBuilderUrl, type GiveawayClaimStatus, type HostGiveaway } from '@virvixr/shared'
+import { shortWallet } from '../studio-people'
+import { demoFixtures, DEMO_CREATOR_ITEMS, DEMO_HOST_WALLET, type DemoData, type DemoEditable, type DemoEvent, type DemoGiveaway } from './fixtures'
 
 export const DEMO_METHODS = [
   'getAnalyticsLocations', 'getAnalyticsSummary', 'getAnalyticsTimeseries', 'getAnalyticsHeatmap', 'getAnalyticsSessions', 'getAnalyticsLive', 'getAnalyticsLayout',
   'getEvents', 'getEvent', 'createEvent', 'updateEvent', 'deleteEvent',
   'linkSceneToEvent', 'unlinkSceneFromEvent', 'linkGiveawayToEvent', 'unlinkGiveawayFromEvent',
-  'getScenes', 'getGiveaways', 'getGiveaway', 'createGiveaway', 'updateGiveaway', 'deleteGiveaway',
-  'addGiveawayItem', 'deleteGiveawayItem', 'getGiveawayClaims',
+  'getScenes', 'getGiveawayAvailability', 'getGiveaways', 'getGiveaway', 'createGiveaway', 'updateGiveaway', 'deleteGiveaway',
+  'getGiveawayCreatorItems', 'setGiveawayItems', 'setGiveawayScenes', 'getGiveawayClaims', 'sendBackGiveaway', 'getGiveawaySendBackWallets',
 ] as const satisfies ReadonlyArray<keyof RealApi>
 
 /** The demo's methods: the same signatures and return shapes as the real api's. */
@@ -20,7 +22,8 @@ export type DemoApi = Pick<RealApi, (typeof DEMO_METHODS)[number]>
 
 const PREFIX = 'virvi.demo.'
 export const demoStorageKey = (trialId: string) => `${PREFIX}${trialId}`
-const VERSION = 1
+// 2: giveaways in the automatic-giveaway shape (LIV-194); a store from before is the sample again
+const VERSION = 2
 const EDITABLE_LISTS = ['events', 'eventScenes', 'eventGiveaways', 'giveaways', 'items', 'claims'] as const satisfies ReadonlyArray<keyof DemoEditable>
 const PAGE = 25
 
@@ -40,6 +43,12 @@ function apiError(status: number, body: Record<string, unknown>): Error {
   return Object.assign(new Error(String(body.error ?? `API error ${status}`)), { status, body })
 }
 const notFound = () => apiError(404, { error: 'Not found' })
+const refused = (status: number, error: string, message: string, extra: Record<string, unknown> = {}) => apiError(status, { ...extra, error, message })
+
+/** The demo's gas price (30 gwei) and a plain transfer's gas, for "claims covered" and the send-back's fee. */
+const DEMO_GAS_PRICE = BigInt(30000000000)
+const DEMO_TRANSFER_GAS = BigInt(21000)
+const LOW_GAS_CLAIMS = 10
 
 /** A demo refusal: what a trial gets from a real account-only route, so the sign-up sheet reads it the same way. */
 export function demoRefusal(name: string): Error {
@@ -157,11 +166,37 @@ export function createDemoApi(opts: { trialId: string; now: () => number; storag
 
   const eventOf = (id: string) => state.events.find((e) => e.id === id)
   const giveawayOf = (id: string) => state.giveaways.find((g) => g.id === id)
-  const giveawayView = (g: DemoGiveaway) => ({
-    ...g,
-    items: state.items.filter((i) => i.giveawayId === g.id),
-    claimCount: state.claims.filter((c) => c.giveawayId === g.id).length,
+  const itemsOf = (id: string) => state.items.filter((i) => i.giveawayId === id)
+  const counts = (id: string) => {
+    const c = Object.fromEntries(GIVEAWAY_CLAIM_STATUSES.map((st) => [st, 0])) as Record<GiveawayClaimStatus, number>
+    for (const claim of state.claims) if (claim.giveawayId === id) c[claim.status] += 1
+    return c
+  }
+  const summary = (g: DemoGiveaway) => ({
+    id: g.id, name: g.name, chain: g.chain, enabled: g.enabled, walletAddress: g.walletAddress, builderUrl: giveawayBuilderUrl(g.chain),
+    startsAt: g.startsAt, endsAt: g.endsAt, claimCap: g.claimCap, minPresentSeconds: g.minPresentSeconds, pausedReason: null,
+    deleteState: null, createdAt: g.createdAt, counts: counts(g.id),
   })
+  const hostView = (g: DemoGiveaway): HostGiveaway => {
+    const items = itemsOf(g.id)
+    const perClaim = BigInt(items.length) * GIVEAWAY_GAS_PER_ITEM * DEMO_GAS_PRICE
+    const claimsCovered = perClaim > BigInt(0) ? Number(BigInt(g.balanceWei) / perClaim) : 0
+    return {
+      ...summary(g), pausedAt: null,
+      items: items.map((i) => ({
+        id: i.id, contractAddress: i.contractAddress, itemId: i.itemId, name: i.name, thumbnail: i.imageUrl, rarity: i.rarity,
+        mintState: i.mintState, remaining: i.remaining, checkedAt: stamp(),
+      })),
+      sceneIds: [...g.sceneIds],
+      funding: {
+        balanceWei: g.balanceWei, withdrawableWei: g.balanceWei, transferGasWei: (DEMO_TRANSFER_GAS * DEMO_GAS_PRICE).toString(), claimsCovered, covered: false, tankMissing: false,
+        lowGas: claimsCovered < LOW_GAS_CLAIMS, held: false,
+      },
+      counts: counts(g.id),
+    }
+  }
+  const failingItems = (g: DemoGiveaway) => itemsOf(g.id).filter((i) => i.mintState !== 'ready')
+    .map((i) => ({ contractAddress: i.contractAddress, itemId: i.itemId, state: i.mintState, remaining: i.remaining }))
   const eventDetail = (e: DemoEvent) => ({
     ...e,
     sceneLinks: state.eventScenes.filter((l) => l.eventId === e.id)
@@ -318,58 +353,108 @@ export function createDemoApi(opts: { trialId: string; now: () => number; storag
     getScenes: () => done({ scenes: [base.scene] }),
 
     // ── Giveaways ─────────────────────────────────────────────────────────
-    getGiveaways: () => done({ giveaways: state.giveaways.map(giveawayView) }),
+    getGiveawayAvailability: () => done({ enabled: true, gasCovered: false }),
+    getGiveaways: () => done({ giveaways: state.giveaways.map(summary) }),
     getGiveaway: (id) => {
       const g = giveawayOf(id)
-      return g ? done({ giveaway: giveawayView(g) }) : Promise.reject(notFound())
+      return g ? done(hostView(g)) : Promise.reject(notFound())
     },
     createGiveaway: (data) => {
       const at = stamp()
-      const g: DemoGiveaway = { id: newId('giveaway'), name: data.name, enabled: data.enabled ?? true, claimLimit: data.claimLimit ?? 1, createdAt: at, updatedAt: at }
+      const hex = newId('w').replace(/[^0-9a-f]/g, '').padEnd(40, '0').slice(0, 40)
+      const g: DemoGiveaway = {
+        id: newId('giveaway'), name: data.name, chain: data.chain ?? 'polygon', enabled: false, walletAddress: `0x${hex}`,
+        startsAt: null, endsAt: null, claimCap: null, minPresentSeconds: 0, sceneIds: [], balanceWei: '0', createdAt: at, updatedAt: at,
+      }
       write((s) => { s.giveaways.unshift(g) })
-      return done({ giveaway: giveawayView(g) })
+      return done({ giveaway: summary(g) })
     },
     updateGiveaway: (id, data) => {
       const g = giveawayOf(id)
       if (!g) return Promise.reject(notFound())
+      if (data.enabled === true && !g.enabled) {
+        if (!itemsOf(id).length) return Promise.reject(refused(409, 'not_ready', 'Pick the items to give away first.', { items: [] }))
+        if (!g.sceneIds.length) return Promise.reject(refused(409, 'not_ready', 'Pick a scene for the giveaway first.', { items: [] }))
+        const failing = failingItems(g)
+        if (failing.length) return Promise.reject(refused(409, 'not_ready', 'Every item must pass the minter check before the giveaway can be switched on.', { items: failing }))
+      }
+      const startsAt = data.startsAt !== undefined ? data.startsAt : g.startsAt
+      const endsAt = data.endsAt !== undefined ? data.endsAt : g.endsAt
+      if (startsAt && endsAt && Date.parse(endsAt) <= Date.parse(startsAt)) {
+        return Promise.reject(refused(400, 'bad_window', 'The giveaway must end after it starts.'))
+      }
       write(() => {
         if (data.name !== undefined) g.name = data.name
         if (data.enabled !== undefined) g.enabled = data.enabled
-        if (data.claimLimit !== undefined) g.claimLimit = data.claimLimit
+        g.startsAt = startsAt
+        g.endsAt = endsAt
+        if (data.claimCap !== undefined) g.claimCap = data.claimCap
+        if (data.minPresentSeconds !== undefined) g.minPresentSeconds = data.minPresentSeconds
         g.updatedAt = stamp()
       })
-      return done({ giveaway: giveawayView(g) })
+      return done(hostView(g))
     },
     deleteGiveaway: (id) => {
-      if (!giveawayOf(id)) return Promise.reject(notFound())
+      const g = giveawayOf(id)
+      if (!g) return Promise.reject(notFound())
+      if (BigInt(g.balanceWei) > DEMO_TRANSFER_GAS * DEMO_GAS_PRICE) {
+        return Promise.reject(refused(409, 'send_back_first', 'Send your POL back before deleting this giveaway.'))
+      }
       write((s) => {
-        s.giveaways = s.giveaways.filter((g) => g.id !== id)
+        s.giveaways = s.giveaways.filter((x) => x.id !== id)
         s.items = s.items.filter((i) => i.giveawayId !== id)
         s.claims = s.claims.filter((c) => c.giveawayId !== id)
         s.eventGiveaways = s.eventGiveaways.filter((l) => l.giveawayId !== id)
       })
-      return done(undefined)
+      return done({ id, deleteState: 'returning' as const })
     },
-    addGiveawayItem: (giveawayId, data) => {
-      if (!giveawayOf(giveawayId)) return Promise.reject(notFound())
-      const item = {
-        id: newId('item'), giveawayId, name: data.name ?? null, imageUrl: demoImageUrl(data.imageUrl, origin),
-        contractAddress: data.contractAddress ?? null, tokenId: data.tokenId ?? null, metadata: data.metadata ?? null, createdAt: stamp(),
+    getGiveawayCreatorItems: () => done({ items: DEMO_CREATOR_ITEMS.map((c) => ({ ...c, thumbnail: null })) }),
+    setGiveawayItems: (id, wanted) => {
+      const g = giveawayOf(id)
+      if (!g) return Promise.reject(notFound())
+      if (!Array.isArray(wanted) || wanted.length < 1 || wanted.length > 10) return Promise.reject(refused(400, 'bad_items', 'Pick 1 to 10 different items.'))
+      if (state.claims.some((c) => c.giveawayId === id && c.status !== 'present')) {
+        return Promise.reject(refused(409, 'has_claims', "The items can't change once someone has claimed this giveaway."))
       }
-      write((s) => { s.items.push(item) })
-      return done({ item })
+      const found = wanted.map((w) => DEMO_CREATOR_ITEMS.find((c) => c.contractAddress === w.contractAddress.toLowerCase() && c.itemId === w.itemId))
+      if (found.some((f) => !f)) {
+        return Promise.reject(refused(400, 'not_your_item', 'Pick items from collections you created, with a wallet linked to your account.'))
+      }
+      write((s) => {
+        s.items = s.items.filter((i) => i.giveawayId !== id)
+        for (const c of found) {
+          s.items.push({
+            id: newId('item'), giveawayId: id, contractAddress: c!.contractAddress, itemId: c!.itemId, name: c!.name, imageUrl: null,
+            rarity: c!.rarity, mintState: 'ready', remaining: c!.available,
+          })
+        }
+      })
+      return done(hostView(g))
     },
-    deleteGiveawayItem: (giveawayId, itemId) => {
-      write((s) => { s.items = s.items.filter((i) => !(i.giveawayId === giveawayId && i.id === itemId)) })
-      return done(undefined)
+    setGiveawayScenes: (id, sceneIds) => {
+      const g = giveawayOf(id)
+      if (!g) return Promise.reject(notFound())
+      if (sceneIds.some((s) => s !== base.scene.id)) return Promise.reject(refused(403, 'forbidden', "You can't run events in every one of those scenes."))
+      if (!sceneIds.length && g.enabled) return Promise.reject(refused(409, 'not_ready', 'A giveaway that is on needs a scene.', { items: [] }))
+      write(() => { g.sceneIds = [...new Set(sceneIds)] })
+      return done(hostView(g))
     },
-    getGiveawayClaims: (giveawayId) => {
-      if (!giveawayOf(giveawayId)) return Promise.reject(notFound())
-      const claims = state.claims.filter((c) => c.giveawayId === giveawayId).map((c) => ({
-        ...c, item: (() => { const i = state.items.find((x) => x.id === c.itemId); return i ? { id: i.id, name: i.name } : null })(),
-      }))
-      return done({ claims })
+    getGiveawayClaims: (id) => {
+      if (!giveawayOf(id)) return Promise.reject(notFound())
+      const claims = state.claims.filter((c) => c.giveawayId === id)
+        .map(({ giveawayId: _g, ...c }) => ({ ...c, txUrl: null, txUrls: [] as string[] }))
+      return done({ claims, nextCursor: null })
     },
+    sendBackGiveaway: (id, toWallet) => {
+      const g = giveawayOf(id)
+      if (!g) return Promise.reject(notFound())
+      if (toWallet.toLowerCase() !== DEMO_HOST_WALLET) return Promise.reject(refused(400, 'not_your_wallet', 'Pick a wallet verified on your account.'))
+      const value = BigInt(g.balanceWei) - DEMO_TRANSFER_GAS * DEMO_GAS_PRICE
+      if (value <= BigInt(0)) return Promise.reject(refused(409, 'nothing_to_send', 'There is no POL of yours to send back.'))
+      write(() => { g.balanceWei = '0' })
+      return done({ txId: newId('tx'), valueWei: value.toString(), toWallet: shortWallet(toWallet) })
+    },
+    getGiveawaySendBackWallets: () => done({ wallets: [DEMO_HOST_WALLET] }),
   }
   return api
 }

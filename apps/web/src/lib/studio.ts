@@ -11,8 +11,53 @@ import { VIEWER_NOTE, canAct } from './studio-people'
 export type StudioKind = 'wearable' | 'emote' | 'scene'
 
 /** What the new design picker offers, and what a design's kind is called. */
-export const KIND_CHOICES: [StudioKind, string][] = [['wearable', 'Wearable'], ['emote', 'Emote'], ['scene', 'Building or furniture']]
+export const KIND_CHOICES: [StudioKind, string][] = [['wearable', 'Wearable'], ['emote', 'Emote'], ['scene', 'Building or decor']]
 export const kindLabel = (kind: string) => KIND_CHOICES.find(([k]) => k === kind)?.[1] ?? 'Wearable'
+
+/** A scene design's shape (LIV-200): a building, or decor (furniture pieces). */
+export type SceneShape = 'building' | 'decor'
+/** What a person picks when starting a design: a building or decor is a scene design with that shape. */
+export type DesignChoice = 'wearable' | 'emote' | SceneShape
+export const DESIGN_CHOICES: [DesignChoice, string][] = [['wearable', 'Wearable'], ['emote', 'Emote'], ['building', 'Building'], ['decor', 'Decor']]
+export const choiceLabel = (c: DesignChoice) => DESIGN_CHOICES.find(([k]) => k === c)?.[1] ?? 'Wearable'
+/** The design kind a choice creates. */
+export const choiceKind = (c: DesignChoice): StudioKind => (c === 'building' || c === 'decor' ? 'scene' : c)
+/** The create body's kind (and shape, for a scene design) for a choice. */
+export function choiceBody(c: DesignChoice): { kind: StudioKind; sceneShape?: SceneShape } {
+  return c === 'building' || c === 'decor' ? { kind: 'scene', sceneShape: c } : { kind: c }
+}
+/** Which choice a design is: a scene design by its shape (none yet reads as a building, as the server's does). */
+export const designChoice = (d: Pick<StudioDesign, 'kind' | 'sceneShape'>): DesignChoice =>
+  d.kind === 'scene' ? (d.sceneShape === 'decor' ? 'decor' : 'building') : d.kind
+/** What a design is called on its card: Wearable, Emote, Building or Decor. */
+export const designKindLabel = (d: Pick<StudioDesign, 'kind' | 'sceneShape'>) => choiceLabel(designChoice(d))
+
+/** The Studio's tabs (LIV-200): Scenes, one per design choice, and All designs (/studio with no kind). */
+export type DesignTab = DesignChoice | 'all'
+export type StudioTab = 'scenes' | DesignTab
+export const STUDIO_TABS: { tab: StudioTab; label: string; href: string }[] = [
+  { tab: 'scenes', label: 'Scenes', href: '/scenes' },
+  { tab: 'wearable', label: 'Wearables', href: '/studio?kind=wearable' },
+  { tab: 'emote', label: 'Emotes', href: '/studio?kind=emote' },
+  { tab: 'building', label: 'Buildings', href: '/studio?kind=building' },
+  { tab: 'decor', label: 'Decor', href: '/studio?kind=decor' },
+  { tab: 'all', label: 'All designs', href: '/studio' },
+]
+/** The tabs to show: only Scenes where the Design Studio is off. */
+export const visibleStudioTabs = (designs: boolean) => (designs ? STUDIO_TABS : STUDIO_TABS.filter((t) => t.tab === 'scenes'))
+/** The designs tab a `?kind=` names; none or an unknown one is All designs. */
+export function designTabFor(kind: string | null | undefined): DesignTab {
+  return DESIGN_CHOICES.some(([c]) => c === kind) ? (kind as DesignChoice) : 'all'
+}
+/** The designs page's title for a tab. */
+export const designTabTitle = (tab: DesignTab) => (tab === 'all' ? 'Design Studio' : STUDIO_TABS.find((t) => t.tab === tab)!.label)
+/** The plural for a tab's empty states ("No decor yet"). */
+export const designTabNoun = (tab: DesignTab) => (tab === 'all' ? 'designs' : tab === 'decor' ? 'decor' : `${tab}s`)
+/** The designs a tab shows: wearables and emotes by kind, buildings and decor by a scene design's shape. */
+export function filterDesigns<D extends Pick<StudioDesign, 'kind' | 'sceneShape'>>(designs: D[], tab: DesignTab): D[] {
+  if (tab === 'all') return designs
+  return designs.filter((d) => designChoice(d) === tab)
+}
 export type StudioAgent = 'claude' | 'codex' | 'grok'
 
 export type StudioUsage = {
@@ -37,6 +82,8 @@ export type StudioDesign = {
   id: string
   name: string
   kind: StudioKind
+  /** A scene design's shape (LIV-200); null for a wearable or emote. Older servers leave it out. */
+  sceneShape?: SceneShape | null
   agent: string
   status: 'idle' | 'building' | string
   archivedAt: string | null

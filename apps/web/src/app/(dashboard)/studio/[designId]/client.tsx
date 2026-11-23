@@ -7,7 +7,7 @@ import { useAuth } from '@/lib/auth'
 import { useStudioRoom } from '@/lib/colyseus'
 import { Badge, PageHeader, RowMenu, Skeleton } from '@/components/ui'
 import {
-  designBadge, designIdFromPath, kindLabel, nextPoll, paymentBanner, refreshDue, refusalMessage, reloadsOn, selectionCategories, wornState,
+  designBadge, designChoice, designIdFromPath, designKindLabel, designTabTitle, nextPoll, paymentBanner, refreshDue, refusalMessage, reloadsOn, selectionCategories, wornState,
   type Quote, type Refusal, type Step, type StudioDetail, type StudioEvent, type StudioSet, type StudioUsage, type WornState,
 } from '@/lib/studio'
 import { designControls, supportBanner } from '@/lib/studio-support'
@@ -175,9 +175,9 @@ export default function StudioDesignPage() {
   return (
     <div className="mx-auto max-w-7xl">
       <PageHeader
-        crumbs={detail.support ? [{ label: 'Studio admin', href: '/admin/studio' }, d.name] : [{ label: 'Design Studio', href: '/studio' }, d.name]}
+        crumbs={detail.support ? [{ label: 'Studio admin', href: '/admin/studio' }, d.name] : [{ label: designTabTitle(designChoice(d)), href: `/studio?kind=${designChoice(d)}` }, d.name]}
         title={d.name}
-        subtitle={<span className="flex flex-wrap items-center gap-2">{kindLabel(d.kind)} <Badge tone={badge.tone}>{badge.label}</Badge></span>}
+        subtitle={<span className="flex flex-wrap items-center gap-2">{designKindLabel(d)} <Badge tone={badge.tone}>{badge.label}</Badge></span>}
         actions={(controls.people || controls.designMenu) ? (
           <div className="flex items-center gap-2">
             {controls.people && (

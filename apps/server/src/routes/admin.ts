@@ -21,6 +21,7 @@ import { requireAdmin } from '../auth/admin.js'
 import { isUuid } from '../auth/scene-from.js'
 import { deleteUserWithModels, releaseModelFiles } from '../library/user-models.js'
 import { deleteMyBeatData } from '../beats/retention.js'
+import { deleteMyGiveawayData, giveawaysBlockingDelete } from '../giveaways/account.js'
 import { handOverDesigns } from '../studio/handover.js'
 
 
@@ -239,6 +240,9 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
 
     // Hosted worlds' rows would cascade away with it, leaving their Fly app, database and files running untracked.
+    // Giveaways hold their wallet's sealed key: they never cascade away with the account (LIV-194)
+    const giveawaysLeft = await giveawaysBlockingDelete(userId)
+    if (giveawaysLeft) return reply.status(409).send(giveawaysLeft)
     const blocked = await hostedWorldsBlockingDelete({ userId })
     if (blocked) return reply.status(409).send(blocked)
     const imports = await importsGoingWith({ userId })
@@ -247,6 +251,8 @@ export default async function adminRoutes(app: FastifyInstance) {
       await handOverDesigns(tx, userId, new Date())
       // BEAT claims: unminted go, minted lose name and link, minting are flagged for the job
       await deleteMyBeatData(userId, new Date(), tx)
+      // Giveaway check-ins not yet claimed go; queued and settled claims stay, unlinked
+      await deleteMyGiveawayData(userId, tx)
       return (await tx.delete(users).where(eq(users.id, userId)).returning({ id: users.id })).length > 0
     })
     await deleteImportFiles(imports)

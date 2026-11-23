@@ -40,7 +40,7 @@ export const promptHelpAvailable = () => config.studioPromptHelpPerDay > 0 && (!
 const WHAT: Record<HelpKind, string> = {
   wearable: 'wearable (or a set of wearables)',
   emote: 'emote (an avatar animation)',
-  scene: 'building or furniture piece for a scene',
+  scene: 'building or decor piece for a scene',
 }
 
 const DETAILS: Record<HelpKind, string> = {

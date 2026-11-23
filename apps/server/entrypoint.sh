@@ -352,6 +352,7 @@ if [ -n "$DATABASE_URL" ]; then
       try {
         await sql\`ALTER TABLE studio_jobs ADD COLUMN IF NOT EXISTS timings JSONB\`;
         await sql\`ALTER TABLE studio_designs ADD COLUMN IF NOT EXISTS warmed_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE studio_designs ADD COLUMN IF NOT EXISTS scene_shape TEXT\`;
         console.log('[virvi-server] studio timings and warmed_at ensured');
       } catch(e) { console.log('[virvi-server] studio timings and warmed_at:', e.message); }
 
@@ -566,6 +567,40 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`UPDATE beats SET contract_address = '0x444676bb1C156d2606c629925B55031482352428' WHERE chain = 'polygon-amoy' AND created_on_chain_tx IS NOT NULL AND contract_address IS NULL\`;
         console.log('[virvi-server] BEAT contract backfill ensured');
       } catch(e) { console.log('[virvi-server] BEAT contract backfill:', e.message); }
+      // Automatic wearable giveaways (LIV-194); matches giveaways, giveawayItems, giveawayScenes, giveawayClaims, giveawayTxs and giveawayClaimMints in src/db/schema.ts. pre-push-upgrade.mjs moves the old giveaway_claims aside first
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS giveaways (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID CONSTRAINT giveaways_org_id_organizations_id_fk REFERENCES organizations(id) ON DELETE CASCADE, owner_id UUID NOT NULL CONSTRAINT giveaways_owner_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, name TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT false, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`ALTER TABLE giveaways ALTER COLUMN enabled SET DEFAULT false\`;
+        await sql\`ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS chain TEXT NOT NULL DEFAULT 'polygon'\`;
+        await sql\`ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS wallet_address TEXT\`;
+        await sql\`ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS wallet_key_enc TEXT\`;
+        await sql\`ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS starts_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS ends_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS claim_cap INTEGER\`;
+        await sql\`ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS min_present_seconds INTEGER NOT NULL DEFAULT 0\`;
+        await sql\`ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS paused_reason TEXT\`;
+        await sql\`ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS paused_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS delete_state TEXT\`;
+        await sql\`ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ\`;
+        await sql\`CREATE TABLE IF NOT EXISTS giveaway_items (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), giveaway_id UUID NOT NULL CONSTRAINT giveaway_items_giveaway_id_giveaways_id_fk REFERENCES giveaways(id) ON DELETE CASCADE, name TEXT, image_url TEXT, contract_address TEXT, token_id TEXT, metadata JSONB)\`;
+        await sql\`ALTER TABLE giveaway_items ADD COLUMN IF NOT EXISTS item_id TEXT\`;
+        await sql\`ALTER TABLE giveaway_items ADD COLUMN IF NOT EXISTS rarity TEXT\`;
+        await sql\`ALTER TABLE giveaway_items ADD COLUMN IF NOT EXISTS mint_state TEXT\`;
+        await sql\`ALTER TABLE giveaway_items ADD COLUMN IF NOT EXISTS remaining INTEGER\`;
+        await sql\`ALTER TABLE giveaway_items ADD COLUMN IF NOT EXISTS checked_at TIMESTAMPTZ\`;
+        await sql\`CREATE TABLE IF NOT EXISTS giveaway_scenes (giveaway_id UUID NOT NULL CONSTRAINT giveaway_scenes_giveaway_id_giveaways_id_fk REFERENCES giveaways(id) ON DELETE CASCADE, scene_id UUID NOT NULL CONSTRAINT giveaway_scenes_scene_id_scenes_id_fk REFERENCES scenes(id) ON DELETE CASCADE, CONSTRAINT giveaway_scenes_giveaway_id_scene_id_pk PRIMARY KEY (giveaway_id, scene_id))\`;
+        await sql\`CREATE INDEX IF NOT EXISTS giveaway_scenes_scene_idx ON giveaway_scenes (scene_id)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS giveaway_claims (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), giveaway_id UUID NOT NULL CONSTRAINT giveaway_claims_giveaway_id_giveaways_id_fk REFERENCES giveaways(id) ON DELETE CASCADE, user_id UUID CONSTRAINT giveaway_claims_user_id_users_id_fk REFERENCES users(id) ON DELETE SET NULL, wallet TEXT NOT NULL, consent_version INTEGER NOT NULL, consented_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), seconds_present INTEGER DEFAULT 0, last_seen_at TIMESTAMPTZ, status TEXT DEFAULT 'present', fail_reason TEXT, claimed_at TIMESTAMPTZ, sent_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS giveaway_claims_giveaway_wallet_uq ON giveaway_claims (giveaway_id, wallet)\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS giveaway_claims_giveaway_user_uq ON giveaway_claims (giveaway_id, user_id) WHERE user_id is not null\`;
+        await sql\`CREATE TABLE IF NOT EXISTS giveaway_txs (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), giveaway_id UUID CONSTRAINT giveaway_txs_giveaway_id_giveaways_id_fk REFERENCES giveaways(id) ON DELETE SET NULL, chain TEXT NOT NULL, kind TEXT NOT NULL, from_address TEXT NOT NULL, to_address TEXT NOT NULL, contract_address TEXT, nonce BIGINT, raw_tx TEXT, tx_hash TEXT, tx_hashes TEXT[] DEFAULT '{}'::text[], status TEXT NOT NULL DEFAULT 'sending', value_wei NUMERIC(78, 0) NOT NULL DEFAULT '0', fee_wei NUMERIC(78, 0), covered BOOLEAN NOT NULL DEFAULT false, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, sent_at TIMESTAMPTZ, confirmed_at TIMESTAMPTZ, next_attempt_at TIMESTAMPTZ, replaced_seen_block BIGINT, replaced_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`ALTER TABLE giveaway_txs ADD COLUMN IF NOT EXISTS replaced_seen_block BIGINT\`;
+        await sql\`ALTER TABLE giveaway_txs ADD COLUMN IF NOT EXISTS replaced_at TIMESTAMPTZ\`;
+        await sql\`CREATE INDEX IF NOT EXISTS giveaway_txs_from_status_idx ON giveaway_txs (from_address, status)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS giveaway_claim_mints (claim_id UUID NOT NULL CONSTRAINT giveaway_claim_mints_claim_id_giveaway_claims_id_fk REFERENCES giveaway_claims(id) ON DELETE CASCADE, contract_address TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'waiting', tx_id UUID CONSTRAINT giveaway_claim_mints_tx_id_giveaway_txs_id_fk REFERENCES giveaway_txs(id) ON DELETE SET NULL, token_ids TEXT[], CONSTRAINT giveaway_claim_mints_claim_id_contract_address_pk PRIMARY KEY (claim_id, contract_address))\`;
+        console.log('[virvi-server] giveaway tables ensured');
+      } catch(e) { console.log('[virvi-server] giveaway tables:', e.message); }
       // Wallet-link provenance (LIV-11 reissue); existing links read as linked by an unknown session
       try {
         await sql\`ALTER TABLE user_auth_methods ADD COLUMN IF NOT EXISTS linked_at TIMESTAMPTZ\`;

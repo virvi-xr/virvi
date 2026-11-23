@@ -1,5 +1,6 @@
 // Virvi Assistant shows (phase 2b): a user's saved checklists, one per event. Only ever the caller's own: another
 // user's show id is 404 on every route. Item states are computed on each read (assistant/shows.ts).
+import { itemKey } from '../assistant/show-wearables.js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { and, desc, eq, isNull } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
@@ -120,6 +121,8 @@ export default async function assistantShowRoutes(app: FastifyInstance) {
       const items = current.items.map((i): ShowItem => {
         if (i.id !== item.id) return i
         const next: ShowItem = { ...i, ref: ref ?? i.ref ?? {} }
+        // Clearing what Virvi found remembers it, so the watcher doesn't pick the same one again
+        if (wearable === null && i.wearable?.found) next.dismissed = [...new Set([...(i.dismissed ?? []), itemKey(i.wearable)])].slice(-20)
         if (wearable === null) delete next.wearable
         else if (wearable) next.wearable = wearable
         return next

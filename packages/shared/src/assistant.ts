@@ -100,6 +100,8 @@ export interface ShowWearable {
   contract: string
   itemId: string
   url: string
+  /** Set when Virvi found it on Decentraland by itself (not pasted): its name there. */
+  found?: { name: string }
 }
 
 /** An item as stored: its state is never stored, it is computed from the rows `ref` points at on every read. */
@@ -109,6 +111,8 @@ export interface ShowItem {
   label: string
   ref: ShowItemRef
   wearable?: ShowWearable
+  /** wearable_published: Marketplace items (contract:itemId) Virvi found and the user cleared, never picked again. */
+  dismissed?: string[]
 }
 
 export interface ShowItemView {

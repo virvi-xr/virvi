@@ -49,13 +49,13 @@ Replies are formatted, with headings, lists, tables and code where they help. Li
 
 ## What it can't do yet
 
-Connecting a new destination, removing a collaborator, giveaways, deleting things, finalizing or paying for Studio designs, billing and branding are not available in this release. For those, it points you to the right page. It can't sign a deploy for you either: a destination that needs your signature is always finished on its deploy page.
+Connecting a new destination, removing a collaborator, switching on, funding or deleting a giveaway, deleting things, finalizing or paying for Studio designs, billing and branding are not available in this release. For those, it points you to the right page. It can't sign a deploy for you either: a destination that needs your signature is always finished on its deploy page.
 
 ## Making things
 
 **Scenes.** Ask for a new scene and it creates an empty one in your personal account, with one preset (Default) that is live.
 
-**Studio designs.** Ask it to start a design and it creates one of three kinds: a **wearable**, an **emote**, or a **scene**, which means a building with its furniture. It uses your default agent for that kind unless you name one (Claude, Codex or Grok). A new design is empty until a prompt is sent.
+**Studio designs.** Ask it to start a design and it creates one of three kinds: a **wearable**, an **emote**, or a **scene**, which means a building or decor. It doesn't pick between the two, so the design shows under **Buildings** in Studio until its pieces show it's decor. It uses your default agent for that kind unless you name one (Claude, Codex or Grok). A new design is empty until a prompt is sent.
 
 **Prompts.** Sending a Studio prompt uses your Studio prompts, so the assistant never sends one on its own. It shows a card first, and the prompt goes only after you press **Confirm**. The card shows exactly what will be sent: the start of the prompt (for example, Send "a neon cap with rivets"), and under it the design's name and which prompts it uses, then the wearable slots it works on and, for a long prompt, its whole text. The cost line is one of:
 
@@ -86,11 +86,13 @@ These prompts come out of your Studio allowance, not the assistant budget.
 
 Unless you name some destinations, it redeploys to all the scene's destinations. It can only redeploy to destinations the scene already has. To connect a new one, use the scene's publishing page. If every destination needs your signature, there is no card, and the assistant sends you to the deploy pages. See [Who can sign for parcels](/docs/dashboard/scene-import/#who-can-sign-for-parcels) for which wallets can sign.
 
-If one destination fails, for example because Decentraland can't be reached or you aren't the World's owner, the others still deploy. The result lists what was deployed, what failed and why, and what is left for you to sign.
+If one destination fails, for example because Decentraland can't be reached or you aren't the World's owner, the others still deploy. The result lists what was deployed, what failed and why, and what is left for you to sign. If they all fail, it tells you why for each one.
+
+Only the destinations the card said Virvi deploys go out when you press **Confirm**. If you switch a destination between Virvi and signing after the card appears, the assistant leaves that one alone and gives you its deploy page.
 
 **When a deploy fails.** Ask why, and the assistant reads the deploy and explains in plain words what went wrong and the next thing to try, such as shrinking a scene that is over the size limit, or redeploying in a few minutes when Decentraland couldn't be reached.
 
-**Collaborators.** Ask who has a role on a scene and it lists them with their roles (cohost, editor or viewer). Ask it to add someone, or to change their role, and it shows a card first, because this gives them access to the scene. The card says what the role allows. It adds one wallet at a time, and it can't change the scene's host. After you confirm there is an **Undo** button: it removes a collaborator it added, or puts back their old role. Undo refuses if the role was changed by hand since.
+**Collaborators.** Ask who has a role on a scene and it lists them with their roles (cohost, editor or viewer). Ask it to add someone, or to change their role, and it shows a card first, because this gives them access to the scene. The card says what the role allows. It adds one wallet at a time, and it can't change the scene's host. After you confirm there is an **Undo** button: it removes a collaborator it added, or puts back their old role. Undo refuses if the role was changed by hand since. To change the role of someone already on the scene you don't need to paste their wallet again: name them, or ask who's on the scene first.
 
 **Removing a collaborator.** The assistant can't do this. Use the scene's **Roles** tab.
 
@@ -113,9 +115,11 @@ The checklist shows on the event's page, under **Show checklist**, with an **Ask
 
 The states are read from your real events, raffles, BEATs and designs each time, never from what the assistant remembers. If you change something by hand, the checklist follows.
 
-### Raffles instead of giveaways
+### Automatic giveaways or a raffle
 
-The assistant can't run giveaways, so a show uses a [raffle](/docs/dashboard/raffles/). Winners are picked by the draw, and **you send the prizes** to them yourself. See Delivering prizes on that page.
+When the assistant finds your show's wearable on Decentraland, it offers two ways to give it away. Where automatic giveaways are available, the first is an **automatic giveaway**: it creates one in Drops with the found wearable already filled in and the show's scene. It is always created **switched off**. The assistant never switches a giveaway on, funds it, sends its balance back or deletes it. It gives you the giveaway's wallet address: add it as a minter on your collection in the Builder, then switch the giveaway on in Drops.
+
+The other choice is a [raffle](/docs/dashboard/raffles/). Winners are picked by the draw, and **you send the prizes** to them yourself. See Delivering prizes on that page. Where automatic giveaways aren't available, a show offers only the raffle.
 
 **The host terms card.** Creating a raffle is its own card, never part of a plan. It shows the raffle's details and Virvi's raffle host terms word for word: the raffle is free to enter and needs no purchase, you are responsible for following the giveaway and sweepstakes rules where you and your entrants live, and for delivering prizes. The card says "Confirming accepts these terms for this raffle." Pressing **Confirm** is you accepting them for that raffle. The assistant never accepts them for you.
 
@@ -136,6 +140,8 @@ If the show includes a wearable that doesn't exist yet, the assistant tells you 
 If the event starts in fewer than 7 days, you also get a warning: a new wearable may not be through Decentraland curation by then, and a wearable you've already published would be safer. The warning shows on the checklist too, until the wearable design is done.
 
 **Pasting the Marketplace link.** Once the wearable is published on Decentraland, paste its Marketplace link into the conversation, like `https://decentraland.org/marketplace/contracts/0x…/items/0`. The assistant adds it to the checklist and the item turns Done. It accepts a Decentraland Marketplace item link, or the wearable's contract address and item id.
+
+**Found by itself.** You often don't need to paste it. About every 10 minutes Virvi checks the Marketplace for wearables your verified wallets have published since the show began. If one is clearly the show's, the item turns Done by itself, with a note such as Found on Decentraland: "Neon Cap". When the show has a Studio design, that means a wearable with the design's name (case and spacing don't matter). When it has none, it's your only new wearable. A wearable another of your shows already has is never picked. If you named it differently on Decentraland, paste the link. If it found the wrong one, paste the right link to replace it, or ask the assistant to clear it: a cleared wearable is never picked for that show again. Finding it only fills in the checklist: the raffle's prize changes only when you confirm the assistant's card. Shows older than 90 days aren't checked.
 
 ### Picking a show up later
 

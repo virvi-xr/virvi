@@ -33,7 +33,9 @@ function canonical(v: unknown): string {
 }
 export const argsHash = (args: unknown) => sha256(canonical(args))
 
-const enabled = (name: string) => (Object.hasOwn(TOOLS, name) && !config.assistantDisabledTools.includes(name) ? TOOLS[name] : undefined)
+// A tool the server can't run right now (its available() says no, e.g. giveaways off) is not offered as a plan step either
+const enabled = (name: string) =>
+  (Object.hasOwn(TOOLS, name) && !config.assistantDisabledTools.includes(name) && (TOOLS[name].available?.() ?? true) ? TOOLS[name] : undefined)
 /** The args as the tool parses them (trimmed, defaults): what runs, is stored and is hashed. */
 function parseArgs(name: string, args: unknown): unknown {
   const parsed = enabled(name)?.input.safeParse(args ?? {})
@@ -194,13 +196,18 @@ export async function proposeCard(
     throw err
   }
   if ('blocked' in preview) return preview
+  // What the card showed and the press must keep to (redeploy_scene's deploy list), written into the stored args
+  const rebound = preview.bind ? def.input.safeParse({ ...(parsed.data as object), ...preview.bind }) : parsed
+  // Only when the target changed between before() and preview(), e.g. every destination switched to signing
+  if (!rebound.success) return { error: 'That changed while the card was being made. Ask again.' }
+  const bound = rebound.data
   // The card shows what will be sent, whole: masked like every shown string, never shortened
-  const label = redactText(def.label(parsed.data), ctx.self)
+  const label = redactText(def.label(bound), ctx.self)
   const detail = redactText(preview.detail, ctx.self)
 
   const planId = randomUUID()
   const expiresAtMs = Date.now() + PLAN_TTL_MS
-  const hash = argsHash(parsed.data)
+  const hash = argsHash(bound)
   const token = `${sign(planId, ctx.user.id, [hash], expiresAtMs)}.${expiresAtMs}`
   const [row] = await db
     .insert(assistantActions)
@@ -212,8 +219,8 @@ export async function proposeCard(
       step: 1,
       tool: def.name,
       effect: def.effect as 'paid' | 'public',
-      argsRedacted: redact(parsed.data, ctx.self) as object,
-      args: parsed.data as object,
+      argsRedacted: redact(bound, ctx.self) as object,
+      args: bound as object,
       argsHash: hash,
       label,
       orgName,

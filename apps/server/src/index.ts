@@ -10,6 +10,7 @@ import { buildApp } from './app.js'
 import { startLifecycleSweep } from './venues/lifecycle.js'
 import { startDclRedeploySweep } from './services/dcl/redeploy-sweep.js'
 import { startDclMapSweep } from './services/dcl/map-status.js'
+import { startShowWearableSweep } from './assistant/show-wearables.js'
 import { startHostedWorldSweep, SWEEP_INTERVAL_MS } from './hyperfy/sweep.js'
 import { startStudioSweep, STUDIO_SWEEP_MS } from './studio/sweep.js'
 import { startBuildSweep, BUILD_SWEEP_MS } from './services/import/build-sweep.js'
@@ -23,6 +24,7 @@ import { startAnalyticsJobs } from './analytics/jobs.js'
 import { initBus } from './realtime/bus.js'
 import { installProcessErrorHandlers, startErrorJobs } from './errors/jobs.js'
 import { startBeatJobs } from './beats/job.js'
+import { startGiveawayJob } from './giveaways/job.js'
 import { BEAT_JOB_EVERY_MS } from '@virvixr/shared'
 
 async function main() {
@@ -98,6 +100,10 @@ async function main() {
     startDclMapSweep(config.dclMapSweepMs)
     console.log(`[virvi-server] Decentraland map data sweep every ${config.dclMapSweepMs}ms`)
   }
+  if (config.showWearableSweepMs > 0) {
+    startShowWearableSweep(config.showWearableSweepMs)
+    console.log(`[virvi-server] Show wearable sweep every ${config.showWearableSweepMs}ms`)
+  }
   if (hyperfyHosting().available) {
     startHostedWorldSweep(SWEEP_INTERVAL_MS)
     console.log(`[virvi-server] Hosted Hyperfy world sweep every ${SWEEP_INTERVAL_MS}ms`)
@@ -124,6 +130,10 @@ async function main() {
   if (config.beats.enabled) {
     startBeatJobs()
     console.log(`[virvi-server] BEAT minting job every ${BEAT_JOB_EVERY_MS}ms`)
+  }
+  if (config.giveaways.enabled) {
+    startGiveawayJob()
+    console.log(`[virvi-server] Giveaway minting job every ${config.giveaways.jobEveryMs}ms`)
   }
 
   console.log(`[virvi-server] Ready at ${config.publicUrl}`)

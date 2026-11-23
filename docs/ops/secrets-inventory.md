@@ -11,6 +11,8 @@ Where the value lives today is the column to change: when LIV-191 is done, 1Pass
 | `DATABASE_URL` (Postgres password inside) | Railway: virvi-server, Postgres (`POSTGRES_PASSWORD`, `PGPASSWORD`) | server | Every account, design and payment record |
 | `JWT_SECRET` | Railway: virvi-server | server; also the root of the ad-viewer key and the error-user salt | Anyone can sign in as anyone |
 | `BEAT_MINTER_KEY` | Railway: virvi-server; source in 1Password | BEAT minting job | Can mint BEATs (MATIC in that wallet at risk) |
+| `GIVEAWAY_WALLET_SECRET` | Railway: virvi-server; back up in 1Password | automatic giveaways | Opens every giveaway wallet (POL at risk); losing it loses that POL |
+| `GIVEAWAY_GAS_KEY` | Railway: virvi-server; source in 1Password | giveaway gas tank | Can spend the gas tank's POL |
 | `BEAT_NETWORK_HASH_SECRET` | Railway: virvi-server | BEAT network claims | Links hashed BEAT data back to people |
 | `STRIPE_SECRET_KEY` | Railway: virvi-server; local `.env` (test key) | payments | Charges, refunds, customer data |
 | `STRIPE_WEBHOOK_SECRET` | Railway: virvi-server | Stripe webhook | Fake payment events |

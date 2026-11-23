@@ -13,7 +13,7 @@ const list = (v: unknown): Obj[] => (Array.isArray(v) ? v : [])
 const MAX_PROMPT = 4000
 const KINDS = ['wearable', 'emote', 'scene'] as const
 const AGENTS = ['claude', 'codex', 'grok'] as const
-/** A design's kind as the user says it: a scene design is a building (with its furniture). */
+/** A design's kind as the user says it: a scene design is a building or decor (the card says building). */
 const KIND_WORD: Record<(typeof KINDS)[number], string> = { wearable: 'a wearable', emote: 'an emote', scene: 'a building' }
 
 export const NO_PROMPTS = 'No Studio prompts left. They reset at midnight UTC, or the user can buy more.'
@@ -123,18 +123,20 @@ export const STUDIO_TOOLS: ToolDef<any>[] = [
   {
     name: 'create_design',
     description:
-      "Start a new Studio design: a wearable, an emote, or a building with furniture (kind scene). It is empty until a prompt is sent. agent is left out unless the user names one.",
-    input: z.object({ kind: z.enum(KINDS), name: z.string().trim().min(1).max(80), agent: z.enum(AGENTS).optional() }),
+      "Start a new Studio design: a wearable, an emote, or kind scene for a building (sceneShape building) or decor such as furniture and props (sceneShape decor). It is empty until a prompt is sent. agent is left out unless the user names one.",
+    input: z
+      .object({ kind: z.enum(KINDS), name: z.string().trim().min(1).max(80), agent: z.enum(AGENTS).optional(), sceneShape: z.enum(['building', 'decor']).optional() })
+      .refine((a) => a.kind === 'scene' || a.sceneShape === undefined, 'Only kind scene takes a sceneShape.'),
     effect: 'write',
     refusals: STUDIO_REFUSALS,
     call: async (a, ctx) => {
       const agent = a.agent ?? (await get(ctx, '/api/studio/defaults', STUDIO_REFUSALS)).agents?.[a.kind] ?? 'claude'
-      return { method: 'POST', url: '/api/studio/designs', body: { kind: a.kind, name: a.name, agent } }
+      return { method: 'POST', url: '/api/studio/designs', body: { kind: a.kind, name: a.name, agent, ...(a.sceneShape ? { sceneShape: a.sceneShape } : {}) } }
     },
     // Undoing a create would be a delete (archive), which the assistant doesn't do
     before: async (): Promise<Before> => ({ undo: null, after: (res) => pick(res as Obj, ['id', 'name']), orgName: null }),
-    label: (a) => `Start ${KIND_WORD[a.kind as (typeof KINDS)[number]]} design "${a.name}"`,
-    summarize: (res) => pick(res as Obj, ['id', 'name', 'kind', 'agent', 'status']),
+    label: (a) => `Start ${a.sceneShape === 'decor' ? 'a decor' : KIND_WORD[a.kind as (typeof KINDS)[number]]} design "${a.name}"`,
+    summarize: (res) => pick(res as Obj, ['id', 'name', 'kind', 'sceneShape', 'agent', 'status']),
   },
   {
     name: 'send_studio_prompt',

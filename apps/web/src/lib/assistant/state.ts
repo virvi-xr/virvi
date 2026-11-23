@@ -9,8 +9,10 @@ export type PanelState = {
 }
 
 /** Dashboard pages a link may open. Same list and logic as the server's `isDashboardPath` (apps/server/src/assistant/tools/local.ts); keep them in step. */
-const PAGES = ['scenes', 'events', 'analytics', 'deploy', 'media', 'streaming', 'giveaways', 'beats', 'studio', 'settings', 'publish', 'assets', 'import', 'command-center']
-const PAGE_RE = new RegExp(`^/(${PAGES.join('|')})(/[^\\s?#\\\\]*)?(\\?[\\w=&%-]*)?$`)
+const PAGES = ['scenes', 'studio', 'sync', 'events', 'drops', 'virvi-cities', 'cities', 'analytics', 'media', 'streaming', 'beats', 'settings', 'publish', 'assets', 'import', 'command-center']
+// Moved pages: their old paths still redirect, so a link to one still works
+const OLD_PAGES = ['deploy', 'giveaways']
+const PAGE_RE = new RegExp(`^/(${[...PAGES, ...OLD_PAGES].join('|')})(/[^\\s?#\\\\]*)?(\\?[\\w=&%-]*)?$`)
 
 /** A dashboard path, with no `.`/`..` segment (plain or percent-encoded) that a browser would resolve elsewhere. */
 export function safeHref(href: string): boolean {

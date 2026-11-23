@@ -24,7 +24,7 @@ export const SUMMIT_TRACKS: SummitTrack[] = [
     day: 'Wednesday 3 February',
     description: 'Make things with AI, run one scene in every world, and step into it in AR.',
     offerings: [
-      { id: 'studio', name: 'Virvi Studio', session: 'Wed 3 Feb · 13:15', blurb: 'AI-built wearables, emotes, buildings and furniture. We build them live from your ideas.' },
+      { id: 'studio', name: 'Virvi Studio', session: 'Wed 3 Feb · 13:15', blurb: 'AI-built wearables, emotes, buildings and decor. We build them live from your ideas.' },
       { id: 'sync', name: 'Virvi Sync', session: 'Wed 3 Feb · 14:30', blurb: 'One scene, every world. The Decentraland, Creator Hub, Hyperfy, Quest and Vision Pro HUDs.' },
       { id: 'ar', name: 'Virvi AR', session: 'Wed 3 Feb · 15:45', blurb: 'Step into a scene in the real studio.' },
     ],

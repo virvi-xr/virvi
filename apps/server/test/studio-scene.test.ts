@@ -8,7 +8,7 @@ import { setMachineDeps } from '../src/studio/machines.js'
 import { SCENE_PROMPT_LIMITS } from '../src/studio/scene.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, tokenFor, type TestUser } from './helpers/factories.js'
-import { fakeFly, okResult, issueWorker } from './helpers/studio.js'
+import { fakeFly, okResult, issueWorker, createDesign, addRevision } from './helpers/studio.js'
 
 const S = '/api/studio'
 
@@ -82,6 +82,52 @@ describe('studio scene designs', () => {
     expect(res.json()).toMatchObject({ kind: 'scene', name: 'Untitled scene piece' })
     const bad = await create(u, 'house')
     expect([bad.statusCode, bad.json().error]).toEqual([400, 'kind must be wearable, emote or scene'])
+  })
+
+  describe('scene shape (LIV-200)', () => {
+    const createShaped = (u: TestUser, body: Record<string, unknown>) =>
+      app.inject({ method: 'POST', url: `${S}/designs`, headers: as(u), payload: { agent: 'claude', ...body } })
+    const listed = async (u: TestUser, id: string) =>
+      (await app.inject({ method: 'GET', url: `${S}/designs`, headers: as(u) })).json().find((d: any) => d.id === id)
+    const detailed = async (u: TestUser, id: string) =>
+      (await app.inject({ method: 'GET', url: `${S}/designs/${id}`, headers: as(u) })).json().design
+
+    it('creates a scene with a chosen shape and names it for the shape; only a scene takes one', async () => {
+      const u = await createUser()
+      const decor = await createShaped(u, { kind: 'scene', sceneShape: 'decor' })
+      expect([decor.statusCode, decor.json().name, decor.json().sceneShape]).toEqual([201, 'Untitled decor', 'decor'])
+      const building = await createShaped(await createUser(), { kind: 'scene', sceneShape: 'building' })
+      expect([building.json().name, building.json().sceneShape]).toEqual(['Untitled building', 'building'])
+      const plain = await createShaped(await createUser(), { kind: 'scene' })
+      expect([plain.json().name, plain.json().sceneShape]).toEqual(['Untitled scene piece', 'building'])
+      const wearable = await createShaped(await createUser(), { kind: 'wearable', sceneShape: 'decor' })
+      expect([wearable.statusCode, wearable.json().error]).toEqual([400, 'Only a scene design takes a shape.'])
+      const odd = await createShaped(await createUser(), { kind: 'scene', sceneShape: 'castle' })
+      expect(odd.statusCode).toBe(400)
+    })
+
+    it('the list shows the shape: chosen when empty, by pieces once it has some, null for other kinds', async () => {
+      const u = await createUser()
+      const emptyDecor = await createDesign(u, { kind: 'scene', sceneShape: 'decor' })
+      const emptyNone = await createDesign(u, { kind: 'scene' })
+      const withBuilding = await createDesign(u, { kind: 'scene' })
+      await addRevision(withBuilding, 'building')
+      const onlyFurniture = await createDesign(u, { kind: 'scene' })
+      await addRevision(onlyFurniture, 'furniture_chair')
+      const decorWithBuilding = await createDesign(u, { kind: 'scene', sceneShape: 'decor' })
+      await addRevision(decorWithBuilding, 'furniture_chair')
+      await addRevision(decorWithBuilding, 'building')
+      const wearable = await createDesign(u)
+      expect((await listed(u, emptyDecor.id)).sceneShape).toBe('decor')
+      expect((await listed(u, emptyNone.id)).sceneShape).toBe('building')
+      expect((await listed(u, withBuilding.id)).sceneShape).toBe('building')
+      expect((await listed(u, onlyFurniture.id)).sceneShape).toBe('decor')
+      expect((await listed(u, decorWithBuilding.id)).sceneShape).toBe('building')
+      expect((await listed(u, wearable.id)).sceneShape).toBeNull()
+      // the detail agrees
+      expect((await detailed(u, onlyFurniture.id)).sceneShape).toBe('decor')
+      expect((await detailed(u, wearable.id)).sceneShape).toBeNull()
+    })
   })
 
   it('a scene prompt carries the scene limits', async () => {

@@ -5,7 +5,7 @@ import { db } from '../src/db/connection.js'
 import {
   users, scenes, scenePresets, scenePresetSchedules, screenShowings, sceneElements, sceneElementInstances, sceneCollaborators, sceneRoles, sceneLibrary,
   sceneDeployments, streamingServers, events, eventSceneLinks, eventGiveawayLinks, giveaways,
-  giveawayItems, assetLibraryItems, mediaAssets, organizations, orgMembers, orgInvites, venues, bookings, accessGrants,
+  giveawayItems, giveawayScenes, giveawayClaims, giveawayClaimMints, giveawayTxs, assetLibraryItems, mediaAssets, organizations, orgMembers, orgInvites, venues, bookings, accessGrants,
   uploadTokens, platformCallbacks, analyticsScenes, locationSetups, apiKeys, hyperfyWorlds, hyperfyPairings, arSpaces, arFloors, arMarkers, arAdjustments, roomScans, roomSets, arDevices,
   dclWorldDestinations, adSpaceSettings, adSpaceApprovals, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
@@ -27,6 +27,7 @@ import { createSetup } from './helpers/setups.js'
 import { Wallet } from 'ethers'
 import { setWorldsClient } from '../src/services/dcl/worlds-client.js'
 import { FakeWorldsClient } from './helpers/fake-worlds.js'
+import { giveawaysOn } from './helpers/giveaways-fake.js'
 import { setDclDirectory } from '../src/analytics/dcl-directory.js'
 import { FakeDclDirectory } from './helpers/fake-dcl.js'
 
@@ -62,8 +63,11 @@ async function fixtures() {
     rtmpUrl: 'rtmp://ingest.virvi.io/live/b-key', hlsPlaylistUrl: 'https://live.virvi.io/streams/b-pb/playlist.m3u8',
   }).returning()
   const [event] = await db.insert(events).values({ ownerId: b.id, name: 'B event', startTime: new Date(Date.now() - 2 * 3600_000), endTime: new Date(Date.now() - 3600_000) }).returning()
-  const [giveaway] = await db.insert(giveaways).values({ ownerId: b.id, name: 'B giveaway' }).returning()
-  const [item] = await db.insert(giveawayItems).values({ giveawayId: giveaway.id, name: 'B item' }).returning()
+  const [giveaway] = await db.insert(giveaways).values({ ownerId: b.id, name: 'B giveaway', walletAddress: Wallet.createRandom().address, walletKeyEnc: 'v1:b:b:b' }).returning()
+  const [item] = await db.insert(giveawayItems).values({ giveawayId: giveaway.id, name: 'B item', contractAddress: '0x' + 'c0'.repeat(20), itemId: '0' }).returning()
+  await db.insert(giveawayScenes).values({ giveawayId: giveaway.id, sceneId: scene.id })
+  await db.insert(giveawayClaims).values({ giveawayId: giveaway.id, wallet: randomWallet(), consentVersion: 1, status: 'waiting' })
+  await db.insert(giveawayTxs).values({ giveawayId: giveaway.id, chain: 'polygon', kind: 'topup', fromAddress: randomWallet(), toAddress: giveaway.walletAddress!, status: 'confirmed', valueWei: '1' })
   await db.insert(eventSceneLinks).values({ eventId: event.id, sceneId: scene.id })
   await db.insert(eventGiveawayLinks).values({ eventId: event.id, giveawayId: giveaway.id })
   const [asset] = await db.insert(assetLibraryItems).values({ name: 'B private', storageKey: 'assets/b/x.glb', isPublic: false, uploadedBy: b.id }).returning()
@@ -283,6 +287,10 @@ const CASES: Case[] = [
   { route: 'DELETE /api/scenes/:sceneId/beat/:beatId/track', url: (f) => `/api/scenes/${f.scene.id}/beat/${f.beat.id}/track` },
   { route: 'POST /api/scenes/:sceneId/beat/:beatId/checkin', url: (f) => `/api/scenes/${f.scene.id}/beat/${f.beat.id}/checkin` },
   { route: 'POST /api/scenes/:sceneId/beat/:beatId/claim', url: (f) => `/api/scenes/${f.scene.id}/beat/${f.beat.id}/claim` },
+  { route: 'POST /api/scenes/:sceneId/giveaway/:id/track', url: (f) => `/api/scenes/${f.scene.id}/giveaway/${f.giveaway.id}/track`, body: () => ({ consentVersion: 1 }) },
+  { route: 'DELETE /api/scenes/:sceneId/giveaway/:id/track', url: (f) => `/api/scenes/${f.scene.id}/giveaway/${f.giveaway.id}/track` },
+  { route: 'POST /api/scenes/:sceneId/giveaway/:id/checkin', url: (f) => `/api/scenes/${f.scene.id}/giveaway/${f.giveaway.id}/checkin` },
+  { route: 'POST /api/scenes/:sceneId/giveaway/:id/claim', url: (f) => `/api/scenes/${f.scene.id}/giveaway/${f.giveaway.id}/claim` },
   // raffles (LIV-55)
   { route: 'GET /api/scenes/:sceneId/raffles', url: (f) => `/api/scenes/${f.scene.id}/raffles` },
   { route: 'POST /api/scenes/:sceneId/raffles', url: (f) => `/api/scenes/${f.scene.id}/raffles`, body: () => ({ name: 'pwned', prize: 'x', winnersCount: 1, mode: 'one_per_person', acceptHostTerms: true }) },
@@ -471,12 +479,14 @@ const CASES: Case[] = [
   { route: 'DELETE /api/streaming/:id', url: (f) => `/api/streaming/${f.stream.id}` },
   { route: 'GET /api/streaming/:id/sessions', url: (f) => `/api/streaming/${f.stream.id}/sessions` },
   // giveaways
-  { route: 'GET /api/giveaways/:giveawayId', url: (f) => `/api/giveaways/${f.giveaway.id}` },
-  { route: 'PUT /api/giveaways/:giveawayId', url: (f) => `/api/giveaways/${f.giveaway.id}`, body: () => ({ name: 'pwned' }) },
-  { route: 'DELETE /api/giveaways/:giveawayId', url: (f) => `/api/giveaways/${f.giveaway.id}` },
-  { route: 'POST /api/giveaways/:giveawayId/items', url: (f) => `/api/giveaways/${f.giveaway.id}/items`, body: () => ({ name: 'pwned' }) },
-  { route: 'DELETE /api/giveaways/:giveawayId/items/:itemId', url: (f) => `/api/giveaways/${f.giveaway.id}/items/${f.item.id}` },
-  { route: 'GET /api/giveaways/:giveawayId/claims', url: (f) => `/api/giveaways/${f.giveaway.id}/claims` },
+  { route: 'GET /api/giveaways/:id', url: (f) => `/api/giveaways/${f.giveaway.id}` },
+  { route: 'PATCH /api/giveaways/:id', url: (f) => `/api/giveaways/${f.giveaway.id}`, body: () => ({ name: 'pwned' }) },
+  { route: 'DELETE /api/giveaways/:id', url: (f) => `/api/giveaways/${f.giveaway.id}` },
+  { route: 'PUT /api/giveaways/:id/items', url: (f) => `/api/giveaways/${f.giveaway.id}/items`, body: () => ({ items: [{ contractAddress: '0x' + 'c0'.repeat(20), itemId: '1' }] }) },
+  { route: 'PUT /api/giveaways/:id/scenes', url: (f) => `/api/giveaways/${f.giveaway.id}/scenes`, body: () => ({ sceneIds: [] }) },
+  { route: 'GET /api/giveaways/:id/claims', url: (f) => `/api/giveaways/${f.giveaway.id}/claims` },
+  { route: 'POST /api/giveaways/:id/send-back', url: (f) => `/api/giveaways/${f.giveaway.id}/send-back`, body: (f) => ({ toWallet: f.a.wallet }) },
+  { route: 'GET /api/giveaways/:id/send-back-wallets', url: (f) => `/api/giveaways/${f.giveaway.id}/send-back-wallets` },
   // uploads, assets, media, hooks
   { route: 'POST /api/upload-tokens', url: () => '/api/upload-tokens', body: (f) => ({ sceneId: f.scene.id }) },
   { route: 'GET /api/assets/:id', url: (f) => `/api/assets/${f.asset.id}` },
@@ -594,6 +604,7 @@ const NOT_CROSS_ACCOUNT: Record<string, string> = {
   'GET /api/imports/build/:id/source': "the one-build token is the auth and reaches only its own import; another import's token is 401 (import-build.test.ts)",
   'POST /api/imports/build/:id/result': "the one-build token is the auth and reaches only its own import; another import's token is 401 (import-build.test.ts)",
   'POST /api/imports/build/:id/failed': "the one-build token is the auth and reaches only its own import; another import's token is 401 (import-build.test.ts)",
+  'GET /api/scenes/:sceneId/giveaway/current': "any signed-in caller may read a scene's open giveaway: the visitor-safe VisitorGiveaway (no names or wallets) and only the caller's own claim (giveaway-visitor.test.ts)",
   'GET /api/scenes/:sceneId/beat/current': "any signed-in caller may read a scene's current BEAT: the visitor-safe VisitorBeat (no names or wallets) and only the caller's own claim (beat-visitor.test.ts)",
   'GET /api/beats/metadata/:chain/:file': 'public by design: token metadata for wallets and marketplaces, nothing but what the token shows on chain; draft and cancelled BEATs are 404 (beat-metadata.test.ts)',
   'GET /api/wallets/:address/beats': 'public by design: the BEATs a wallet holds, as anyone can read on chain (LIV-185), for virvi.io/w/<wallet>',
@@ -604,7 +615,7 @@ const NOT_CROSS_ACCOUNT: Record<string, string> = {
 const TABLES = [
   users, scenes, scenePresets, scenePresetSchedules, screenShowings, sceneElements, sceneElementInstances, sceneCollaborators, sceneRoles, sceneLibrary,
   sceneDeployments, streamingServers, events, eventSceneLinks, eventGiveawayLinks, giveaways,
-  giveawayItems, assetLibraryItems, mediaAssets, organizations, orgMembers, orgInvites, venues, bookings, accessGrants,
+  giveawayItems, giveawayScenes, giveawayClaims, giveawayClaimMints, giveawayTxs, assetLibraryItems, mediaAssets, organizations, orgMembers, orgInvites, venues, bookings, accessGrants,
   uploadTokens, platformCallbacks, analyticsScenes, locationSetups, hyperfyWorlds, hyperfyPairings, arSpaces, arFloors, arMarkers, arAdjustments, arDevices, roomScans, roomSets,
   dclWorldDestinations, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
@@ -631,6 +642,7 @@ describe('cross-account route walk', () => {
   const prevStreaming = config.streamingEnabled
   const prevStudio = config.studioEnabled
   const prevBeats = config.beats
+  let giveawaysOff = () => {}
   const prevDeployKey = config.virviDclDeployKey
   const prevParcelKey = config.virviDclParcelDeployKey
   const prevAssistant = { enabled: config.assistantEnabled, audience: config.assistantAudience, billing: config.billingEnabled, creator: process.env.STRIPE_PRICE_CREATOR }
@@ -639,6 +651,7 @@ describe('cross-account route walk', () => {
     ;(config as any).streamingEnabled = true
     ;(config as any).studioEnabled = true
     ;(config as any).beats = { ...config.beats, enabled: true }
+    giveawaysOff = giveawaysOn().off
     // Never reach Decentraland: B's World is owned by B in the fake
     ;(config as any).virviDclDeployKey = Wallet.createRandom().privateKey
     ;(config as any).virviDclParcelDeployKey = Wallet.createRandom().privateKey
@@ -674,6 +687,7 @@ describe('cross-account route walk', () => {
     ;(config as any).streamingEnabled = prevStreaming
     ;(config as any).studioEnabled = prevStudio
     ;(config as any).beats = prevBeats
+    giveawaysOff()
     setStudioStore(null)
     setImportStore(null)
     ;(config as any).virviDclDeployKey = prevDeployKey

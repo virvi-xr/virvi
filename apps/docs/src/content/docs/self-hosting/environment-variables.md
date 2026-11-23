@@ -185,10 +185,23 @@ These connect the server to the [streaming media server](/docs/self-hosting/dock
 | `VIRVI_DCL_PARCEL_DEPLOY_KEY` | none | A separate wallet's private key for Genesis City parcels. Unset hides the "Make Virvi an operator" option; browser signing still works. A malformed key stops the server at boot. |
 | `DCL_REDEPLOY_SWEEP_MS` | `30000` | How often pending redeploys are checked (`0` disables). |
 | `DCL_MAP_SWEEP_MS` | `60000` | How often to check whether Decentraland built a map snapshot for a new deploy (`0` disables). |
+| `SHOW_WEARABLE_SWEEP_MS` | `600000` | How often an assistant show waiting on a published wearable looks for it on the Decentraland Marketplace (`0` disables). |
+| `DCL_MARKETPLACE_API_URL` | `https://marketplace-api.decentraland.org` | Marketplace API that show wearables are looked up in. |
 | `DCL_CATALYST_URL` | `https://peer.decentraland.org` | Catalyst for Genesis City deploys and parcel permissions. |
 | `DCL_LAND_SUBGRAPH_URL` | `https://subgraph.decentraland.org/land-manager` | LAND subgraph, used to find a parcel's estate. |
 | `DCL_WORLDS_URL` | `https://worlds-content-server.decentraland.org` | Worlds content server. |
 | `DCL_MAP_MANIFEST_URL` | `https://abgen-cdn.decentraland.org/LOD/lods-unity/manifests` | Where map snapshots are looked up. |
+
+## Wearable giveaways
+
+Automatic wearable giveaways (see [Drops](/docs/dashboard/drops/)) mint from a wallet the server makes for each giveaway. They are off unless `GIVEAWAY_WALLET_SECRET` is set; the server starts normally without it.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `GIVEAWAY_WALLET_SECRET` | none | 64 hex characters (`openssl rand -hex 32`). Seals each giveaway wallet's private key. Unset, automatic giveaways are off. A malformed value stops the server from starting. Back it up: if you lose it, the POL in every giveaway wallet is lost. |
+| `GIVEAWAY_GAS_KEY` | none | Private key (32-byte hex) of the shared gas-tank wallet that tops up giveaways of paid accounts. Unset, every host funds their own giveaway wallet. A malformed key stops the server from starting. |
+| `GIVEAWAY_GAS_TANK_MIN_POL` | `5` | The gas tank's floor on Polygon, in POL. Below it, top-ups stop and admins are warned. |
+| `GIVEAWAY_JOB_EVERY_MS` | `15000` | How often the minting job runs, in milliseconds. |
 
 ## Hosted Hyperfy worlds
 

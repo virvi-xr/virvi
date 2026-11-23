@@ -52,7 +52,7 @@ function PublishContent() {
       <div className="mx-auto max-w-2xl space-y-6">
         <PageHeader crumbs={['Tools', 'Publish']} title="Publish" />
         <p className="rounded-lg border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-300" role="alert">{loadError}</p>
-        <Link href="/deploy" className="text-sm text-blue-400 hover:text-blue-300">Open Deploy</Link>
+        <Link href="/sync" className="text-sm text-blue-400 hover:text-blue-300">Open Sync</Link>
       </div>
     )
   }
@@ -88,7 +88,7 @@ function PublishContent() {
           ) : (
             <p className="text-yellow-200">
               {copy.notSigned}{' '}
-              <Link href={`/deploy?scene=${dest.sceneId}`} className="text-blue-300 hover:text-blue-200">Open Deploy</Link> to sign it or to sign each deploy instead.
+              <Link href={`/sync?scene=${dest.sceneId}`} className="text-blue-300 hover:text-blue-200">Open Sync</Link> to sign it or to sign each deploy instead.
             </p>
           )
         ) : (
@@ -113,7 +113,7 @@ function PublishContent() {
               className="clip-corner inline-flex items-center gap-1.5 bg-accent px-4 py-2.5 text-sm font-semibold text-accent-ink hover:bg-accent-hover">
               Jump in
             </a>
-            <Link href={`/deploy?scene=${dest.sceneId}`} className="text-blue-400 hover:text-blue-300">Open Deploy</Link>
+            <Link href={`/sync?scene=${dest.sceneId}`} className="text-blue-400 hover:text-blue-300">Open Sync</Link>
           </div>
         ) : (!viaVirvi || dest.grantedAt) && (
           <PrimaryButton type="button" onClick={publish} disabled={running}>

@@ -23,7 +23,7 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
-import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus, BeatChain, BeatLocationType, BeatStatus, BeatClaimStatus, BeatReissueStatus, BeatReissueLoss, BeatReissueItemState, BeatReissueFileStatus, SignInMethod, ShowItem } from '@virvixr/shared'
+import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus, BeatChain, BeatLocationType, BeatStatus, BeatClaimStatus, BeatReissueStatus, BeatReissueLoss, BeatReissueItemState, BeatReissueFileStatus, GiveawayChain, GiveawayClaimStatus, GiveawayPauseReason, GiveawayMintState, SignInMethod, ShowItem } from '@virvixr/shared'
 import type { PoolEntry } from '../raffles/draw.js'
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -574,8 +574,21 @@ export const giveaways = pgTable('giveaways', {
   orgId: uuid('org_id').references(() => organizations.id, { onDelete: 'cascade' }),
   ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
-  enabled: boolean('enabled').notNull().default(true),
-  claimLimit: integer('claim_limit').default(1),
+  enabled: boolean('enabled').notNull().default(false),
+  // Automatic wearable giveaways (LIV-194). The wallet holds the host's float and mints; its key is sealed (walletKeyEnc)
+  chain: text('chain').$type<GiveawayChain>().notNull().default('polygon'),
+  walletAddress: text('wallet_address'),
+  walletKeyEnc: text('wallet_key_enc'),
+  startsAt: timestamp('starts_at', { withTimezone: true }),
+  endsAt: timestamp('ends_at', { withTimezone: true }),
+  claimCap: integer('claim_cap'),
+  minPresentSeconds: integer('min_present_seconds').notNull().default(0),
+  pausedReason: text('paused_reason').$type<GiveawayPauseReason>(),
+  pausedAt: timestamp('paused_at', { withTimezone: true }),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deleteState: text('delete_state').$type<'returning'>(), // null | 'returning' (the job is returning the float)
+  // When it was last switched off (null while on): an off giveaway idle 7 days returns Virvi's float (giveaways/job.ts)
+  disabledAt: timestamp('disabled_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
@@ -587,6 +600,8 @@ export const giveawaysRelations = relations(giveaways, ({ one, many }) => ({
   }),
   items: many(giveawayItems),
   claims: many(giveawayClaims),
+  scenes: many(giveawayScenes),
+  txs: many(giveawayTxs),
   eventLinks: many(eventGiveawayLinks),
 }))
 
@@ -595,9 +610,15 @@ export const giveawayItems = pgTable('giveaway_items', {
   giveawayId: uuid('giveaway_id').notNull().references(() => giveaways.id, { onDelete: 'cascade' }),
   name: text('name'),
   imageUrl: text('image_url'),
-  contractAddress: text('contract_address'),
-  tokenId: text('token_id'),
-  metadata: jsonb('metadata'),
+  contractAddress: text('contract_address'), // checksummed
+  tokenId: text('token_id'), // unused
+  metadata: jsonb('metadata'), // unused
+  itemId: text('item_id'),
+  rarity: text('rarity'),
+  // The last mintCheck's result, written every time it runs
+  mintState: text('mint_state').$type<GiveawayMintState>(),
+  remaining: integer('remaining'),
+  checkedAt: timestamp('checked_at', { withTimezone: true }),
 })
 
 export const giveawayItemsRelations = relations(giveawayItems, ({ one }) => ({
@@ -607,25 +628,97 @@ export const giveawayItemsRelations = relations(giveawayItems, ({ one }) => ({
   }),
 }))
 
+export const giveawayScenes = pgTable('giveaway_scenes', {
+  giveawayId: uuid('giveaway_id').notNull().references(() => giveaways.id, { onDelete: 'cascade' }),
+  sceneId: uuid('scene_id').notNull().references(() => scenes.id, { onDelete: 'cascade' }),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.giveawayId, t.sceneId] }),
+  sceneIdx: index('giveaway_scenes_scene_idx').on(t.sceneId),
+}))
+
+export const giveawayScenesRelations = relations(giveawayScenes, ({ one }) => ({
+  giveaway: one(giveaways, { fields: [giveawayScenes.giveawayId], references: [giveaways.id] }),
+}))
+
 export const giveawayClaims = pgTable('giveaway_claims', {
   id: uuid('id').primaryKey().defaultRandom(),
-  giveawayId: uuid('giveaway_id').notNull().references(() => giveaways.id),
-  userId: text('user_id'),
-  walletAddress: text('wallet_address'),
-  itemId: uuid('item_id').references(() => giveawayItems.id),
-  status: text('status').notNull().default('pending'),
-  claimedAt: timestamp('claimed_at', { withTimezone: true }).notNull().defaultNow(),
-})
+  giveawayId: uuid('giveaway_id').notNull().references(() => giveaways.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  wallet: text('wallet').notNull(),
+  consentVersion: integer('consent_version').notNull(),
+  consentedAt: timestamp('consented_at', { withTimezone: true }).notNull().defaultNow(),
+  secondsPresent: integer('seconds_present').default(0),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+  status: text('status').$type<GiveawayClaimStatus>().default('present'),
+  failReason: text('fail_reason'),
+  claimedAt: timestamp('claimed_at', { withTimezone: true }),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  walletUq: uniqueIndex('giveaway_claims_giveaway_wallet_uq').on(t.giveawayId, t.wallet),
+  userUq: uniqueIndex('giveaway_claims_giveaway_user_uq').on(t.giveawayId, t.userId).where(sql`user_id is not null`),
+}))
 
-export const giveawayClaimsRelations = relations(giveawayClaims, ({ one }) => ({
+export const giveawayClaimsRelations = relations(giveawayClaims, ({ one, many }) => ({
   giveaway: one(giveaways, {
     fields: [giveawayClaims.giveawayId],
     references: [giveaways.id],
   }),
-  item: one(giveawayItems, {
-    fields: [giveawayClaims.itemId],
-    references: [giveawayItems.id],
-  }),
+  mints: many(giveawayClaimMints),
+}))
+
+// One row per claim per item contract: what each mint tx is doing for the claim
+export const giveawayClaimMints = pgTable('giveaway_claim_mints', {
+  claimId: uuid('claim_id').notNull().references(() => giveawayClaims.id, { onDelete: 'cascade' }),
+  contractAddress: text('contract_address').notNull(),
+  status: text('status').$type<'waiting' | 'minting' | 'sent' | 'failed'>().notNull().default('waiting'),
+  txId: uuid('tx_id').references((): AnyPgColumn => giveawayTxs.id, { onDelete: 'set null' }),
+  tokenIds: text('token_ids').array(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.claimId, t.contractAddress] }),
+}))
+
+export const giveawayClaimMintsRelations = relations(giveawayClaimMints, ({ one }) => ({
+  claim: one(giveawayClaims, { fields: [giveawayClaimMints.claimId], references: [giveawayClaims.id] }),
+  tx: one(giveawayTxs, { fields: [giveawayClaimMints.txId], references: [giveawayTxs.id] }),
+}))
+
+// The giveaway ledger: every transaction a giveaway wallet sends or is topped up by. A `sending` row with a null rawTx
+// is waiting to be signed; nonce and rawTx are filled in when the job signs it.
+export const giveawayTxs = pgTable('giveaway_txs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  giveawayId: uuid('giveaway_id').references(() => giveaways.id, { onDelete: 'set null' }),
+  chain: text('chain').$type<GiveawayChain>().notNull(),
+  kind: text('kind').$type<'mint' | 'topup' | 'withdraw' | 'return'>().notNull(),
+  fromAddress: text('from_address').notNull(),
+  toAddress: text('to_address').notNull(),
+  contractAddress: text('contract_address'), // mint only
+  nonce: bigint('nonce', { mode: 'number' }),
+  rawTx: text('raw_tx'),
+  txHash: text('tx_hash'),
+  txHashes: text('tx_hashes').array().default(sql`'{}'::text[]`),
+  // 'replaced': its nonce was used with no receipt of ours found; the job keeps looking for one (see giveaways/job.ts)
+  status: text('status').$type<'sending' | 'sent' | 'confirmed' | 'failed' | 'replaced'>().notNull().default('sending'),
+  valueWei: numeric('value_wei', { precision: 78, scale: 0 }).notNull().default('0'),
+  feeWei: numeric('fee_wei', { precision: 78, scale: 0 }), // from the receipt
+  covered: boolean('covered').notNull().default(false),
+  attempts: integer('attempts').notNull().default(0),
+  lastError: text('last_error'),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+  confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+  nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
+  // The block at which the job first saw this tx's nonce used with no receipt for any of its hashes (a lagging RPC, or a
+  // real replacement); cleared when that no longer holds
+  replacedSeenBlock: bigint('replaced_seen_block', { mode: 'number' }),
+  // When the job marked it 'replaced'; it keeps reading the row's receipts for 7 days from then
+  replacedAt: timestamp('replaced_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  fromStatusIdx: index('giveaway_txs_from_status_idx').on(t.fromAddress, t.status),
+}))
+
+export const giveawayTxsRelations = relations(giveawayTxs, ({ one }) => ({
+  giveaway: one(giveaways, { fields: [giveawayTxs.giveawayId], references: [giveaways.id] }),
 }))
 
 export const eventGiveawayLinks = pgTable('event_giveaway_links', {
@@ -1734,6 +1827,9 @@ export const studioDesigns = pgTable('studio_designs', {
   name: text('name').notNull(),
   kind: text('kind').notNull(), // wearable | emote | scene (buildings and furniture)
   agent: text('agent').notNull(), // claude | codex | grok
+  // For a scene design: what the person chose at creation (building | decor). Only used until the design has pieces;
+  // after that its pieces say (studio/designs.ts sceneShapeOf). Null for other kinds and for older scenes.
+  sceneShape: text('scene_shape'),
   status: text('status').notNull().default('idle'), // idle | building
   archivedAt: timestamp('archived_at', { withTimezone: true }),
   lastJobAt: timestamp('last_job_at', { withTimezone: true }),

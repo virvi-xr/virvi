@@ -12,7 +12,8 @@ describe('pageContext', () => {
   it('reads location and scene on analytics', () => {
     expect(pageContext('/analytics', '?location=l1&scene=s2')).toEqual({ path: '/analytics', locationId: 'l1', sceneId: 's2' })
   })
-  it('reads scene on deploy', () => {
+  it('reads scene on sync (and the old deploy path)', () => {
+    expect(pageContext('/sync', '?scene=s3')).toEqual({ path: '/sync', sceneId: 's3' })
     expect(pageContext('/deploy', '?scene=s3')).toEqual({ path: '/deploy', sceneId: 's3' })
   })
   it('ignores ids on other pages', () => {

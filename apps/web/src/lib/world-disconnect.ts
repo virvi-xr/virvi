@@ -66,7 +66,7 @@ export function disconnectFromCardPrompt(world: string, revokeLabel: string | nu
     : base
 }
 
-/** Whether the Deploy page offers the disconnect: full access only (owner or co-host; no relationship listed means owner). */
+/** Whether the Sync page offers the disconnect: full access only (owner or co-host; no relationship listed means owner). */
 export function canDisconnectScene(relationship: string | null | undefined): boolean {
   return !relationship || relationship === 'owner' || relationship === 'cohost'
 }

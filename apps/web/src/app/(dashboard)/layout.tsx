@@ -7,7 +7,7 @@ import { scenePassAllows, trialAllows } from '@/lib/session'
 import { openSignUp, signedInNote, takeMovedHeadsetNotice, trialNav } from '@/lib/trial'
 import { signinPath } from '@/lib/landing-route'
 import { isInvitePath } from '@/lib/studio-people'
-import { useStudioAvailable } from '@/lib/use-studio'
+import { navActive } from '@/lib/nav'
 import { useBeatAvailability } from '@/lib/use-beats'
 import { beatsExplainerFor, beatsNavVisible } from '@/lib/beats'
 import { GoToBeat } from '@/components/beats/GoToBeat'
@@ -20,8 +20,8 @@ import { AssistantButton, useAssistantAccess, useAssistantOpenRequest, useAssist
 import { AssistantPanel } from '@/components/assistant/AssistantPanel'
 import { ASSET_LIBRARY, MEDIA_LIBRARY } from '@/lib/libraries'
 import {
-  BroadcastIcon, CalendarIcon, ChartIcon, CubeIcon, GearIcon, GiftIcon, HomeIcon, LayersIcon, LockIcon, LogoutIcon, MediaIcon,
-  MedalIcon, ScenesIcon, ShieldIcon, SparkleIcon, BugIcon, BookIcon,
+  BroadcastIcon, CalendarIcon, ChartIcon, CityIcon, CubeIcon, GearIcon, GiftIcon, HomeIcon, LayersIcon, LockIcon, LogoutIcon, MediaIcon,
+  MedalIcon, ShieldIcon, SparkleIcon, SyncIcon, BugIcon, BookIcon,
 } from '@/components/icons'
 import { siteLinks } from '@/lib/site'
 import { reporter } from '@/lib/errors/reporter'
@@ -35,10 +35,13 @@ const baseNavSections: NavSection[] = [
     label: 'Workspace',
     items: [
       { href: '/command-center', label: 'Command Center', icon: HomeIcon },
-      { href: '/scenes', label: 'Scenes', icon: ScenesIcon },
+      // Studio opens on its first tab, Scenes; its design tabs show where the Design Studio is on (StudioTabs)
+      { href: '/scenes', label: 'Studio', icon: SparkleIcon, description: 'Scenes, wearables, emotes, buildings and decor' },
+      { href: '/sync', label: 'Sync', icon: SyncIcon, description: 'Where each scene runs and its deploys' },
       { href: '/events', label: 'Events', icon: CalendarIcon },
-      { href: '/giveaways', label: 'Giveaways', icon: GiftIcon },
+      { href: '/drops', label: 'Drops', icon: GiftIcon, description: 'Giveaways and other rewards' },
       { href: '/ar-apps', label: 'AR', icon: CubeIcon, description: 'AR Spaces and the Virvi AR apps' },
+      { href: '/virvi-cities', label: 'Cities', icon: CityIcon, description: 'Virvi cities to visit' },
     ],
   },
   {
@@ -47,17 +50,12 @@ const baseNavSections: NavSection[] = [
       { href: '/media', label: MEDIA_LIBRARY.name, icon: MediaIcon, description: MEDIA_LIBRARY.subtitle },
       { href: '/assets', label: ASSET_LIBRARY.name, icon: LayersIcon, description: ASSET_LIBRARY.subtitle },
       { href: '/streaming', label: 'Streaming', icon: BroadcastIcon },
-      { href: '/deploy', label: 'Deploy', icon: CubeIcon },
       { href: '/analytics', label: 'Analytics', icon: ChartIcon },
     ],
   },
   { label: 'System', items: [{ href: '/settings', label: 'Settings', icon: GearIcon }] },
 ]
-// Pages reached from another tab, which stays highlighted while they are open
-const NAV_PARENT: Record<string, string> = { '/import': '/scenes' }
 const ADMIN_ITEM: NavItem = { href: '/admin', label: 'Admin', icon: ShieldIcon }
-// Shown only where the studio is on (the server's studio routes answer)
-const STUDIO_ITEM: NavItem = { href: '/studio', label: 'Design Studio', icon: SparkleIcon }
 // Shown only where the server says BEATs are on (LIV-11)
 const BEATS_ITEM: NavItem = { href: '/beats', label: 'BEATs', icon: MedalIcon, description: 'Attendance tokens for your events' }
 
@@ -70,7 +68,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router = useRouter()
   const pathname = usePathname()
 
-  // A trial has the Design Studio and Scenes; Analytics, Events and Giveaways open their demos; everything else stays visible
+  // A trial has the Studio (Scenes and the design tabs); Analytics, Events and Drops open their demos; everything else stays visible
   // but locked. It calls no account-only route from here (no scene title, org or notification fetches), and the studio probe
   // is on a route trials may use.
   const trial = !!user?.trial
@@ -79,19 +77,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const toggleAssistant = useCallback(() => setAssistantOpen((v) => !v), [])
   useAssistantShortcut(assistantAccess.state !== 'hidden', toggleAssistant)
   useAssistantOpenRequest(assistantAccess.state !== 'hidden', useCallback(() => setAssistantOpen(true), []))
-  const studioOn = useStudioAvailable()
   const beatsOn = beatsNavVisible(useBeatAvailability(), { trial, scenePass: !!scenePass })
   const navSections = useMemo(() => {
     if (scenePass) return []
     return baseNavSections.map((s) => {
-      if (s.label === 'Workspace') {
-        const items = beatsOn ? [...s.items, BEATS_ITEM] : s.items
-        return studioOn || trial ? { ...s, items: [...items, STUDIO_ITEM] } : { ...s, items }
-      }
+      if (s.label === 'Workspace') return beatsOn ? { ...s, items: [...s.items, BEATS_ITEM] } : s
       if (s.label === 'System' && user?.role === 'admin') return { ...s, items: [...s.items, ADMIN_ITEM] }
       return s
     })
-  }, [user?.role, scenePass, studioOn, trial, beatsOn])
+  }, [user?.role, scenePass, beatsOn])
 
   useEffect(() => {
     if (!loading && !user) {
@@ -179,7 +173,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </button>
                   )
                 }
-                const active = pathname.startsWith(open.href) || Object.entries(NAV_PARENT).some(([child, parent]) => parent === open.href && pathname.startsWith(child))
+                const active = navActive(pathname, open.href)
                 return (
                   <Link key={href} href={open.href} title={description} aria-current={active ? 'page' : undefined}
                     className={`relative flex shrink-0 items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-sm transition-colors md:mb-0.5 ${active ? 'bg-white/[0.05] text-white' : 'text-gray-400 hover:bg-white/[0.03] hover:text-white'}`}>

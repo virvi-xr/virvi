@@ -265,7 +265,7 @@ function DclRow({ dest, checked, onToggle, disabled, result, register }: {
             {dest.adopted ? (
               'Its name comes from your own project: change the title in its scene.json and deploy it from Creator Hub.'
             ) : !available ? (
-              <>Virvi&apos;s permission isn&apos;t signed yet. <Link href={`/deploy?scene=${dest.sceneId}`} className="text-blue-400 hover:text-blue-300">Open Deploy</Link></>
+              <>Virvi&apos;s permission isn&apos;t signed yet. <Link href={`/sync?scene=${dest.sceneId}`} className="text-blue-400 hover:text-blue-300">Open Sync</Link></>
             ) : dest.mode === 'sign' ? 'You sign with the wallet that owns it.' : 'Virvi deploys it for you.'}
           </span>
         </span>

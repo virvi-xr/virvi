@@ -303,7 +303,7 @@ export function DeployStep({ state, dispatch, options, memory, onRunning, names 
         <div className="rounded-md border-2 border-red-500 bg-red-950/50 px-4 py-3 text-red-100" role="alert">
           <p className="font-semibold">Check your World&apos;s permissions</p>
           <p className="mt-1">{view.partial}</p>
-          <Link href="/deploy" className="mt-2 inline-block text-red-200 underline hover:text-white">Open Deploy</Link>
+          <Link href="/sync" className="mt-2 inline-block text-red-200 underline hover:text-white">Open Sync</Link>
         </div>
       )}
 

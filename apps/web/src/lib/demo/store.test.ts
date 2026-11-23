@@ -129,35 +129,62 @@ describe('createDemoApi', () => {
     const old = demoFixtures(NOW)
     const edited = { ...old.events[2], name: 'Renamed', updatedAt: new Date(NOW + 1000).toISOString() }
     const { location, scene, visits, cells, hotspots, ...data } = old
-    storage.setItem(demoStorageKey('t1'), JSON.stringify({ v: 1, data: { ...data, events: [old.events[0], old.events[1], edited] } }))
+    storage.setItem(demoStorageKey('t1'), JSON.stringify({ v: 2, data: { ...data, events: [old.events[0], old.events[1], edited] } }))
     const later = NOW + 3 * DAY
     const { events } = await createDemoApi({ trialId: 't1', now: () => later, storage }).getEvents()
     expect(events[1]).toEqual(demoFixtures(later).events[1])
     expect(events[2]).toEqual(edited)
   })
 
-  it('a giveaway item image is kept only when it is a data: or same-origin URL (LIV-138)', async () => {
-    const api = createDemoApi({ trialId: 't1', now: () => NOW, storage: memoryStorage(), origin: 'https://virvi.io' })
-    const add = async (imageUrl: string | undefined) => (await api.addGiveawayItem('demo-giveaway-1', { name: 'X', imageUrl })).item.imageUrl
-    expect(await add('data:image/png;base64,iVBORw0KGgo=')).toBe('data:image/png;base64,iVBORw0KGgo=')
-    expect(await add('/uploads/a.png')).toBe('/uploads/a.png')
-    expect(await add('images/a.png')).toBe('images/a.png')
-    expect(await add('https://virvi.io/media/a.png')).toBe('https://virvi.io/media/a.png')
-    for (const bad of ['https://tracker.example/pixel.png', '//tracker.example/p.png', 'http://virvi.io/a.png', 'javascript:alert(1)', ' https://x.example/a.png', 'blob:https://virvi.io/abc']) {
-      expect([bad, await add(bad)]).toEqual([bad, null])
-    }
-    expect(await add(undefined)).toBeNull()
-    const { giveaway } = await api.getGiveaway('demo-giveaway-1')
-    expect(giveaway.items.filter((i: any) => i.imageUrl?.includes('tracker'))).toEqual([])
+  it('items come only from the demo host’s own wearables, and the sample giveaway’s items are locked by its claims', async () => {
+    const api = createDemoApi({ trialId: 't1', now: () => NOW, storage: memoryStorage() })
+    const { items } = await api.getGiveawayCreatorItems('demo-giveaway-1')
+    expect(items.every((i) => i.thumbnail === null)).toBe(true)
+    await expect(api.setGiveawayItems('demo-giveaway-1', [items[3]])).rejects.toMatchObject({ status: 409, body: { error: 'has_claims' } })
+    const { giveaway } = await api.createGiveaway({ name: 'Caps' })
+    await expect(api.setGiveawayItems(giveaway.id, [{ contractAddress: '0x00000000000000000000000000000000000000ff', itemId: '1' }]))
+      .rejects.toMatchObject({ status: 400, body: { error: 'not_your_item' } })
+    const view = await api.setGiveawayItems(giveaway.id, [items[3]])
+    expect(view.items.map((i) => [i.name, i.mintState])).toEqual([['Comet cap', 'ready']])
+  })
+
+  it('a stored demo from before automatic giveaways is the sample again', async () => {
+    const storage = memoryStorage()
+    const { location, scene, visits, cells, hotspots, ...data } = demoFixtures(NOW)
+    storage.setItem(demoStorageKey('t1'), JSON.stringify({ v: 1, data: { ...data, events: [] } }))
+    expect((await createDemoApi({ trialId: 't1', now: () => NOW, storage }).getEvents()).events).toHaveLength(3)
+  })
+
+  it('switching on needs items and a scene; delete waits for the POL to go back', async () => {
+    const api = createDemoApi({ trialId: 't1', now: () => NOW, storage: memoryStorage() })
+    const { giveaway } = await api.createGiveaway({ name: 'Caps' })
+    expect(giveaway.enabled).toBe(false)
+    await expect(api.updateGiveaway(giveaway.id, { enabled: true })).rejects.toMatchObject({ status: 409, body: { error: 'not_ready' } })
+    await api.setGiveawayItems(giveaway.id, [{ contractAddress: '0x00000000000000000000000000000000000000d2', itemId: '0' }])
+    await expect(api.updateGiveaway(giveaway.id, { enabled: true })).rejects.toMatchObject({ body: { error: 'not_ready' } })
+    await api.setGiveawayScenes(giveaway.id, ['demo-scene'])
+    expect((await api.updateGiveaway(giveaway.id, { enabled: true })).enabled).toBe(true)
+
+    const sample = await api.getGiveaway('demo-giveaway-1')
+    expect(sample.funding).toMatchObject({ balanceWei: '1500000000000000000', covered: false, lowGas: false })
+    expect(sample.funding.claimsCovered).toBeGreaterThan(10)
+    await expect(api.deleteGiveaway('demo-giveaway-1')).rejects.toMatchObject({ status: 409, body: { error: 'send_back_first' } })
+    const { wallets } = await api.getGiveawaySendBackWallets('demo-giveaway-1')
+    await expect(api.sendBackGiveaway('demo-giveaway-1', '0x00000000000000000000000000000000000000aa')).rejects.toMatchObject({ body: { error: 'not_your_wallet' } })
+    const sent = await api.sendBackGiveaway('demo-giveaway-1', wallets[0])
+    expect(BigInt(sent.valueWei) > BigInt(0)).toBe(true)
+    await expect(api.sendBackGiveaway('demo-giveaway-1', wallets[0])).rejects.toMatchObject({ body: { error: 'nothing_to_send' } })
+    expect((await api.deleteGiveaway('demo-giveaway-1')).deleteState).toBe('returning')
+    expect((await api.getGiveaways()).giveaways.map((g) => g.id)).toEqual([giveaway.id])
   })
 
   it('a stored item with an outside image comes back without it', async () => {
     const storage = memoryStorage()
     const { location, scene, visits, cells, hotspots, ...data } = demoFixtures(NOW)
     data.items[0] = { ...data.items[0], imageUrl: 'https://tracker.example/p.png' }
-    storage.setItem(demoStorageKey('t1'), JSON.stringify({ v: 1, data }))
-    const { giveaway } = await createDemoApi({ trialId: 't1', now: () => NOW, storage, origin: 'https://virvi.io' }).getGiveaway('demo-giveaway-1')
-    expect(giveaway.items[0].imageUrl).toBeNull()
+    storage.setItem(demoStorageKey('t1'), JSON.stringify({ v: 2, data }))
+    const giveaway = await createDemoApi({ trialId: 't1', now: () => NOW, storage, origin: 'https://virvi.io' }).getGiveaway('demo-giveaway-1')
+    expect(giveaway.items[0].thumbnail).toBeNull()
   })
 
   it('a stored demo missing any of its lists falls back to the sample data', async () => {
@@ -165,7 +192,7 @@ describe('createDemoApi', () => {
     for (const missing of lists) {
       const storage = memoryStorage()
       const full = Object.fromEntries(lists.map((k) => [k, []]))
-      storage.setItem(demoStorageKey('t1'), JSON.stringify({ v: 1, data: { ...full, [missing]: { not: 'a list' } } }))
+      storage.setItem(demoStorageKey('t1'), JSON.stringify({ v: 2, data: { ...full, [missing]: { not: 'a list' } } }))
       const api = createDemoApi({ trialId: 't1', now: () => NOW, storage })
       // the sample giveaway and its claims are there, not a crash
       const { giveaways } = await api.getGiveaways()
@@ -217,11 +244,13 @@ describe('createDemoApi', () => {
     await api.deleteEvent(events[0].id)
     expect((await api.getEvents()).events).toHaveLength(3)
     // Giveaways
-    const { giveaway } = await api.createGiveaway({ name: 'Hats', claimLimit: 2 })
-    await api.updateGiveaway(giveaway.id, { enabled: false })
-    const { item } = await api.addGiveawayItem(giveaway.id, { name: 'Red hat', contractAddress: '0xabc', tokenId: '1' })
-    expect((await api.getGiveaway(giveaway.id)).giveaway.items).toHaveLength(1)
-    await api.deleteGiveawayItem(giveaway.id, item.id)
+    expect((await api.getGiveawayAvailability()).enabled).toBe(true)
+    const { giveaway } = await api.createGiveaway({ name: 'Hats' })
+    await api.updateGiveaway(giveaway.id, { claimCap: 2, minPresentSeconds: 600 })
+    const { items } = await api.getGiveawayCreatorItems('demo-giveaway-1')
+    expect((await api.setGiveawayItems(giveaway.id, [items[0]])).items).toHaveLength(1)
+    await api.setGiveawayScenes(giveaway.id, [scenes[0].id])
+    expect((await api.getGiveaway(giveaway.id)).sceneIds).toEqual([scenes[0].id])
     expect((await api.getGiveawayClaims(giveaways[0].id)).claims).toHaveLength(5)
     await api.deleteGiveaway(giveaway.id)
     expect((await api.getGiveaways()).giveaways).toHaveLength(1)

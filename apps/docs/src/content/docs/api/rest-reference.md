@@ -177,10 +177,14 @@ Self-hosted servers refuse imports unless `SCENE_BUILD_RUNNER` is set (see [Envi
 | GET/PUT/DELETE | `/api/events/:eventId` | Yes | One event |
 | POST | `/api/events/:eventId/link-scene` | Yes | Link a scene |
 | DELETE | `/api/events/:eventId/unlink-scene/:sceneId` | Yes | Unlink it |
-| GET/POST | `/api/giveaways` | Yes | List or create giveaways |
-| GET/PUT/DELETE | `/api/giveaways/:giveawayId` | Yes | One giveaway |
-| POST | `/api/giveaways/:giveawayId/items` | Yes | Add an item |
-| GET | `/api/giveaways/:giveawayId/claims` | Yes | Its claims |
+| GET | `/api/giveaways/availability` | Yes | Whether automatic giveaways are on, and whether your plan covers gas |
+| GET/POST | `/api/giveaways` | Yes | List or create giveaways (each gets its own wallet) |
+| GET | `/api/giveaways/creator-items?chain=` | Yes | Published wearables and emotes your wallets created |
+| GET/PATCH/DELETE | `/api/giveaways/:id` | Yes | One giveaway: read, edit or switch on, delete |
+| PUT | `/api/giveaways/:id/items` | Yes | Set its items (1 to 10) |
+| PUT | `/api/giveaways/:id/scenes` | Yes | Set the scenes it shows in |
+| GET | `/api/giveaways/:id/claims` | Yes | Its claims, 50 a page (`?cursor=`) |
+| POST | `/api/giveaways/:id/send-back` | Yes | Send your POL back to a wallet verified on your account |
 
 ## Command Center
 

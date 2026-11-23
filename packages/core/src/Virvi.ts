@@ -1,5 +1,5 @@
 import type { PublicDraw, PublicRaffle, SceneLibraryChangeData, TransformData, TransformDraftData, VirviPlatformAdapter, VirviInitConfig, VirviStorage as VirviStorageType, HUDRenderer, BudgetLimits, Scene } from '@virvixr/shared'
-import { BEAT_CONSENT_VERSION, type AvailableBeat, HUD_PROTOCOL_HEADER, HUD_VERSION_HEADER, RAFFLE_CONSENT_VERSION } from '@virvixr/shared'
+import { BEAT_CONSENT_VERSION, GIVEAWAY_CONSENT_VERSION, type AvailableBeat, type AvailableGiveaway, HUD_PROTOCOL_HEADER, HUD_VERSION_HEADER, RAFFLE_CONSENT_VERSION } from '@virvixr/shared'
 import { VirviHttpClient, ColyseusManager, type RafflePatch } from '@virvixr/client'
 import { SceneManager } from './SceneManager.js'
 import { VirviStorageImpl } from './storage.js'
@@ -429,6 +429,11 @@ export class Virvi {
       this.events.emit('beat_available', (message as { beat?: AvailableBeat | null } | null)?.beat ?? null)
     })
 
+    // Automatic giveaways (LIV-194): sent once on join, so guests (no REST) learn the scene has an open giveaway
+    this.colyseus.onMessage('giveaway_available', (message: unknown) => {
+      this.events.emit('giveaway_available', (message as { giveaway?: AvailableGiveaway | null } | null)?.giveaway ?? null)
+    })
+
     this.colyseus.onMessage('raffle_draw', (message: unknown) => {
       if ((message as PublicDraw | null)?.drawId) this.events.emit('raffle_draw', message)
     })
@@ -623,6 +628,15 @@ export class Virvi {
     return () => this.events.off('beat_available', handler)
   }
 
+  /** The scene's open giveaway (name and test flag) or null, sent once on join when giveaways are on. Returns an unsubscribe. */
+  onGiveawayAvailable(listener: (giveaway: AvailableGiveaway | null) => void): () => void {
+    const handler = (g: AvailableGiveaway | null) => {
+      try { listener(g) } catch { /* swallow */ }
+    }
+    this.events.on('giveaway_available', handler)
+    return () => this.events.off('giveaway_available', handler)
+  }
+
   /** A raffle draw happened: spin the wheel. Returns an unsubscribe. */
   onRaffleDraw(listener: (draw: PublicDraw) => void): () => void {
     const handler = (d: PublicDraw) => {
@@ -664,6 +678,13 @@ export class Virvi {
   beatCheckIn(beatId: string) { return this.http.beatCheckIn(this.requireSceneId(), beatId) }
   claimBeat(beatId: string) { return this.http.claimBeat(this.requireSceneId(), beatId) }
   stopTrackingBeat(beatId: string) { return this.http.stopTrackingBeat(this.requireSceneId(), beatId) }
+
+  // Automatic giveaways (LIV-194), on the connected scene
+  currentGiveaway() { return this.http.currentGiveaway(this.requireSceneId()) }
+  trackGiveaway(giveawayId: string) { return this.http.trackGiveaway(this.requireSceneId(), giveawayId, GIVEAWAY_CONSENT_VERSION) }
+  giveawayCheckIn(giveawayId: string) { return this.http.giveawayCheckIn(this.requireSceneId(), giveawayId) }
+  claimGiveaway(giveawayId: string) { return this.http.claimGiveaway(this.requireSceneId(), giveawayId) }
+  stopGiveaway(giveawayId: string) { return this.http.stopGiveaway(this.requireSceneId(), giveawayId) }
 
   private requireSceneId(): string {
     const id = this._sceneId ?? this.binding?.sceneId
