@@ -111,6 +111,7 @@ describe('dcl runtime', () => {
     expect(src).toContain('giveaway_available')
     expect(src).toContain('/giveaway/current')
     expect(src).toContain('Agree and continue')
+    expect(src).toContain('Free: ')
     expect(src).toContain('The host sees that this wallet claimed.')
     expect(src).toContain('On its way.')
     expect(src).toContain('this giveaway ran out.')

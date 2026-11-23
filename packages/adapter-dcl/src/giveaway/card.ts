@@ -33,16 +33,21 @@ export interface GiveawayUi {
   noticeDone: boolean
   /** My wallet, for the consent notice (shown short). */
   wallet: string | null
-  /** An agree or claim is on its way. */
+  /** An agree, claim or stop is on its way. */
   busy: boolean
-  /** Why the last agree or claim didn't go through. */
+  /** Why the last agree, claim or stop didn't go through. */
   note: string | null
+  /** When (ms) the giveaway last came from the server: time present counts on locally from then. */
+  seenAt: number | null
 }
 
 export const initialGiveawayUi = (guest: boolean, wallet: string | null): GiveawayUi =>
-  ({ guest, noticeDone: false, wallet, busy: false, note: null })
+  ({ guest, noticeDone: false, wallet, busy: false, note: null, seenAt: null })
 
-export type GiveawayAction = 'agree' | 'claim' | 'view_tx'
+export type GiveawayAction = 'agree' | 'claim' | 'stop' | 'view_tx'
+
+/** The BEAT card's withdraw label. */
+export const STOP_LABEL = 'Stop tracking'
 
 export interface GiveawayViewModel {
   state: GiveawayCardState
@@ -72,14 +77,27 @@ export function stayLeft(seconds: number): string {
 }
 const stayLine = (seconds: number) => `Stay ${stayLeft(seconds)} more to claim.`
 
-export function giveawayState(g: CardGiveaway | null, ui: Pick<GiveawayUi, 'guest' | 'noticeDone'>): GiveawayCardState {
+/**
+ * Seconds present at `now`: the server's count plus the time since it was read (`seenAt`), so the countdown ticks
+ * between check-ins. Only an estimate for the card; the server decides whether a claim is in time.
+ */
+export function secondsPresentAt(g: VisitorGiveaway, ui: Pick<GiveawayUi, 'seenAt'>, now: number): number {
+  const c = g.claim
+  if (!c) return 0
+  const since = c.status === 'present' && ui.seenAt !== null ? Math.max(0, Math.floor((now - ui.seenAt) / 1000)) : 0
+  return c.secondsPresent + since
+}
+
+export function giveawayState(
+  g: CardGiveaway | null, ui: Pick<GiveawayUi, 'guest' | 'noticeDone' | 'seenAt'>, now: number = Date.now(),
+): GiveawayCardState {
   if (!g) return 'hidden'
   if (ui.guest) return ui.noticeDone ? 'hidden' : 'guest'
   if (!isVisitorGiveaway(g)) return 'hidden'
   const c = g.claim
   if (!c) return 'consent'
   switch (c.status) {
-    case 'present': return c.secondsPresent >= g.minPresentSeconds ? 'ready' : 'present'
+    case 'present': return secondsPresentAt(g, ui, now) >= g.minPresentSeconds ? 'ready' : 'present'
     case 'waiting':
     case 'minting': return 'sending'
     case 'sent': return 'sent'
@@ -90,36 +108,36 @@ export function giveawayState(g: CardGiveaway | null, ui: Pick<GiveawayUi, 'gues
 
 const FAIL_REASONS: Record<string, string> = { sold_out: 'this giveaway ran out.' }
 
-export function giveawayCardView(g: CardGiveaway | null, ui: GiveawayUi): GiveawayViewModel {
-  const state = giveawayState(g, ui)
+export function giveawayCardView(g: CardGiveaway | null, ui: GiveawayUi, now: number = Date.now()): GiveawayViewModel {
+  const state = giveawayState(g, ui, now)
   const base: GiveawayViewModel = {
     state, visible: state !== 'hidden', title: g?.name ?? '', test: !!g?.test, line: null, notice: null, txUrl: null, actions: [], note: ui.note,
   }
   if (!g) return base
   if (state === 'guest') return { ...base, line: `Connect a wallet to claim ${g.name}.` }
   if (state === 'hidden' || !isVisitorGiveaway(g)) return base
-  const v = view(g, state, ui, base)
-  // While an agree or claim is on its way the buttons go, and the card says it's working rather than look frozen
+  const v = view(g, state, ui, now, base)
+  // While an agree, claim or stop is on its way the buttons go, and the card says it's working rather than look frozen
   if (ui.busy && v.actions.length) return { ...v, line: WORKING_LINE, actions: [] }
   return v
 }
 
-function view(g: VisitorGiveaway, state: GiveawayCardState, ui: GiveawayUi, base: GiveawayViewModel): GiveawayViewModel {
+function view(g: VisitorGiveaway, state: GiveawayCardState, ui: GiveawayUi, now: number, base: GiveawayViewModel): GiveawayViewModel {
   const c = g.claim
   switch (state) {
     case 'consent': {
       const yours = ui.wallet ? `your wallet ${shortWallet(ui.wallet)}` : 'your wallet'
       return {
         ...base,
-        line: `${g.name}: free ${g.items.map((i) => i.name).join(', ')}.`,
+        line: `Free: ${g.items.map((i) => i.name).join(', ')}.`,
         notice: `Virvi will mint these to ${yours}. The host sees that this wallet claimed.`,
         actions: [{ id: 'agree', label: 'Agree and continue' }],
       }
     }
     case 'present':
-      return { ...base, line: stayLine(g.minPresentSeconds - (c?.secondsPresent ?? 0)) }
+      return { ...base, line: stayLine(g.minPresentSeconds - secondsPresentAt(g, ui, now)), actions: [{ id: 'stop', label: STOP_LABEL }] }
     case 'ready':
-      return { ...base, actions: [{ id: 'claim', label: 'Claim' }] }
+      return { ...base, actions: [{ id: 'claim', label: 'Claim' }, { id: 'stop', label: STOP_LABEL }] }
     case 'sending':
       return { ...base, line: 'On its way.' }
     case 'sent': {
@@ -133,8 +151,14 @@ function view(g: VisitorGiveaway, state: GiveawayCardState, ui: GiveawayUi, base
   }
 }
 
-/** Check in (rather than just read the giveaway) while joined and short of the minimum. */
-export const checkInWanted = (g: CardGiveaway | null, ui: GiveawayUi) => giveawayState(g, ui) === 'present'
+/**
+ * Check in (rather than just read the giveaway) while joined and short of the minimum on the server's count, not the
+ * card's estimate: the server has to have credited the time before a claim goes through.
+ */
+export function checkInWanted(g: CardGiveaway | null, ui: Pick<GiveawayUi, 'guest'>): boolean {
+  if (!g || ui.guest || !isVisitorGiveaway(g)) return false
+  return g.claim?.status === 'present' && g.claim.secondsPresent < g.minPresentSeconds
+}
 
 const GIVEAWAY_ERRORS: Record<string, string> = {
   wallet_required: 'Connect a wallet to claim.',
@@ -165,7 +189,7 @@ function secondsLeftOf(err: unknown): number | null {
   }
 }
 
-/** Text for a failed agree or claim. */
+/** Text for a failed agree, claim or stop. */
 export function giveawayError(err: unknown): string {
   const code = errorCodeOf(err)
   if (code === 'too_soon') {

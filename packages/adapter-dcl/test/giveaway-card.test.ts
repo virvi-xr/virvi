@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import type { VisitorGiveaway } from '@virvixr/shared'
 import { checkInWanted, giveawayCardView, giveawayError, giveawayState, initialGiveawayUi, stayLeft, type GiveawayUi } from '../src/giveaway/card.js'
 
+const STOP = { id: 'stop', label: 'Stop tracking' }
+
 const WALLET = '0xAbCdEf0123456789aBcDeF0123456789AbCdEf12'
 const giveaway = (over: Partial<VisitorGiveaway> = {}): VisitorGiveaway => ({
   id: 'g1', name: 'Winter drop', items: [{ name: 'Scarf', thumbnail: null, rarity: 'rare' }, { name: 'Hat', thumbnail: null, rarity: null }],
@@ -27,26 +29,42 @@ describe('giveaway card (LIV-194)', () => {
     expect(giveawayState(giveaway(), initialGiveawayUi(true, null))).toBe('guest')
   })
 
-  it('not consented: the free items, the notice with the short wallet, and Agree and continue', () => {
+  it('not consented: the free items (the title already names it), the notice with the short wallet, and Agree and continue', () => {
     const v = giveawayCardView(giveaway(), ui())
     expect(v).toMatchObject({
       state: 'consent',
-      line: 'Winter drop: free Scarf, Hat.',
+      title: 'Winter drop',
+      line: 'Free: Scarf, Hat.',
       notice: 'Virvi will mint these to your wallet 0xabcd…ef12. The host sees that this wallet claimed.',
       actions: [{ id: 'agree', label: 'Agree and continue' }],
     })
   })
 
-  it('present and short of the minimum: how long is left as m:ss, no button', () => {
+  it('present and short of the minimum: how long is left as m:ss, and Stop tracking', () => {
     const v = giveawayCardView(giveaway(claim('present', { secondsPresent: 45 })), ui())
-    expect(v).toMatchObject({ state: 'present', line: 'Stay 4:15 more to claim.', actions: [], notice: null })
+    expect(v).toMatchObject({ state: 'present', line: 'Stay 4:15 more to claim.', actions: [STOP], notice: null })
     expect(giveawayCardView(giveaway({ minPresentSeconds: 3600, ...claim('present', { secondsPresent: 3595 }) }), ui()).line).toBe('Stay 0:05 more to claim.')
     expect(stayLeft(754)).toBe('12:34')
   })
 
-  it('present with the minimum: Claim, no text', () => {
+  it('the countdown ticks on from the last server read, and reaching 0 shows Claim', () => {
+    const T = 1_000_000
+    const g = giveaway(claim('present', { secondsPresent: 45 }))
+    const seen = ui({ seenAt: T })
+    expect(giveawayCardView(g, seen, T).line).toBe('Stay 4:15 more to claim.')
+    expect(giveawayCardView(g, seen, T + 30_500).line).toBe('Stay 3:45 more to claim.')
+    expect(giveawayCardView(g, seen, T + 254_000).line).toBe('Stay 0:01 more to claim.')
+    expect(giveawayCardView(g, seen, T + 255_000)).toMatchObject({ state: 'ready', line: null })
+    expect(giveawayCardView(g, seen, T + 9_000_000).state).toBe('ready')
+    // A clock behind the read never adds time back
+    expect(giveawayCardView(g, seen, T - 60_000).line).toBe('Stay 4:15 more to claim.')
+    // Only a present claim counts on
+    expect(giveawayState(giveaway(claim('waiting', { secondsPresent: 10 })), seen, T + 900_000)).toBe('sending')
+  })
+
+  it('present with the minimum: Claim and Stop tracking, no text', () => {
     const v = giveawayCardView(giveaway(claim('present', { secondsPresent: 300 })), ui())
-    expect(v).toMatchObject({ state: 'ready', line: null, actions: [{ id: 'claim', label: 'Claim' }] })
+    expect(v).toMatchObject({ state: 'ready', line: null, actions: [{ id: 'claim', label: 'Claim' }, STOP] })
     expect(giveawayState(giveaway({ minPresentSeconds: 0, ...claim('present') }), ui())).toBe('ready')
   })
 
@@ -58,6 +76,7 @@ describe('giveaway card (LIV-194)', () => {
 
   it('sent: Sent ✓ and View opens the tx', () => {
     const tx = 'https://polygonscan.com/tx/0xabc'
+    expect(giveawayCardView(giveaway(claim('waiting')), ui()).actions).toEqual([])
     expect(giveawayCardView(giveaway(claim('sent', { txUrl: tx })), ui())).toMatchObject({ state: 'sent', line: 'Sent ✓', txUrl: tx, actions: [{ id: 'view_tx', label: 'View' }] })
     expect(giveawayCardView(giveaway(claim('sent')), ui())).toMatchObject({ line: 'Sent ✓', actions: [] })
   })
@@ -73,7 +92,8 @@ describe('giveaway card (LIV-194)', () => {
     expect(giveawayCardView(giveaway(), ui({ note: 'x' })).note).toBe('x')
   })
 
-  it('checks in only while present and short of the minimum', () => {
+  it('checks in only while present and short of the minimum on the server count (not the local estimate)', () => {
+    expect(checkInWanted(giveaway(claim('present', { secondsPresent: 10 })), ui({ seenAt: 0 }))).toBe(true)
     expect(checkInWanted(giveaway(claim('present', { secondsPresent: 10 })), ui())).toBe(true)
     expect(checkInWanted(giveaway(claim('present', { secondsPresent: 300 })), ui())).toBe(false)
     expect(checkInWanted(giveaway(), ui())).toBe(false)

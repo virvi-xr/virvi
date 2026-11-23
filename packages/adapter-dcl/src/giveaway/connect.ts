@@ -28,10 +28,11 @@ const started = new WeakMap<Virvi, () => void>()
 export function startSceneGiveaways(
   virvi: Virvi,
   systems: Systems,
-  opts: { guest: boolean; wallet: string | null | undefined; hud: Hud; openUrl(url: string): unknown },
+  opts: { guest: boolean; wallet: string | null | undefined; hud: Hud; openUrl(url: string): unknown; now?: () => number },
 ): () => void {
   const existing = started.get(virvi)
   if (existing) return existing
+  const now = opts.now ?? Date.now
   const guest = opts.guest
   const wallet = opts.wallet || null
 
@@ -58,6 +59,8 @@ export function startSceneGiveaways(
     // Another giveaway (or none): the last one's note and busy flag don't carry over
     if (giveawayKey(next) !== giveawayKey(giveaway)) ui = initialGiveawayUi(guest, wallet)
     giveaway = next
+    // The card's countdown runs on from the server's count as of now
+    ui = { ...ui, seenAt: now() }
     publish()
   }
   const dropClaim = (giveawayId: string) => {
@@ -132,7 +135,7 @@ export function startSceneGiveaways(
     const g = visitorGiveaway()
     if (disposed || guest || !g || ui.busy) return
     const id = g.id
-    const state = giveawayState(g, ui)
+    const state = giveawayState(g, ui, now())
     switch (action) {
       case 'agree':
         if (state !== 'consent') return
@@ -150,6 +153,20 @@ export function startSceneGiveaways(
           () => virvi.claimGiveaway(id),
           (r) => { setGiveaway(r.giveaway); setUi({ busy: false }) },
           (err) => { setUi({ busy: false, note: giveawayError(err) }); queued = refresh },
+          true,
+        )
+      case 'stop':
+        if (g.claim?.status !== 'present') return
+        setUi({ busy: true, note: null })
+        return run(
+          () => virvi.stopGiveaway(id),
+          () => { setUi({ busy: false }); dropClaim(id) },
+          (err) => {
+            // Already gone (stopped elsewhere): the card goes back to the consent all the same
+            if (errorCodeOf(err) === 'not_tracking') { setUi({ busy: false }); return dropClaim(id) }
+            setUi({ busy: false, note: giveawayError(err) })
+            if (errorCodeOf(err) === 'claimed') queued = refresh
+          },
           true,
         )
       case 'view_tx': {

@@ -21,7 +21,8 @@ const claim = (status: NonNullable<VisitorGiveaway['claim']>['status'], secondsP
   ({ claim: { status, secondsPresent, txUrl, failReason: null } })
 const httpError = (status: number, body: Record<string, unknown>) => new Error(`HTTP ${status}: ${JSON.stringify(body)}`)
 const flush = () => new Promise((r) => setTimeout(r, 0))
-const view = () => giveawayCardView(overlay.card!.giveaway, overlay.card!.ui)
+const clock = { ms: Date.parse('2026-11-23T10:00:00.000Z') }
+const view = () => giveawayCardView(overlay.card!.giveaway, overlay.card!.ui, clock.ms)
 const state = () => view().state
 
 function setup(guest = false) {
@@ -41,7 +42,7 @@ function setup(guest = false) {
   const dispose = startSceneGiveaways(virvi as any, {
     registerSystem: (fn) => { systems.push(fn) },
     unregisterSystem: (fn) => { systems.splice(systems.indexOf(fn), 1) },
-  }, { guest, wallet: guest ? null : WALLET, hud: null, openUrl })
+  }, { guest, wallet: guest ? null : WALLET, hud: null, openUrl, now: () => clock.ms })
   const tick = (seconds: number) => systems.forEach((fn) => fn(seconds))
   const connect = () => on.forEach((fn) => fn('connected'))
   const emitState = (st: string) => on.forEach((fn) => fn(st))
@@ -146,6 +147,66 @@ describe('startSceneGiveaways (LIV-194)', () => {
     t.tick(CHECKIN_INTERVAL_MS / 1000)
     await flush()
     expect(state()).toBe('consent')
+  })
+
+  it('Stop tracking withdraws: the card goes back to the consent', async () => {
+    for (const seconds of [60, 300]) {
+      const t = setup()
+      t.virvi.currentGiveaway.mockResolvedValue({ giveaway: giveaway(claim('present', seconds)) })
+      t.connect()
+      await flush()
+      expect(view().actions.map((a) => a.id)).toContain('stop')
+      overlay.handler!('stop')
+      expect(view().line).toBe('Working…')
+      await flush()
+      expect(t.virvi.stopGiveaway).toHaveBeenCalledWith('g1')
+      expect(state()).toBe('consent')
+      expect(overlay.card!.ui.busy).toBe(false)
+      t.dispose()
+    }
+  })
+
+  it('a stop refused as claimed says so and reads the giveaway again', async () => {
+    const t = setup()
+    t.virvi.currentGiveaway.mockResolvedValue({ giveaway: giveaway(claim('present', 300)) })
+    t.connect()
+    await flush()
+    t.virvi.stopGiveaway.mockRejectedValueOnce(httpError(409, { error: 'claimed' }))
+    t.virvi.currentGiveaway.mockResolvedValue({ giveaway: giveaway(claim('waiting', 300)) })
+    overlay.handler!('stop')
+    await flush()
+    await flush()
+    expect(overlay.card!.ui.note).toBe("You've already claimed this giveaway.")
+    expect(t.virvi.currentGiveaway).toHaveBeenCalledTimes(2)
+    expect(state()).toBe('sending')
+  })
+
+  it('the countdown runs on between check-ins, and Claim shows when it reaches 0', async () => {
+    const t = setup()
+    t.virvi.currentGiveaway.mockResolvedValue({ giveaway: giveaway(claim('present', 280)) })
+    t.connect()
+    await flush()
+    expect(view().line).toBe('Stay 0:20 more to claim.')
+    clock.ms += 5_000
+    expect(view().line).toBe('Stay 0:15 more to claim.')
+    clock.ms += 15_000
+    expect(state()).toBe('ready')
+    // Claim is offered on the estimate; the server decides (too_soon comes back as its own line)
+    t.virvi.claimGiveaway.mockRejectedValueOnce(httpError(409, { error: 'too_soon', secondsLeft: 3 }))
+    overlay.handler!('claim')
+    await flush()
+    expect(t.virvi.claimGiveaway).toHaveBeenCalledWith('g1')
+    expect(overlay.card!.ui.note).toBe('Stay 0:03 more to claim.')
+    // Still short on the server: the next tick checks in, and its count resets the estimate
+    t.virvi.giveawayCheckIn.mockResolvedValueOnce({ giveaway: giveaway(claim('present', 300)) })
+    t.tick(CHECKIN_INTERVAL_MS / 1000)
+    await flush()
+    expect(t.virvi.giveawayCheckIn).toHaveBeenCalledWith('g1')
+    expect(state()).toBe('ready')
+    overlay.handler!('claim')
+    await flush()
+    expect(t.virvi.claimGiveaway).toHaveBeenCalledTimes(2)
+    expect(state()).toBe('sending')
   })
 
   it('View opens the tx', async () => {
