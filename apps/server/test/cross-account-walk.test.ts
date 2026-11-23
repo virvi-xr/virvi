@@ -486,6 +486,7 @@ const CASES: Case[] = [
   { route: 'PUT /api/giveaways/:id/scenes', url: (f) => `/api/giveaways/${f.giveaway.id}/scenes`, body: () => ({ sceneIds: [] }) },
   { route: 'GET /api/giveaways/:id/claims', url: (f) => `/api/giveaways/${f.giveaway.id}/claims` },
   { route: 'POST /api/giveaways/:id/send-back', url: (f) => `/api/giveaways/${f.giveaway.id}/send-back`, body: (f) => ({ toWallet: f.a.wallet }) },
+  { route: 'GET /api/giveaways/:id/send-back-wallets', url: (f) => `/api/giveaways/${f.giveaway.id}/send-back-wallets` },
   // uploads, assets, media, hooks
   { route: 'POST /api/upload-tokens', url: () => '/api/upload-tokens', body: (f) => ({ sceneId: f.scene.id }) },
   { route: 'GET /api/assets/:id', url: (f) => `/api/assets/${f.asset.id}` },
