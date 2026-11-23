@@ -51,6 +51,10 @@ const BACKOFF_MAX_EXP = 6
  */
 export const GIVEAWAY_REPLACED_AFTER_BLOCKS = 30
 const OPEN = ['sending', 'sent'] as const
+/** Rows a receipt may still settle: open ones, and 'replaced' ones (their outcome unknown). */
+const UNSETTLED = ['sending', 'sent', 'replaced'] as const
+/** How long the job keeps looking for a receipt of a 'replaced' row (from its last send; at least 7 days after it was replaced). */
+const REPLACED_WATCH_MS = 8 * 24 * 60 * 60_000
 const QUEUED = ['waiting', 'minting'] as const
 
 export type GiveawayJobDeps = { client: (chain: GiveawayChain) => GiveawayChainClient }
@@ -272,6 +276,7 @@ async function countRpc(chain: GiveawayChain, rpcErr: GiveawayRpcError | null, n
 
 async function runChain(client: GiveawayChainClient, now: Date): Promise<void> {
   await reconcileAll(client, now)
+  await watchReplaced(client, now)
   await signWithdraws(client, now)
   await mintAll(client, now)
   await endsAndDeletes(client, now)
@@ -349,7 +354,7 @@ async function reconcile(client: GiveawayChainClient, t: TxRow, now: Date): Prom
  * or an earlier signing is on its way; reconcile settles it). A refusal for lack of funds waits for gas (low_gas). Any
  * other RPC failure, the RPC being down or not, keeps the row `sending` with its nonce and a backoff: it may have left.
  */
-async function broadcast(client: GiveawayChainClient, t: TxRow, raw: string, now: Date): Promise<void> {
+async function broadcast(client: GiveawayChainClient, t: TxRow, raw: string, now: Date, o: { liftLowGas?: boolean } = {}): Promise<void> {
   let code: string | null = null
   try {
     await client.broadcast(raw)
@@ -377,8 +382,8 @@ async function broadcast(client: GiveawayChainClient, t: TxRow, raw: string, now
   }
   await db.update(giveawayTxs).set({ status: 'sent', sentAt: now, attempts: 0, nextAttemptAt: null, ...(code ? { lastError: code } : {}) })
     .where(and(eq(giveawayTxs.id, t.id), inArray(giveawayTxs.status, [...OPEN])))
-  // The low_gas pause a refusal for funds set is lifted once the transaction goes out
-  if (t.lastError === 'INSUFFICIENT_FUNDS' && t.giveawayId) {
+  // The low_gas pause a refusal for funds set is lifted once the transaction goes out (unless this pass paused it again)
+  if (t.lastError === 'INSUFFICIENT_FUNDS' && t.giveawayId && o.liftLowGas !== false) {
     await db.update(giveaways).set({ pausedReason: null, pausedAt: null, updatedAt: now })
       .where(and(eq(giveaways.id, t.giveawayId), eq(giveaways.pausedReason, 'low_gas')))
   }
@@ -445,7 +450,10 @@ async function cantReprice(
   if (mint && g) {
     const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(giveawayClaimMints).where(eq(giveawayClaimMints.txId, t.id))
     const result = await topUp(client, g, await ownerIsPaid(g.ownerId), mint.need / BigInt(Math.max(1, n)), mint.room, now)
-    if (result === 'low_gas') await setPause(g.id, 'low_gas', now)
+    if (result === 'low_gas') {
+      await setPause(g.id, 'low_gas', now)
+      return broadcast(client, t, t.rawTx!, now, { liftLowGas: false })
+    }
   }
   await broadcast(client, t, t.rawTx!, now)
 }
@@ -454,8 +462,9 @@ async function cantReprice(
 async function confirmed(client: GiveawayChainClient, t: TxRow, hash: string, rc: GiveawayReceipt, now: Date): Promise<void> {
   const done = await db.transaction(async (tx) => {
     const [row] = await tx.update(giveawayTxs).set({ status: 'confirmed', confirmedAt: now, feeWei: rc.feeWei.toString(), txHash: hash, lastError: null })
-      .where(and(eq(giveawayTxs.id, t.id), inArray(giveawayTxs.status, [...OPEN]))).returning({ id: giveawayTxs.id })
+      .where(and(eq(giveawayTxs.id, t.id), inArray(giveawayTxs.status, [...UNSETTLED]))).returning({ id: giveawayTxs.id })
     if (!row || t.kind !== 'mint') return !!row
+    if (t.status === 'replaced') await reviveReplaced(tx, t.id)
     const rows = await tx.select({ claimId: giveawayClaimMints.claimId, wallet: giveawayClaims.wallet }).from(giveawayClaimMints)
       .innerJoin(giveawayClaims, eq(giveawayClaims.id, giveawayClaimMints.claimId))
       .where(and(eq(giveawayClaimMints.txId, t.id), eq(giveawayClaimMints.status, 'minting')))
@@ -492,8 +501,9 @@ async function reverted(client: GiveawayChainClient, t: TxRow, hash: string, rc:
   const why: { pause: GiveawayPauseReason | null; unknown: boolean } = { pause: null, unknown: t.kind !== 'mint' }
   await db.transaction(async (tx) => {
     const [row] = await tx.update(giveawayTxs).set({ status: 'failed', feeWei: rc.feeWei.toString(), txHash: hash, lastError: 'reverted' })
-      .where(and(eq(giveawayTxs.id, t.id), inArray(giveawayTxs.status, [...OPEN]))).returning({ id: giveawayTxs.id })
+      .where(and(eq(giveawayTxs.id, t.id), inArray(giveawayTxs.status, [...UNSETTLED]))).returning({ id: giveawayTxs.id })
     if (!row || !g || !checks) return
+    if (t.status === 'replaced') await reviveReplaced(tx, t.id)
     const mine = checks.filter((c) => lc(c.contractAddress) === lc(t.contractAddress ?? ''))
     const [{ n }] = await tx.select({ n: sql<number>`count(*)::int` }).from(giveawayClaimMints).where(eq(giveawayClaimMints.txId, t.id))
     const bad = mine.find((c) => c.state === 'not_approved') ?? mine.find((c) => c.state === 'not_minter')
@@ -516,12 +526,14 @@ async function reverted(client: GiveawayChainClient, t: TxRow, hash: string, rc:
 
 /**
  * The nonce was used, still with no receipt for any of our hashes, GIVEAWAY_REPLACED_AFTER_BLOCKS after it was first
- * seen. Only Virvi holds the keys, so this means something is badly wrong: a mint's claims are failed ('replaced') for a
- * human to look at, never minted again (they may have been).
+ * seen. Only Virvi holds the keys, so this means something is badly wrong. The row becomes 'replaced', which is not
+ * final: `watchReplaced` keeps reading its hashes' receipts and applies one exactly as a confirmation. Meanwhile a
+ * mint's claims are failed ('replaced') for a human, never minted again (they may have been); accounting counts a
+ * replaced top-up as received and a replaced return as sent; and the wallet sends no withdraw or return.
  */
 async function replaced(t: TxRow): Promise<void> {
   await db.transaction(async (tx) => {
-    const [row] = await tx.update(giveawayTxs).set({ status: 'failed', lastError: 'replaced' })
+    const [row] = await tx.update(giveawayTxs).set({ status: 'replaced', lastError: 'replaced' })
       .where(and(eq(giveawayTxs.id, t.id), inArray(giveawayTxs.status, [...OPEN]))).returning({ id: giveawayTxs.id })
     if (!row || t.kind !== 'mint') return
     const rows = await tx.select({ claimId: giveawayClaimMints.claimId }).from(giveawayClaimMints).where(eq(giveawayClaimMints.txId, t.id))
@@ -529,6 +541,59 @@ async function replaced(t: TxRow): Promise<void> {
   })
   console.warn(`[giveaways] ${t.kind} ${t.id} lost its nonce to another transaction`)
   recordJobFailure('giveaway_replaced', new Error(`Giveaway ${t.kind} tx ${t.id} (giveaway ${t.giveawayId}) was replaced: its nonce was used by another transaction`))
+}
+
+/**
+ * A replaced mint's receipt turned up: its claims (failed 'replaced') are queued again as they were, so the receipt is
+ * applied as a normal confirmation or revert: this tx's rows back to minting, their other contracts' rows to waiting.
+ */
+async function reviveReplaced(exec: Exec, txId: string): Promise<void> {
+  const rows = await exec.update(giveawayClaimMints).set({ status: 'minting' })
+    .where(and(eq(giveawayClaimMints.txId, txId), eq(giveawayClaimMints.status, 'failed'))).returning({ claimId: giveawayClaimMints.claimId })
+  const claimIds = rows.map((r) => r.claimId)
+  if (!claimIds.length) return
+  const revived = await exec.update(giveawayClaims).set({ status: 'minting', failReason: null })
+    .where(and(inArray(giveawayClaims.id, claimIds), eq(giveawayClaims.status, 'failed'), eq(giveawayClaims.failReason, 'replaced')))
+    .returning({ id: giveawayClaims.id })
+  if (revived.length) {
+    await exec.update(giveawayClaimMints).set({ status: 'waiting' }).where(and(
+      inArray(giveawayClaimMints.claimId, revived.map((r) => r.id)), eq(giveawayClaimMints.status, 'failed'), isNull(giveawayClaimMints.txId),
+    ))
+  }
+}
+
+/** Keeps reading the receipts of 'replaced' rows (for REPLACED_WATCH_MS); one deep enough settles the row as usual. */
+async function watchReplaced(client: GiveawayChainClient, now: Date): Promise<void> {
+  const rows = await db.select().from(giveawayTxs).where(and(
+    eq(giveawayTxs.chain, client.chain), eq(giveawayTxs.status, 'replaced'),
+    sql`coalesce(${giveawayTxs.sentAt}, ${giveawayTxs.createdAt}) > ${new Date(now.getTime() - REPLACED_WATCH_MS).toISOString()}::timestamptz`,
+  ))
+  for (const t of rows) {
+    await step(client.chain, `replaced:${t.id}`, `replaced tx ${t.id}`, async () => {
+      for (const hash of [...new Set([...(t.txHashes ?? []), ...(t.txHash ? [t.txHash] : [])])]) {
+        const rc = await client.receipt(hash)
+        if (!rc) continue
+        if ((await client.latestBlock()) - rc.blockNumber < CONFIRMATIONS[t.chain]) return
+        console.warn(`[giveaways] replaced ${t.kind} ${t.id}: its receipt turned up`)
+        if (rc.ok) await confirmed(client, t, hash, rc, now)
+        else await reverted(client, t, hash, rc, now)
+        return
+      }
+    })
+  }
+}
+
+/**
+ * Whether a replaced transfer (top-up, withdraw or return) of this giveaway is still unresolved: its wallet sends no
+ * withdraw or return until a human (or a late receipt) settles it. Reported once.
+ */
+async function heldByReplaced(g: { id: string }): Promise<boolean> {
+  const [row] = await db.select({ id: giveawayTxs.id }).from(giveawayTxs).where(and(
+    eq(giveawayTxs.giveawayId, g.id), eq(giveawayTxs.status, 'replaced'), inArray(giveawayTxs.kind, ['topup', 'withdraw', 'return']),
+  )).limit(1)
+  if (!row) return false
+  reportOnce(`held:${g.id}`, 'giveaway_replaced_hold', `Giveaway ${g.id}: tx ${row.id} was replaced with no receipt; withdraws and returns from its wallet are held until it is resolved`)
+  return true
 }
 
 // ── 2. Host send-backs ───────────────────────────────────────────────────────
@@ -558,6 +623,11 @@ async function signWithdraw(client: GiveawayChainClient, r: TxRow): Promise<TxRo
     if (!cur || cur.status !== 'sending' || cur.rawTx) return null
     if (!g?.walletKeyEnc || g.walletAddress !== cur.fromAddress) {
       await tx.update(giveawayTxs).set({ status: 'failed', lastError: 'no_wallet' }).where(eq(giveawayTxs.id, cur.id))
+      return null
+    }
+    if (await heldByReplaced(g)) {
+      await tx.update(giveawayTxs).set({ status: 'failed', lastError: 'replaced_hold' }).where(eq(giveawayTxs.id, cur.id))
+      console.warn(`[giveaways] withdraw ${cur.id} refused: a replaced transaction of this giveaway is unresolved`)
       return null
     }
     if (await openFrom(tx, cur.chain, cur.fromAddress, cur.id)) return null
@@ -653,7 +723,8 @@ async function mintBatch(client: GiveawayChainClient, g: GiveawayRow, batch: Que
   const ids: string[] = []
   for (const b of batch) for (const i of itemIds) { wallets.push(b.wallet); ids.push(i) }
   const [paid, acc] = await Promise.all([ownerIsPaid(g.ownerId), accounting(g.id)])
-  const covered = paid && acc.topUpsWei > 0n
+  // Covered once a top-up is known to have landed (a replaced one, outcome unknown, doesn't count here)
+  const covered = paid && acc.topUpsWei - acc.replacedTopUpsWei > 0n
   const signer = giveawaySigner(g.walletKeyEnc!)
   const claimIds = batch.map((b) => b.claimId)
 
@@ -763,7 +834,7 @@ async function topUp(
  */
 async function endsAndDeletes(client: GiveawayChainClient, now: Date): Promise<void> {
   const toppedUpSinceReturn = sql`exists (select 1 from giveaway_txs t where t.giveaway_id = ${giveaways.id} and t.kind = 'topup' and t.status = 'confirmed'
-    and not exists (select 1 from giveaway_txs r where r.giveaway_id = ${giveaways.id} and r.kind = 'return' and r.status = 'confirmed' and r.created_at > t.created_at))`
+    and not exists (select 1 from giveaway_txs r where r.giveaway_id = ${giveaways.id} and r.kind = 'return' and r.status in ('confirmed', 'replaced') and r.created_at > t.created_at))`
   const rows = await db.select().from(giveaways).where(and(
     eq(giveaways.chain, client.chain), isNull(giveaways.deletedAt),
     or(eq(giveaways.deleteState, 'returning'), and(lte(giveaways.endsAt, now), toppedUpSinceReturn)),
@@ -778,6 +849,8 @@ async function endsAndDeletes(client: GiveawayChainClient, now: Date): Promise<v
 async function endOne(client: GiveawayChainClient, g: GiveawayRow, feesOnce: () => Promise<GiveawayFees>, now: Date): Promise<void> {
   const deleting = g.deleteState === 'returning'
   if (g.walletAddress && (await openFrom(db, g.chain, g.walletAddress))) return
+  // A replaced transfer of unknown outcome holds returns (and so the delete) for a human
+  if (await heldByReplaced(g)) return
   if (!deleting) {
     const [q] = await db.select({ id: giveawayClaims.id }).from(giveawayClaims)
       .where(and(eq(giveawayClaims.giveawayId, g.id), inArray(giveawayClaims.status, [...QUEUED]))).limit(1)

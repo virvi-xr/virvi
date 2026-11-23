@@ -695,7 +695,8 @@ export const giveawayTxs = pgTable('giveaway_txs', {
   rawTx: text('raw_tx'),
   txHash: text('tx_hash'),
   txHashes: text('tx_hashes').array().default(sql`'{}'::text[]`),
-  status: text('status').$type<'sending' | 'sent' | 'confirmed' | 'failed'>().notNull().default('sending'),
+  // 'replaced': its nonce was used with no receipt of ours found; the job keeps looking for one (see giveaways/job.ts)
+  status: text('status').$type<'sending' | 'sent' | 'confirmed' | 'failed' | 'replaced'>().notNull().default('sending'),
   valueWei: numeric('value_wei', { precision: 78, scale: 0 }).notNull().default('0'),
   feeWei: numeric('fee_wei', { precision: 78, scale: 0 }), // from the receipt
   covered: boolean('covered').notNull().default(false),

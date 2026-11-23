@@ -453,12 +453,80 @@ describe('giveaway minting job (LIV-194)', () => {
     expect((await txs())[0].status).toBe('sent')
     chain.advance(1)
     await runGiveawayJob(at(3 * MIN))
-    expect((await txs())[0]).toMatchObject({ status: 'failed', lastError: 'replaced' })
+    expect((await txs())[0]).toMatchObject({ status: 'replaced', lastError: 'replaced' })
     expect(await claimOf(a.id)).toMatchObject({ status: 'failed', failReason: 'replaced' })
     expect((await mintsOf(a.id))[0].status).toBe('failed')
     for (let i = 4; i < 8; i++) await runGiveawayJob(at(i * MIN))
     expect(chain.signs).toHaveLength(1)
     expect(vi.mocked(recordJobFailure).mock.calls.filter((c) => c[0] === 'giveaway_replaced')).toHaveLength(1)
+  })
+
+  /** Mines what is pending, hides the receipts of these hashes, and runs passes until the row is settled as replaced. */
+  async function replace(hashes: string[], from: number) {
+    confirm()
+    for (const h of hashes) chain.hiddenReceipts.add(h)
+    await runGiveawayJob(at(from * MIN))
+    chain.advance(GIVEAWAY_REPLACED_AFTER_BLOCKS)
+    await runGiveawayJob(at((from + 1) * MIN))
+  }
+
+  it('a replaced mint whose receipt turns up later is applied as a confirmation: its claims are sent', async () => {
+    const g = await giveaway({ items: [[C1, '1']] })
+    const a = await claim(g)
+    await runGiveawayJob(T0)
+    await replace([chain.signs[0].hash], 1)
+    expect(await claimOf(a.id)).toMatchObject({ status: 'failed', failReason: 'replaced' })
+    chain.hiddenReceipts.clear()
+    await runGiveawayJob(at(3 * 24 * 60 * MIN))
+    expect((await txs())[0]).toMatchObject({ status: 'confirmed', lastError: null })
+    expect(await claimOf(a.id)).toMatchObject({ status: 'sent', failReason: null })
+    expect((await mintsOf(a.id))[0]).toMatchObject({ status: 'sent', tokenIds: ['1'] })
+    expect(chain.signs).toHaveLength(1)
+  })
+
+  it('a replaced top-up counts as received, holds withdraws, and is confirmed and counted once its receipt turns up', async () => {
+    withTank()
+    await paid()
+    chain.setBalance(tank.address, pol('100'))
+    const g = await giveaway({ balance: 0n })
+    await claim(g)
+    await runGiveawayJob(T0)
+    const top = chain.signs.find((x) => x.kind === 'transfer')!
+    await replace([top.hash], 1)
+    const [row] = (await txs()).filter((t) => t.kind === 'topup')
+    expect(row.status).toBe('replaced')
+    const { accounting } = await import('../src/giveaways/funding.js')
+    expect((await accounting(g.id)).virviUnspentWei).toBe(BigInt(row.valueWei))
+    // A withdraw asked for meanwhile is refused for a human
+    const [w] = await db.insert(giveawayTxs).values({
+      giveawayId: g.id, chain: 'polygon', kind: 'withdraw', fromAddress: g.walletAddress!, toAddress: addr(), status: 'sending', valueWei: '1',
+    }).returning()
+    await runGiveawayJob(at(3 * MIN))
+    expect((await db.select().from(giveawayTxs).where(eq(giveawayTxs.id, w.id)))[0]).toMatchObject({ status: 'failed', lastError: 'replaced_hold', rawTx: null })
+    expect(vi.mocked(recordJobFailure).mock.calls.filter((c) => c[0] === 'giveaway_replaced_hold')).toHaveLength(1)
+    chain.hiddenReceipts.clear()
+    await runGiveawayJob(at(4 * MIN))
+    const [after] = (await txs()).filter((t) => t.kind === 'topup')
+    expect(after).toMatchObject({ status: 'confirmed', feeWei: (GIVEAWAY_TRANSFER_GAS * chain.gasPriceWei).toString() })
+    expect((await accounting(g.id)).topUpsWei).toBe(BigInt(row.valueWei))
+  })
+
+  it('a replaced return counts as sent: no second return, and the delete waits for a human', async () => {
+    withTank()
+    const g = await giveaway({ balance: pol('0.5'), set: { enabled: false, deleteState: 'returning' } })
+    await db.insert(giveawayTxs).values({
+      giveawayId: g.id, chain: 'polygon', kind: 'topup', fromAddress: tank.address, toAddress: g.walletAddress!, status: 'confirmed', valueWei: pol('0.5').toString(),
+    })
+    // The host's own POL is still in the wallet beside the float, so a wrongly failed return would allow a second one
+    chain.setBalance(g.walletAddress!, pol('1'))
+    await runGiveawayJob(T0)
+    const ret = chain.signs.find((x) => x.kind === 'transfer')!
+    await replace([ret.hash], 1)
+    expect((await txs()).find((t) => t.kind === 'return')!.status).toBe('replaced')
+    for (let i = 3; i < 8; i++) await runGiveawayJob(at(i * MIN))
+    expect(chain.signs.filter((x) => x.kind === 'transfer')).toHaveLength(1)
+    expect((await giveawayOf(g.id)).deletedAt).toBeNull()
+    expect(vi.mocked(recordJobFailure).mock.calls.filter((c) => c[0] === 'giveaway_replaced_hold')).toHaveLength(1)
   })
 
   it('a mint whose bumped fee no longer fits is rebroadcast as signed, reported once, and a paid owner gets a top-up meanwhile', async () => {
