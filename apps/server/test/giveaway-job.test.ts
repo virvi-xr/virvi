@@ -8,7 +8,7 @@ import { giveawayClaimMints, giveawayClaims, giveawayItems, giveaways, giveawayT
 import { recordJobFailure } from '../src/errors/record.js'
 import { GIVEAWAY_TRANSFER_GAS, GiveawayRpcError } from '../src/giveaways/chain.js'
 import { newGiveawayWallet } from '../src/giveaways/keys.js'
-import { resetGiveawayJobState, runGiveawayJob } from '../src/giveaways/job.js'
+import { GIVEAWAY_REPLACED_AFTER_BLOCKS, resetGiveawayJobState, runGiveawayJob } from '../src/giveaways/job.js'
 import { resetDb } from './helpers/db.js'
 import { createUser, type TestUser } from './helpers/factories.js'
 import { giveawaysOn, senderOf, type FakeGiveawayChain } from './helpers/giveaways-fake.js'
@@ -422,6 +422,106 @@ describe('giveaway minting job (LIV-194)', () => {
     chain.broadcastError = null
     await runGiveawayJob(at(1000 * MIN))
     expect((await txs())[0].status).toBe('sent')
+  })
+
+  it('a receipt served late (nonce used, no receipt on one pass) confirms normally on the next, with nothing requeued', async () => {
+    const g = await giveaway()
+    const a = await claim(g)
+    await runGiveawayJob(T0)
+    confirm()
+    chain.hiddenReceipts.add(chain.signs[0].hash)
+    await runGiveawayJob(at(MIN))
+    const [t] = await txs()
+    expect(t).toMatchObject({ status: 'sent', replacedSeenBlock: chain.block })
+    expect((await mintsOf(a.id))[0]).toMatchObject({ status: 'minting', txId: t.id })
+    chain.hiddenReceipts.clear()
+    await runGiveawayJob(at(2 * MIN))
+    expect((await txs())[0].status).toBe('confirmed')
+    expect((await claimOf(a.id)).status).toBe('sent')
+    expect(chain.signs).toHaveLength(1)
+  })
+
+  it('a nonce used with no receipt of ours for good: the claims fail for a human, never minted again', async () => {
+    const g = await giveaway()
+    const a = await claim(g)
+    await runGiveawayJob(T0)
+    confirm()
+    chain.hiddenReceipts.add(chain.signs[0].hash)
+    await runGiveawayJob(at(MIN))
+    chain.advance(GIVEAWAY_REPLACED_AFTER_BLOCKS - 1)
+    await runGiveawayJob(at(2 * MIN))
+    expect((await txs())[0].status).toBe('sent')
+    chain.advance(1)
+    await runGiveawayJob(at(3 * MIN))
+    expect((await txs())[0]).toMatchObject({ status: 'failed', lastError: 'replaced' })
+    expect(await claimOf(a.id)).toMatchObject({ status: 'failed', failReason: 'replaced' })
+    expect((await mintsOf(a.id))[0].status).toBe('failed')
+    for (let i = 4; i < 8; i++) await runGiveawayJob(at(i * MIN))
+    expect(chain.signs).toHaveLength(1)
+    expect(vi.mocked(recordJobFailure).mock.calls.filter((c) => c[0] === 'giveaway_replaced')).toHaveLength(1)
+  })
+
+  it('a mint whose bumped fee no longer fits is rebroadcast as signed, reported once, and a paid owner gets a top-up meanwhile', async () => {
+    withTank()
+    await paid()
+    chain.setBalance(tank.address, pol('100'))
+    const need = GIVEAWAY_GAS_PER_ITEM * chain.maxFeePerGas
+    const g = await giveaway({ balance: need * 13n / 10n })
+    const a = await claim(g)
+    await runGiveawayJob(T0)
+    expect(chain.signs).toHaveLength(1)
+    chain.maxFeePerGas *= 2n // the bump would be 200 gwei: more than the wallet holds
+    await runGiveawayJob(at(3 * MIN))
+    const mintRaw = chain.signs[0].raw
+    expect(chain.broadcasts.filter((r) => r === mintRaw)).toHaveLength(2)
+    const top = (await txs()).find((t) => t.kind === 'topup')
+    expect(top).toMatchObject({ status: 'sent', fromAddress: tank.address, toAddress: g.walletAddress })
+    expect(chain.signs.filter((s) => s.kind === 'mint')).toHaveLength(1)
+    await runGiveawayJob(at(6 * MIN))
+    expect(vi.mocked(recordJobFailure).mock.calls.filter((c) => c[0] === 'giveaway_reprice')).toHaveLength(1)
+    confirm()
+    await runGiveawayJob(at(7 * MIN))
+    expect((await claimOf(a.id)).status).toBe('sent')
+  })
+
+  it('an uncovered mint never spends Virvi float: a lapsed owner whose wallet holds only the float is paused low_gas', async () => {
+    withTank()
+    await paid('canceled')
+    chain.setBalance(tank.address, pol('100'))
+    const g = await giveaway({ balance: pol('0.5') })
+    await db.insert(giveawayTxs).values({
+      giveawayId: g.id, chain: 'polygon', kind: 'topup', fromAddress: tank.address, toAddress: g.walletAddress!, status: 'confirmed', valueWei: pol('0.5').toString(),
+    })
+    const a = await claim(g)
+    await runGiveawayJob(T0)
+    expect((await giveawayOf(g.id)).pausedReason).toBe('low_gas')
+    expect((await txs()).filter((t) => t.kind !== 'topup' || t.status !== 'confirmed')).toHaveLength(0)
+    expect(chain.broadcasts).toHaveLength(0)
+    expect((await claimOf(a.id)).status).toBe('waiting')
+  })
+
+  it('a broadcast refused for funds keeps the row, pauses low_gas, and goes out (unpaused) once it can', async () => {
+    const g = await giveaway()
+    await claim(g)
+    chain.broadcastError = () => new GiveawayRpcError('broadcast', 'INSUFFICIENT_FUNDS')
+    await runGiveawayJob(T0)
+    expect((await txs())[0]).toMatchObject({ status: 'sending', lastError: 'INSUFFICIENT_FUNDS', attempts: 0, nextAttemptAt: null })
+    expect((await giveawayOf(g.id)).pausedReason).toBe('low_gas')
+    chain.broadcastError = null
+    await runGiveawayJob(at(MIN))
+    expect((await txs())[0].status).toBe('sent')
+    expect((await giveawayOf(g.id)).pausedReason).toBeNull()
+    expect(chain.signs).toHaveLength(1)
+  })
+
+  it('claims whose contract has no items any more fail item_removed rather than wait forever', async () => {
+    const g = await giveaway()
+    const a = await claim(g)
+    await db.delete(giveawayItems).where(eq(giveawayItems.giveawayId, g.id))
+    await runGiveawayJob(T0)
+    expect(await claimOf(a.id)).toMatchObject({ status: 'failed', failReason: 'item_removed' })
+    expect((await mintsOf(a.id))[0].status).toBe('failed')
+    expect(chain.signs).toHaveLength(0)
   })
 
   it('a disabled giveaway mints nothing', async () => {

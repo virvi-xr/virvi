@@ -33,6 +33,8 @@ export class FakeGiveawayChain {
   nonces = new Map<string, number>()
   block = 100
   nextTokenId = 1n
+  /** Receipts the RPC doesn't serve yet (a lagging node behind a load balancer). */
+  hiddenReceipts = new Set<string>()
   /** Thrown by the next broadcasts (a function decides per raw tx; null lets it through). */
   broadcastError: ((raw: string) => Error | null) | null = null
 
@@ -150,7 +152,7 @@ export class FakeGiveawayChain {
         for (const [h, p] of this.pool) if (p.from === signed.from && p.nonce === signed.nonce) this.pool.delete(h)
         this.pool.set(hash, signed)
       },
-      receipt: async (hash) => { this.#check('receipt'); return this.receipts.get(hash) ?? null },
+      receipt: async (hash) => { this.#check('receipt'); return this.hiddenReceipts.has(hash) ? null : this.receipts.get(hash) ?? null },
       latestBlock: async () => { this.#check('block'); return this.block },
     }
   }

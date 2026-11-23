@@ -704,6 +704,9 @@ export const giveawayTxs = pgTable('giveaway_txs', {
   sentAt: timestamp('sent_at', { withTimezone: true }),
   confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
   nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
+  // The block at which the job first saw this tx's nonce used with no receipt for any of its hashes (a lagging RPC, or a
+  // real replacement); cleared when that no longer holds
+  replacedSeenBlock: bigint('replaced_seen_block', { mode: 'number' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   fromStatusIdx: index('giveaway_txs_from_status_idx').on(t.fromAddress, t.status),
