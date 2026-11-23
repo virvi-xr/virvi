@@ -82,6 +82,10 @@ export interface ToolDef<A> {
   preview?(args: A, ctx: ToolCtx): Promise<{ detail: string; bind?: Partial<A> } | { blocked: string; link: { label: string; href: string } }>
   /** e.g. 'Rename scene to "Test Lounge"': server-side text for action rows and plan steps. */
   label(args: A): string
+  /** False while the feature behind the tool is off: the tool isn't offered to the model and can't be run. */
+  available?(): boolean
+  /** Wallets in the summary that redact() must leave whole (the host's own giveaway wallet is not someone else's). */
+  keepWallets?(res: unknown): string[]
   /** The trimmed object the model sees, before redact(). */
   summarize(res: unknown, args: A): unknown
   /** Only for search_help and open_page, which run here instead of a route. */

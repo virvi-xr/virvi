@@ -5,7 +5,8 @@ import { STUDIO_TOOLS } from './studio.js'
 import { SHOWS_TOOLS } from './shows-tools.js'
 import { DEPLOY_TOOLS } from './deploy.js'
 import { COLLABORATOR_TOOLS } from './collaborators.js'
+import { GIVEAWAY_TOOLS } from './giveaways.js'
 import type { ToolDef } from './types.js'
 
 /** Every assistant tool, by name. */
-export const TOOLS: Record<string, ToolDef<any>> = Object.fromEntries([...READ_TOOLS, ...WRITE_TOOLS, ...STUDIO_TOOLS, ...SHOWS_TOOLS, ...DEPLOY_TOOLS, ...COLLABORATOR_TOOLS, ...LOCAL_TOOLS].map((t) => [t.name, t]))
+export const TOOLS: Record<string, ToolDef<any>> = Object.fromEntries([...READ_TOOLS, ...WRITE_TOOLS, ...STUDIO_TOOLS, ...SHOWS_TOOLS, ...DEPLOY_TOOLS, ...COLLABORATOR_TOOLS, ...GIVEAWAY_TOOLS, ...LOCAL_TOOLS].map((t) => [t.name, t]))

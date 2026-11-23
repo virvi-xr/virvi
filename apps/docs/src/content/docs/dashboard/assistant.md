@@ -49,7 +49,7 @@ Replies are formatted, with headings, lists, tables and code where they help. Li
 
 ## What it can't do yet
 
-Connecting a new destination, removing a collaborator, Drops (giveaways), deleting things, finalizing or paying for Studio designs, billing and branding are not available in this release. For those, it points you to the right page. It can't sign a deploy for you either: a destination that needs your signature is always finished on its deploy page.
+Connecting a new destination, removing a collaborator, switching on, funding or deleting a giveaway, deleting things, finalizing or paying for Studio designs, billing and branding are not available in this release. For those, it points you to the right page. It can't sign a deploy for you either: a destination that needs your signature is always finished on its deploy page.
 
 ## Making things
 
@@ -115,9 +115,11 @@ The checklist shows on the event's page, under **Show checklist**, with an **Ask
 
 The states are read from your real events, raffles, BEATs and designs each time, never from what the assistant remembers. If you change something by hand, the checklist follows.
 
-### Raffles instead of Drops
+### Automatic giveaways or a raffle
 
-The assistant can't run Drops (giveaways), so a show uses a [raffle](/docs/dashboard/raffles/). Winners are picked by the draw, and **you send the prizes** to them yourself. See Delivering prizes on that page.
+When the assistant finds your show's wearable on Decentraland, it offers two ways to give it away. Where automatic giveaways are available, the first is an **automatic giveaway**: it creates one in Drops with the found wearable already filled in and the show's scene. It is always created **switched off**. The assistant never switches a giveaway on, funds it, sends its balance back or deletes it. It gives you the giveaway's wallet address: add it as a minter on your collection in the Builder, then switch the giveaway on in Drops.
+
+The other choice is a [raffle](/docs/dashboard/raffles/). Winners are picked by the draw, and **you send the prizes** to them yourself. See Delivering prizes on that page. Where automatic giveaways aren't available, a show offers only the raffle.
 
 **The host terms card.** Creating a raffle is its own card, never part of a plan. It shows the raffle's details and Virvi's raffle host terms word for word: the raffle is free to enter and needs no purchase, you are responsible for following the giveaway and sweepstakes rules where you and your entrants live, and for delivering prizes. The card says "Confirming accepts these terms for this raffle." Pressing **Confirm** is you accepting them for that raffle. The assistant never accepts them for you.
 

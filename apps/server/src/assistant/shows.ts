@@ -34,7 +34,10 @@ export const NOT_YOURS = "That isn't yours, or it's gone."
 export const RAFFLE_CANCELLED = 'This raffle was cancelled.'
 export const BEAT_CANCELLED = 'This BEAT was cancelled.'
 /** A wearable Virvi found by itself: say which, so a wrong pick is easy to replace. */
-export const foundNote = (name: string) => `Found on Decentraland: "${name}". If it isn't the one, paste the right Marketplace link.`
+export const foundNote = (name: string, giveaways = config.giveaways.enabled) =>
+  `Found on Decentraland: "${name}". If it isn't the one, paste the right Marketplace link.${giveaways ? GIVE_AWAY_OFFER : ''}`
+/** With giveaways on, the found wearable is offered as an automatic giveaway first and a raffle prize second. */
+export const GIVE_AWAY_OFFER = ' You can give it away with an automatic giveaway, or make it a raffle prize.'
 export const WEARABLE_EXAMPLE = "Paste the wearable's Marketplace link, like https://decentraland.org/marketplace/contracts/0x…/items/0."
 
 /**

@@ -6,6 +6,7 @@ import { TOOLS } from '../src/assistant/tools/index.js'
 import { runTool } from '../src/assistant/tools/run.js'
 import type { ToolCtx } from '../src/assistant/tools/types.js'
 import { resetDb } from './helpers/db.js'
+import { giveawaysOn } from './helpers/giveaways-fake.js'
 import { createAnalyticsScene } from './helpers/analytics.js'
 import { createSetup } from './helpers/setups.js'
 import { testApp, createUser, createScene, createElement, createInstance, tokenFor, type TestUser } from './helpers/factories.js'
@@ -81,6 +82,7 @@ const SAMPLE: Record<string, (f: Fixtures) => unknown> = {
   update_event: (f) => ({ eventId: f.event.id, name: 'Taken' }),
   link_event_scene: (f) => ({ eventId: f.event.id, sceneId: f.aScene.id }),
   list_scene_raffles: (f) => ({ sceneId: f.scene.id }),
+  create_giveaway: (f) => ({ name: 'A giveaway', sceneId: f.scene.id }),
   create_raffle: (f) => ({ sceneId: f.scene.id, name: 'A raffle', prize: 'A prize', winnersCount: 1, mode: 'one_per_person' }),
   schedule_raffle_open: (f) => ({ raffleId: f.raffle.id, opensAt: '2031-01-01T20:00:00Z' }),
   update_raffle_prize: (f) => ({ raffleId: f.raffle.id, prize: 'Taken' }),
@@ -135,6 +137,7 @@ describe('assistant tools: authorization is the route\'s own', () => {
   const prevStudio = config.studioEnabled
   const prevBeats = config.beats
   const prevAssistant = { enabled: config.assistantEnabled, audience: config.assistantAudience, billing: config.billingEnabled }
+  let giveawaysOff = () => {}
   beforeAll(async () => {
     // The show tools wrap the assistant's own routes: on for every account, so A is refused by ownership alone
     ;(config as any).assistantEnabled = true
@@ -143,6 +146,7 @@ describe('assistant tools: authorization is the route\'s own', () => {
     ;(config as any).studioEnabled = true
     ;(config as any).beats = { ...prevBeats, enabled: true, chain: 'polygon', ...BEATS_READY }
     setImageSizeReader(async () => ({ width: 1024, height: 1024 }))
+    giveawaysOff = giveawaysOn().off
     app = await testApp()
   })
   afterAll(async () => {
@@ -152,6 +156,7 @@ describe('assistant tools: authorization is the route\'s own', () => {
     ;(config as any).assistantAudience = prevAssistant.audience
     ;(config as any).billingEnabled = prevAssistant.billing
     setImageSizeReader(null)
+    giveawaysOff()
     await app.close()
   })
   beforeEach(async () => {

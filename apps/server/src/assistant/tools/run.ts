@@ -14,7 +14,7 @@ export type ToolResult =
 
 function enabled(name: string) {
   const def = Object.hasOwn(TOOLS, name) ? TOOLS[name] : undefined
-  return def && !config.assistantDisabledTools.includes(name) ? def : undefined
+  return def && !config.assistantDisabledTools.includes(name) && (def.available?.() ?? true) ? def : undefined
 }
 
 export async function runTool(ctx: ToolCtx, name: string, rawArgs: unknown): Promise<ToolResult> {
@@ -67,7 +67,7 @@ export async function runTool(ctx: ToolCtx, name: string, rawArgs: unknown): Pro
     return {
       ok: true,
       status,
-      summary: redact(def.summarize(res, args), ctx.self, def.redactKeys),
+      summary: redact(def.summarize(res, args), { ...ctx.self, wallets: [...ctx.self.wallets, ...(def.keepWallets?.(res) ?? [])] }, def.redactKeys),
       undo,
       after: before ? before.after(res) : null,
       orgName: before?.orgName ?? null,
@@ -82,7 +82,7 @@ export async function runTool(ctx: ToolCtx, name: string, rawArgs: unknown): Pro
 /** The enabled tools as the model's tool definitions (zod v4's own JSON Schema). */
 export function toolsForModel(): Array<{ name: string; description: string; input_schema: Record<string, unknown> }> {
   return Object.values(TOOLS)
-    .filter((t) => !config.assistantDisabledTools.includes(t.name))
+    .filter((t) => !config.assistantDisabledTools.includes(t.name) && (t.available?.() ?? true))
     .map((t) => {
       const { $schema: _drop, ...schema } = z.toJSONSchema(t.input, { io: 'input' }) as Record<string, unknown>
       return { name: t.name, description: t.description, input_schema: schema }
