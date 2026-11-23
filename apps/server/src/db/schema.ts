@@ -587,6 +587,8 @@ export const giveaways = pgTable('giveaways', {
   pausedAt: timestamp('paused_at', { withTimezone: true }),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   deleteState: text('delete_state').$type<'returning'>(), // null | 'returning' (the job is returning the float)
+  // When it was last switched off (null while on): an off giveaway idle 7 days returns Virvi's float (giveaways/job.ts)
+  disabledAt: timestamp('disabled_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
@@ -708,6 +710,8 @@ export const giveawayTxs = pgTable('giveaway_txs', {
   // The block at which the job first saw this tx's nonce used with no receipt for any of its hashes (a lagging RPC, or a
   // real replacement); cleared when that no longer holds
   replacedSeenBlock: bigint('replaced_seen_block', { mode: 'number' }),
+  // When the job marked it 'replaced'; it keeps reading the row's receipts for 7 days from then
+  replacedAt: timestamp('replaced_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   fromStatusIdx: index('giveaway_txs_from_status_idx').on(t.fromAddress, t.status),

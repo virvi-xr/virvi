@@ -1,6 +1,6 @@
-import { and, asc, eq, isNotNull, isNull, ne, sql } from 'drizzle-orm'
+import { and, asc, eq, isNotNull, isNull, notInArray, sql } from 'drizzle-orm'
 import {
-  GIVEAWAY_CONSENT_VERSION, giveawayTxUrl, type AvailableGiveaway, type GiveawayClaimStatus, type VisitorGiveaway,
+  GIVEAWAY_CONSENT_VERSION, GIVEAWAY_DELAYED_AFTER_MS, giveawayTxUrl, type AvailableGiveaway, type GiveawayClaimStatus, type VisitorGiveaway,
 } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { giveawayClaimMints, giveawayClaims, giveawayItems, giveaways, giveawayScenes, giveawayTxs } from '../db/schema.js'
@@ -27,8 +27,6 @@ type ItemRow = typeof giveawayItems.$inferSelect
 type Exec = Pick<typeof db, 'select'>
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-/** Claims queued for minting: they take from the supply the last mint check read. */
-const QUEUED: GiveawayClaimStatus[] = ['waiting', 'minting']
 
 const notFound = () => new GiveawayError(404, 'not_found', 'Giveaway not found.')
 const notTracking = () => new GiveawayError(404, 'not_tracking', "You haven't joined this giveaway.")
@@ -75,18 +73,39 @@ async function itemsOf(exec: Exec, giveawayId: string): Promise<ItemRow[]> {
     id(a).length - id(b).length || (id(a) < id(b) ? -1 : id(a) > id(b) ? 1 : 0))
 }
 
-/** Why a running giveaway takes no new claim, or null when it does: `closed` at the cap, `sold_out` without supply. */
+/**
+ * Claims queued for this item in any giveaway (it may be in several, and they share its supply): queued claims with a
+ * mint row for its contract not yet sent, in giveaways that have the item.
+ */
+async function queuedForItem(exec: Exec, item: ItemRow): Promise<number> {
+  const [row] = await exec.select({ n: sql<number>`count(*)::int` }).from(giveawayClaimMints)
+    .innerJoin(giveawayClaims, eq(giveawayClaims.id, giveawayClaimMints.claimId))
+    .where(and(
+      sql`lower(${giveawayClaimMints.contractAddress}) = ${item.contractAddress!.toLowerCase()}`,
+      sql`${giveawayClaimMints.status} in ('waiting', 'minting')`,
+      sql`${giveawayClaims.status} in ('waiting', 'minting')`,
+      sql`exists (select 1 from giveaway_items i where i.giveaway_id = ${giveawayClaims.giveawayId}
+        and lower(i.contract_address) = ${item.contractAddress!.toLowerCase()} and i.item_id = ${item.itemId})`,
+    ))
+  return row?.n ?? 0
+}
+
+/**
+ * Why a running giveaway takes no new claim, or null when it does: `closed` at the cap (claims past `present` that
+ * haven't failed count toward it), `sold_out` without supply.
+ */
 async function shut(exec: Exec, g: GiveawayRow, items: ItemRow[]): Promise<'closed' | 'sold_out' | null> {
-  const counted = await exec.select({ status: giveawayClaims.status, n: sql<number>`count(*)::int` }).from(giveawayClaims)
-    .where(and(eq(giveawayClaims.giveawayId, g.id), ne(giveawayClaims.status, 'present'))).groupBy(giveawayClaims.status)
-  const past = counted.reduce((n, r) => n + r.n, 0)
-  if (g.claimCap !== null && past >= g.claimCap) return 'closed'
-  const queued = counted.filter((r) => r.status && QUEUED.includes(r.status)).reduce((n, r) => n + r.n, 0)
-  // Sold out: an item the last mint check found sold out, or whose supply the queued claims already take. A recoverable
-  // pause (not_minter, not_approved, low gas) keeps the card: claims queue and mint once it's fixed
-  if (!items.length || items.some((i) => !i.contractAddress || !i.itemId || i.mintState === 'sold_out' || i.remaining === null || i.remaining <= queued)) {
+  if (g.claimCap !== null) {
+    const [row] = await exec.select({ n: sql<number>`count(*)::int` }).from(giveawayClaims)
+      .where(and(eq(giveawayClaims.giveawayId, g.id), notInArray(giveawayClaims.status, ['present', 'failed'])))
+    if ((row?.n ?? 0) >= g.claimCap) return 'closed'
+  }
+  // Sold out: an item the last mint check found sold out, or whose supply the claims queued for it (in any giveaway)
+  // already take. A recoverable pause (not_minter, not_approved, low gas) keeps the card: claims queue and mint once fixed
+  if (!items.length || items.some((i) => !i.contractAddress || !i.itemId || i.mintState === 'sold_out' || i.remaining === null)) {
     return 'sold_out'
   }
+  for (const i of items) if (i.remaining! <= (await queuedForItem(exec, i))) return 'sold_out'
   return null
 }
 
@@ -127,6 +146,13 @@ async function txUrlOf(g: GiveawayRow, claimId: string): Promise<string | null> 
   return tx?.hash ? giveawayTxUrl(g.chain, tx.hash) : null
 }
 
+/** A queued claim the card shows as "Still sending": the giveaway is paused, or it was claimed a while ago. */
+function delayed(g: GiveawayRow, claim: ClaimRow, now: Date): boolean {
+  if (claim.status !== 'waiting' && claim.status !== 'minting') return false
+  if (g.pausedReason) return true
+  return !!claim.claimedAt && now.getTime() - claim.claimedAt.getTime() > GIVEAWAY_DELAYED_AFTER_MS
+}
+
 async function toVisitor(g: GiveawayRow, items: ItemRow[], claim: ClaimRow | null): Promise<VisitorGiveaway> {
   return {
     id: g.id,
@@ -138,6 +164,7 @@ async function toVisitor(g: GiveawayRow, items: ItemRow[], claim: ClaimRow | nul
     claim: claim ? {
       status: claim.status ?? 'present', secondsPresent: claim.secondsPresent ?? 0,
       txUrl: claim.status === 'sent' ? await txUrlOf(g, claim.id) : null, failReason: claim.failReason,
+      delayed: delayed(g, claim, new Date()),
     } : null,
   }
 }
@@ -262,6 +289,9 @@ export async function claimGiveaway(
     }
     if (!running(g, now)) throw closed()
     const items = await itemsOf(tx, g.id)
+    // Giveaways sharing an item share its supply: claims on the same item take turns (in a fixed order, so no deadlock)
+    const keys = [...new Set(items.map((i) => `giveaway-item:${(i.contractAddress ?? '').toLowerCase()}:${i.itemId ?? ''}`))].sort()
+    for (const k of keys) await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${k}))`)
     const why = await shut(tx, g, items)
     if (why === 'sold_out') throw soldOut()
     if (why) throw closed()

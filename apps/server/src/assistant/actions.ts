@@ -33,7 +33,9 @@ function canonical(v: unknown): string {
 }
 export const argsHash = (args: unknown) => sha256(canonical(args))
 
-const enabled = (name: string) => (Object.hasOwn(TOOLS, name) && !config.assistantDisabledTools.includes(name) ? TOOLS[name] : undefined)
+// A tool the server can't run right now (its available() says no, e.g. giveaways off) is not offered as a plan step either
+const enabled = (name: string) =>
+  (Object.hasOwn(TOOLS, name) && !config.assistantDisabledTools.includes(name) && (TOOLS[name].available?.() ?? true) ? TOOLS[name] : undefined)
 /** The args as the tool parses them (trimmed, defaults): what runs, is stored and is hashed. */
 function parseArgs(name: string, args: unknown): unknown {
   const parsed = enabled(name)?.input.safeParse(args ?? {})

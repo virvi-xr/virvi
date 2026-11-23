@@ -20,6 +20,8 @@ export type GiveawayFailReason = (typeof GIVEAWAY_FAIL_REASONS)[number]
 export const GIVEAWAY_GAS_PER_ITEM = 120_000n
 export const GIVEAWAY_MAX_CLAIMS_PER_TX = 40
 export const GIVEAWAY_JOB_EVERY_MS_DEFAULT = 15_000
+/** A queued claim older than this shows "Still sending" on the card. */
+export const GIVEAWAY_DELAYED_AFTER_MS = 10 * 60_000
 
 const EXPLORER: Record<GiveawayChain, string> = {
   polygon: 'https://polygonscan.com',
@@ -49,7 +51,8 @@ export interface VisitorGiveaway {
   endsAt: string | null
   minPresentSeconds: number
   test: boolean
-  claim: null | { status: GiveawayClaimStatus; secondsPresent: number; txUrl: string | null; failReason: string | null }
+  /** `delayed`: queued, and either paused or claimed more than GIVEAWAY_DELAYED_AFTER_MS ago (the card says "Still sending"). */
+  claim: null | { status: GiveawayClaimStatus; secondsPresent: number; txUrl: string | null; failReason: string | null; delayed: boolean }
 }
 
 /** The room's `giveaway_available` for guests (who can't use REST): the scene's open giveaway, name and test flag only. */
@@ -84,6 +87,13 @@ export interface HostGiveaway {
     checkedAt: string | null
   }[]
   sceneIds: string[]
-  funding: { balanceWei: string; withdrawableWei: string; claimsCovered: number; covered: boolean; tankMissing: boolean; lowGas: boolean }
+  /**
+   * `withdrawableWei` is the host's share before the transfer's gas (`transferGasWei`); `held`: a replaced transaction's
+   * outcome is unknown, so nothing is withdrawable until Virvi support settles it.
+   */
+  funding: {
+    balanceWei: string; withdrawableWei: string; transferGasWei: string; claimsCovered: number; covered: boolean; tankMissing: boolean
+    lowGas: boolean; held: boolean
+  }
   counts: Record<GiveawayClaimStatus, number>
 }

@@ -10,7 +10,7 @@ describe('giveaway shared constants and links (LIV-194)', () => {
     expect(GIVEAWAY_CONSENT_VERSION).toBe(1)
     expect(GIVEAWAY_CLAIM_STATUSES).toEqual(['present', 'waiting', 'minting', 'sent', 'failed'])
     expect(GIVEAWAY_PAUSE_REASONS).toEqual(['low_gas', 'not_minter', 'not_approved', 'rpc_down'])
-    expect(GIVEAWAY_FAIL_REASONS).toEqual(['sold_out', 'reverted', 'ended'])
+    expect(GIVEAWAY_FAIL_REASONS).toEqual(['sold_out', 'reverted', 'ended', 'replaced', 'item_removed'])
     expect([GIVEAWAY_GAS_PER_ITEM, GIVEAWAY_MAX_CLAIMS_PER_TX, GIVEAWAY_JOB_EVERY_MS_DEFAULT]).toEqual([120_000n, 40, 15_000])
   })
 

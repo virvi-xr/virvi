@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { and, asc, eq } from 'drizzle-orm'
-import { Wallet, parseEther } from 'ethers'
+import { Wallet, getAddress, parseEther } from 'ethers'
 import { GIVEAWAY_GAS_PER_ITEM } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
@@ -8,7 +8,7 @@ import { giveawayClaimMints, giveawayClaims, giveawayItems, giveaways, giveawayT
 import { recordJobFailure } from '../src/errors/record.js'
 import { GIVEAWAY_TRANSFER_GAS, GiveawayRpcError } from '../src/giveaways/chain.js'
 import { newGiveawayWallet } from '../src/giveaways/keys.js'
-import { GIVEAWAY_REPLACED_AFTER_BLOCKS, resetGiveawayJobState, runGiveawayJob } from '../src/giveaways/job.js'
+import { GIVEAWAY_OFF_RETURN_AFTER_MS, GIVEAWAY_REPLACED_AFTER_BLOCKS, resetGiveawayJobState, runGiveawayJob } from '../src/giveaways/job.js'
 import { resetDb } from './helpers/db.js'
 import { createUser, type TestUser } from './helpers/factories.js'
 import { giveawaysOn, senderOf, type FakeGiveawayChain } from './helpers/giveaways-fake.js'
@@ -534,7 +534,11 @@ describe('giveaway minting job (LIV-194)', () => {
     await paid()
     chain.setBalance(tank.address, pol('100'))
     const need = GIVEAWAY_GAS_PER_ITEM * chain.maxFeePerGas
+    // Virvi's float covers this mint, but not one at twice the fee
     const g = await giveaway({ balance: need * 13n / 10n })
+    await db.insert(giveawayTxs).values({
+      giveawayId: g.id, chain: 'polygon', kind: 'topup', fromAddress: tank.address, toAddress: g.walletAddress!, status: 'confirmed', valueWei: (need * 13n / 10n).toString(),
+    })
     const a = await claim(g)
     await runGiveawayJob(T0)
     expect(chain.signs).toHaveLength(1)
@@ -542,7 +546,7 @@ describe('giveaway minting job (LIV-194)', () => {
     await runGiveawayJob(at(3 * MIN))
     const mintRaw = chain.signs[0].raw
     expect(chain.broadcasts.filter((r) => r === mintRaw)).toHaveLength(2)
-    const top = (await txs()).find((t) => t.kind === 'topup')
+    const top = (await txs()).find((t) => t.kind === 'topup' && t.status !== 'confirmed')
     expect(top).toMatchObject({ status: 'sent', fromAddress: tank.address, toAddress: g.walletAddress })
     expect(chain.signs.filter((s) => s.kind === 'mint')).toHaveLength(1)
     await runGiveawayJob(at(6 * MIN))
@@ -592,11 +596,236 @@ describe('giveaway minting job (LIV-194)', () => {
     expect(chain.signs).toHaveLength(0)
   })
 
-  it('a disabled giveaway mints nothing', async () => {
+  it('I-5: a giveaway switched off still mints the claims already queued (only new claims stop)', async () => {
     const g = await giveaway({ set: { enabled: false } })
+    const a = await claim(g)
+    await runGiveawayJob(T0)
+    expect(chain.signs).toHaveLength(1)
+    expect(chain.signs[0].wallets).toEqual([a.wallet])
+    confirm()
+    await runGiveawayJob(at(MIN))
+    expect((await claimOf(a.id)).status).toBe('sent')
+  })
+
+  it('a giveaway being deleted mints nothing', async () => {
+    const g = await giveaway({ set: { enabled: false, deleteState: 'returning' } })
     await claim(g)
     await runGiveawayJob(T0)
+    expect(chain.signs.filter((s) => s.kind === 'mint')).toHaveLength(0)
+    expect(await db.select().from(giveawayTxs).where(and(eq(giveawayTxs.giveawayId, g.id), eq(giveawayTxs.kind, 'mint')))).toHaveLength(0)
+  })
+
+  const txRow = async (id: string) => (await db.select().from(giveawayTxs).where(eq(giveawayTxs.id, id)))[0]
+
+  it('I-2: a withdraw waits while a top-up into the wallet is unsettled, and never pays out the float', async () => {
+    withTank()
+    const hostWallet = addr()
+    // The host's 2 POL, plus a 5 POL top-up that is mined but not yet confirmed
+    const g = await giveaway({ balance: pol('7') })
+    const [top] = await db.insert(giveawayTxs).values({
+      giveawayId: g.id, chain: 'polygon', kind: 'topup', fromAddress: tank.address, toAddress: g.walletAddress!, status: 'sent', valueWei: pol('5').toString(),
+    }).returning()
+    const [w] = await db.insert(giveawayTxs).values({
+      giveawayId: g.id, chain: 'polygon', kind: 'withdraw', fromAddress: g.walletAddress!, toAddress: hostWallet, status: 'sending', valueWei: pol('7').toString(),
+    }).returning()
+    await runGiveawayJob(T0)
     expect(chain.signs).toHaveLength(0)
-    expect(await db.select().from(giveawayTxs).where(and(eq(giveawayTxs.giveawayId, g.id)))).toHaveLength(0)
+    expect(await txRow(w.id)).toMatchObject({ status: 'sending', rawTx: null })
+    await db.update(giveawayTxs).set({ status: 'confirmed' }).where(eq(giveawayTxs.id, top.id))
+    await runGiveawayJob(at(MIN))
+    expect(chain.signs).toHaveLength(1)
+    expect(chain.signs[0].valueWei).toBe(pol('2') - GIVEAWAY_TRANSFER_GAS * chain.maxFeePerGas)
+  })
+
+  it('I-3: a delete keeps the key while a top-up into the wallet is unsettled, then returns the float and finishes', async () => {
+    withTank()
+    const g = await giveaway({ balance: 0n, set: { enabled: false, deleteState: 'returning' } })
+    const [top] = await db.insert(giveawayTxs).values({
+      giveawayId: g.id, chain: 'polygon', kind: 'topup', fromAddress: tank.address, toAddress: g.walletAddress!, status: 'sent', valueWei: pol('0.5').toString(),
+    }).returning()
+    await runGiveawayJob(T0)
+    expect(await giveawayOf(g.id)).toMatchObject({ deletedAt: null, walletKeyEnc: g.walletKeyEnc })
+    // It lands
+    await db.update(giveawayTxs).set({ status: 'confirmed' }).where(eq(giveawayTxs.id, top.id))
+    chain.setBalance(g.walletAddress!, pol('0.5'))
+    await runGiveawayJob(at(MIN))
+    const gas = GIVEAWAY_TRANSFER_GAS * chain.maxFeePerGas
+    expect((await txs()).find((t) => t.kind === 'return')).toMatchObject({ status: 'sent', valueWei: (pol('0.5') - gas).toString() })
+    confirm()
+    await runGiveawayJob(at(2 * MIN))
+    expect(await giveawayOf(g.id)).toMatchObject({ walletKeyEnc: null, deletedAt: at(2 * MIN) })
+  })
+
+  it('I-3: the tank never tops up a giveaway being deleted (a mint that cannot be repriced gets no top-up)', async () => {
+    withTank()
+    await paid()
+    chain.setBalance(tank.address, pol('100'))
+    const need = GIVEAWAY_GAS_PER_ITEM * chain.maxFeePerGas
+    const g = await giveaway({ balance: need * 13n / 10n })
+    await db.insert(giveawayTxs).values({
+      giveawayId: g.id, chain: 'polygon', kind: 'topup', fromAddress: tank.address, toAddress: g.walletAddress!, status: 'confirmed', valueWei: (need * 13n / 10n).toString(),
+    })
+    await claim(g)
+    await runGiveawayJob(T0)
+    expect(chain.signs.filter((s) => s.kind === 'mint')).toHaveLength(1)
+    await db.update(giveaways).set({ enabled: false, deleteState: 'returning' }).where(eq(giveaways.id, g.id))
+    chain.maxFeePerGas *= 2n
+    await runGiveawayJob(at(3 * MIN))
+    expect((await txs()).filter((t) => t.kind === 'topup' && t.status !== 'confirmed')).toHaveLength(0)
+  })
+
+  it("I-4: a paid host's own POL never pays covered gas: the tank tops up first and the deposit stays withdrawable", async () => {
+    withTank()
+    await paid()
+    chain.setBalance(tank.address, pol('100'))
+    const g = await giveaway({ balance: pol('2') })
+    const a = await claim(g)
+    await runGiveawayJob(T0)
+    expect((await txs()).map((t) => t.kind)).toEqual(['topup'])
+    expect(chain.broadcasts).toHaveLength(1)
+    confirm()
+    await runGiveawayJob(at(MIN))
+    expect((await txs()).find((t) => t.kind === 'mint')).toMatchObject({ status: 'sent', covered: true })
+    confirm()
+    await runGiveawayJob(at(2 * MIN))
+    expect((await claimOf(a.id)).status).toBe('sent')
+    const { accounting, withdrawableWei } = await import('../src/giveaways/funding.js')
+    expect(withdrawableWei(chain.balance(g.walletAddress!), await accounting(g.id))).toBe(pol('2'))
+  })
+
+  it("I-4: a covered mint never spends float that hasn't landed (a top-up still on its way), so never the host's POL", async () => {
+    withTank()
+    await paid()
+    chain.setBalance(tank.address, pol('100'))
+    const g = await giveaway({ balance: pol('2') })
+    await db.insert(giveawayTxs).values({
+      giveawayId: g.id, chain: 'polygon', kind: 'topup', fromAddress: tank.address, toAddress: g.walletAddress!, status: 'sent', valueWei: pol('0.6').toString(),
+    })
+    const a = await claim(g)
+    await runGiveawayJob(T0)
+    // The mint signed to size the gas need is dropped unsent, and no second top-up goes while the first is on its way
+    expect(chain.broadcasts).toHaveLength(0)
+    expect((await txs()).map((t) => t.kind)).toEqual(['topup'])
+    expect((await claimOf(a.id)).status).toBe('waiting')
+    expect((await giveawayOf(g.id)).pausedReason).toBeNull()
+  })
+
+  it('M-6: a confirmed mint takes its tokens off the stored supply, in every giveaway with the item, even when the chain read after fails', async () => {
+    const g = await giveaway()
+    const other = await giveaway()
+    await claim(g)
+    await claim(g)
+    await runGiveawayJob(T0)
+    await db.update(giveawayItems).set({ remaining: 100 }).where(eq(giveawayItems.giveawayId, other.id))
+    confirm()
+    chain.itemsDown = true
+    await runGiveawayJob(at(MIN))
+    expect((await txs())[0].status).toBe('confirmed')
+    for (const id of [g.id, other.id]) {
+      expect((await db.select().from(giveawayItems).where(eq(giveawayItems.giveawayId, id)))[0].remaining).toBe(98)
+    }
+  })
+
+  // Fixed addresses, so the sold-out contract is the one minted second
+  const LOW = getAddress('0x' + '11'.repeat(20))
+  const HIGH = getAddress('0x' + 'ee'.repeat(20))
+
+  it('M-7: a claim over two contracts whose later contract is sold out fails before any part of its set is minted', async () => {
+    const g = await giveaway({ items: [[LOW, '1'], [HIGH, '7']] })
+    const a = await claim(g)
+    chain.setItem(HIGH, '7', { remaining: 0n })
+    await runGiveawayJob(T0)
+    expect(chain.signs).toHaveLength(0)
+    expect(await claimOf(a.id)).toMatchObject({ status: 'failed', failReason: 'sold_out' })
+    expect((await mintsOf(a.id)).map((m) => m.status)).toEqual(['failed', 'failed'])
+  })
+
+  it('M-7: a claim whose first contract is minted (taking its last unit) still gets its second', async () => {
+    const g = await giveaway({ items: [[LOW, '1'], [HIGH, '7']] })
+    const a = await claim(g)
+    chain.setItem(LOW, '1', { remaining: 1n })
+    await runGiveawayJob(T0)
+    confirm()
+    await runGiveawayJob(at(MIN))
+    confirm()
+    await runGiveawayJob(at(2 * MIN))
+    expect(await claimOf(a.id)).toMatchObject({ status: 'sent' })
+    expect(chain.signs.map((x) => lc(x.to))).toEqual([lc(LOW), lc(HIGH)])
+  })
+
+  it('M-9: a giveaway switched off and idle for 7 days returns the float; switched back on, it tops up again', async () => {
+    withTank()
+    await paid()
+    chain.setBalance(tank.address, pol('100'))
+    const g = await giveaway({ balance: pol('0.5'), set: { enabled: false, disabledAt: at(-GIVEAWAY_OFF_RETURN_AFTER_MS + MIN) } })
+    await db.insert(giveawayTxs).values({
+      giveawayId: g.id, chain: 'polygon', kind: 'topup', fromAddress: tank.address, toAddress: g.walletAddress!, status: 'confirmed', valueWei: pol('0.5').toString(),
+      createdAt: at(-GIVEAWAY_OFF_RETURN_AFTER_MS - MIN),
+    })
+    await runGiveawayJob(T0)
+    expect((await txs()).filter((t) => t.kind === 'return')).toHaveLength(0)
+    await runGiveawayJob(at(2 * MIN))
+    const ret = (await txs()).find((t) => t.kind === 'return')
+    expect(ret).toMatchObject({ status: 'sent', toAddress: tank.address, valueWei: (pol('0.5') - GIVEAWAY_TRANSFER_GAS * chain.maxFeePerGas).toString() })
+    confirm()
+    await runGiveawayJob(at(3 * MIN))
+    expect((await txs()).filter((t) => t.kind === 'return')).toHaveLength(1)
+    expect((await giveawayOf(g.id)).deletedAt).toBeNull()
+    // Back on, a claim gets a fresh top-up
+    await db.update(giveaways).set({ enabled: true, disabledAt: null }).where(eq(giveaways.id, g.id))
+    await claim(g)
+    await runGiveawayJob(at(4 * MIN))
+    expect((await txs()).filter((t) => t.kind === 'topup')).toHaveLength(2)
+  })
+
+  it('a covered mint gets no new top-up while a replaced transfer holds the wallet', async () => {
+    withTank()
+    await paid()
+    chain.setBalance(tank.address, pol('100'))
+    const g = await giveaway({ balance: pol('1') })
+    await db.insert(giveawayTxs).values({
+      giveawayId: g.id, chain: 'polygon', kind: 'topup', fromAddress: tank.address, toAddress: g.walletAddress!, status: 'replaced', valueWei: pol('0.6').toString(),
+    })
+    await claim(g)
+    await runGiveawayJob(T0)
+    expect(chain.broadcasts).toHaveLength(0)
+    expect(await txs()).toHaveLength(1)
+  })
+
+  it('an uncovered mint waits while a replaced transfer holds the wallet', async () => {
+    const g = await giveaway({ balance: pol('1') })
+    await db.insert(giveawayTxs).values({
+      giveawayId: g.id, chain: 'polygon', kind: 'withdraw', fromAddress: g.walletAddress!, toAddress: addr(), status: 'replaced', valueWei: pol('0.5').toString(),
+    })
+    const a = await claim(g)
+    await runGiveawayJob(T0)
+    expect(chain.signs).toHaveLength(0)
+    expect((await claimOf(a.id)).status).toBe('waiting')
+  })
+
+  it('a replaced row records when it was replaced, and its receipt is watched for 7 days from then', async () => {
+    const g = await giveaway()
+    const a = await claim(g)
+    await runGiveawayJob(T0)
+    await replace([chain.signs[0].hash], 1)
+    expect((await txs())[0]).toMatchObject({ status: 'replaced', replacedAt: at(2 * MIN) })
+    chain.hiddenReceipts.clear()
+    await runGiveawayJob(at(2 * MIN + 7 * 24 * 60 * MIN + MIN))
+    expect((await txs())[0].status).toBe('replaced')
+    expect((await claimOf(a.id)).status).toBe('failed')
+  })
+
+  it("a replaced mint's late receipt revives only the claims it failed as replaced", async () => {
+    const g = await giveaway()
+    const a = await claim(g), b = await claim(g)
+    await runGiveawayJob(T0)
+    await replace([chain.signs[0].hash], 1)
+    // Meanwhile b was failed for another reason
+    await db.update(giveawayClaims).set({ failReason: 'ended' }).where(eq(giveawayClaims.id, b.id))
+    chain.hiddenReceipts.clear()
+    await runGiveawayJob(at(10 * MIN))
+    expect(await claimOf(a.id)).toMatchObject({ status: 'sent' })
+    expect(await claimOf(b.id)).toMatchObject({ status: 'failed', failReason: 'ended' })
+    expect((await mintsOf(b.id))[0].status).toBe('failed')
   })
 })

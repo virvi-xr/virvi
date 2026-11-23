@@ -14,7 +14,7 @@ import { GIVEAWAY_TRANSFER_GAS, GiveawayRpcError, giveawayChainClient, type Give
 import { GiveawayError } from './errors.js'
 import { newGiveawayWallet } from './keys.js'
 import { creatorItems } from './marketplace.js'
-import { accounting, fundingView, ownerIsPaid, walletBalance, withdrawableWei, type GiveawayRow } from './funding.js'
+import { accounting, fundingView, ownerIsPaid, replacedHold, unsettledTopUp, walletBalance, withdrawableWei, type GiveawayRow } from './funding.js'
 
 /**
  * Automatic giveaways (LIV-194), the host side: create, edit, pick items and scenes, read, the claims list, send back
@@ -43,6 +43,7 @@ const OPEN_TX = ['sending', 'sent'] as const
 const notFound = () => new GiveawayError(404, 'not_found', 'Giveaway not found.')
 const rpcDown = () => new GiveawayError(502, 'rpc_down', "Polygon isn't answering right now. Try again in a minute.")
 const busy = () => new GiveawayError(409, 'busy', 'Try again in a minute.')
+const held = () => new GiveawayError(409, 'replaced_hold', 'A transaction from this wallet is being checked. Virvi support will sort it out.')
 
 // ── Access ───────────────────────────────────────────────────────────────────
 
@@ -139,8 +140,7 @@ async function view(g: GiveawayRow): Promise<HostGiveaway> {
     db.select({ status: giveawayClaims.status, n: sql<number>`count(*)::int` }).from(giveawayClaims)
       .where(eq(giveawayClaims.giveawayId, g.id)).groupBy(giveawayClaims.status),
   ])
-  const counts = Object.fromEntries(GIVEAWAY_CLAIM_STATUSES.map((s) => [s, 0])) as Record<GiveawayClaimStatus, number>
-  for (const r of counted) if (r.status && r.status in counts) counts[r.status] = r.n
+  const counts = claimCounts(counted)
   return {
     id: g.id, name: g.name, chain: g.chain, enabled: g.enabled, walletAddress: g.walletAddress, builderUrl: giveawayBuilderUrl(g.chain),
     startsAt: g.startsAt?.toISOString() ?? null, endsAt: g.endsAt?.toISOString() ?? null, claimCap: g.claimCap,
@@ -161,11 +161,21 @@ export async function hostView(c: GiveawayCaller, id: string): Promise<HostGivea
   return view(await load(c, id))
 }
 
-/** The caller's own giveaways (not deleted), newest first. */
+/** The caller's own giveaways (not deleted), newest first, each with its claim counts by status. */
 export async function listGiveaways(c: GiveawayCaller) {
   const rows = await db.select().from(giveaways)
     .where(and(eq(giveaways.ownerId, c.userId), isNull(giveaways.deletedAt))).orderBy(desc(giveaways.createdAt))
-  return rows.map(lightView)
+  const counted = rows.length
+    ? await db.select({ giveawayId: giveawayClaims.giveawayId, status: giveawayClaims.status, n: sql<number>`count(*)::int` }).from(giveawayClaims)
+      .where(inArray(giveawayClaims.giveawayId, rows.map((g) => g.id))).groupBy(giveawayClaims.giveawayId, giveawayClaims.status)
+    : []
+  return rows.map((g) => ({ ...lightView(g), counts: claimCounts(counted.filter((r) => r.giveawayId === g.id)) }))
+}
+
+function claimCounts(rows: { status: GiveawayClaimStatus | null; n: number }[]): Record<GiveawayClaimStatus, number> {
+  const counts = Object.fromEntries(GIVEAWAY_CLAIM_STATUSES.map((s) => [s, 0])) as Record<GiveawayClaimStatus, number>
+  for (const r of rows) if (r.status && r.status in counts) counts[r.status] = r.n
+  return counts
 }
 
 /** Is automatic giving on, and would this caller's gas be covered. */
@@ -223,6 +233,7 @@ export async function updateGiveaway(c: GiveawayCaller, id: string, patch: Recor
     if (typeof patch.enabled !== 'boolean') throw new GiveawayError(400, 'bad_request', 'Enabled must be true or false.')
     if (patch.enabled && !g.enabled) await refuseUnlessReady(g)
     set.enabled = patch.enabled
+    if (patch.enabled !== g.enabled) set.disabledAt = patch.enabled ? null : new Date()
   }
   if (Object.keys(set).length) {
     await db.update(giveaways).set({ ...set, updatedAt: new Date() }).where(eq(giveaways.id, g.id))
@@ -389,11 +400,20 @@ async function openTxFrom(exec: Pick<typeof db, 'select'>, address: string) {
   return !!open
 }
 
-/** The host's withdrawable POL and the gas of one plain transfer at today's fees. */
+/**
+ * Refuses a send-back or delete while the wallet's split is uncertain: a replaced transfer of unknown outcome (409
+ * replaced_hold, for Virvi support), or a transaction from the wallet or a top-up into it still on its way (409 busy).
+ */
+async function refuseWhileUnsettled(exec: Pick<typeof db, 'select'>, g: GiveawayRow, from: string) {
+  if (await replacedHold(g.id, exec)) throw held()
+  if ((await openTxFrom(exec, from)) || (await unsettledTopUp(g.id, exec))) throw busy()
+}
+
+/** The host's withdrawable POL (0 while a replaced transfer holds the wallet) and the gas of one plain transfer at today's fees. */
 async function withdrawable(g: GiveawayRow): Promise<{ withdrawable: bigint; transferGas: bigint }> {
   try {
-    const [balance, fees, acc] = await Promise.all([walletBalance(g), giveawayChainClient(g.chain).feeData(), accounting(g.id)])
-    return { withdrawable: withdrawableWei(balance, acc), transferGas: GIVEAWAY_TRANSFER_GAS * fees.maxFeePerGas }
+    const [balance, fees, acc, hold] = await Promise.all([walletBalance(g), giveawayChainClient(g.chain).feeData(), accounting(g.id), replacedHold(g.id)])
+    return { withdrawable: hold ? 0n : withdrawableWei(balance, acc), transferGas: GIVEAWAY_TRANSFER_GAS * fees.maxFeePerGas }
   } catch (e) {
     if (e instanceof GiveawayRpcError) throw rpcDown()
     throw e
@@ -403,7 +423,8 @@ async function withdrawable(g: GiveawayRow): Promise<{ withdrawable: bigint; tra
 /**
  * Queues the host's withdrawable POL, less the transfer's gas, to one of the owner's verified wallets: a `withdraw` row
  * in `sending` with no signed transaction yet, which the minting job signs and broadcasts (one sender path). Refused
- * while another transaction from the giveaway wallet is open (409 busy).
+ * while another transaction from the giveaway wallet or a top-up into it is on its way (409 busy), and while a replaced
+ * transfer is unresolved (409 replaced_hold).
  */
 export async function sendBack(c: GiveawayCaller, id: string, body: Record<string, unknown>) {
   const g = await load(c, id)
@@ -415,9 +436,9 @@ export async function sendBack(c: GiveawayCaller, id: string, body: Record<strin
   if (!g.walletAddress) throw new GiveawayError(409, 'nothing_to_send', 'There is no POL of yours to send back.')
   const from = g.walletAddress
   return db.transaction(async (tx) => {
-    // One request at a time per giveaway: the open-transaction check and the insert go together
+    // One request at a time per giveaway (the job's top-ups take this lock too): the checks and the insert go together
     await tx.select({ id: giveaways.id }).from(giveaways).where(eq(giveaways.id, g.id)).for('update')
-    if (await openTxFrom(tx, from)) throw busy()
+    await refuseWhileUnsettled(tx, g, from)
     const { withdrawable: w, transferGas } = await withdrawable(g)
     const value = w - transferGas
     if (value <= 0n) throw new GiveawayError(409, 'nothing_to_send', 'There is no POL of yours to send back.')
@@ -429,23 +450,43 @@ export async function sendBack(c: GiveawayCaller, id: string, body: Record<strin
 }
 
 /**
- * Deletes a giveaway: refused (409 send_back_first) while the host has more POL in it than one transfer's gas. Otherwise
- * it is switched off and marked `returning`; the minting job returns Virvi's float and then sets deletedAt.
+ * Deletes a giveaway: refused (409 send_back_first) while the host has more POL in it than one transfer's gas, and
+ * like a send-back while anything is on its way (busy) or a replaced transfer is unresolved (replaced_hold). Otherwise,
+ * under the row's lock (so the job's next top-up sees it), it is switched off and marked `returning`; the minting job
+ * returns Virvi's float and then sets deletedAt.
  */
 export async function deleteGiveaway(c: GiveawayCaller, id: string) {
   const g = await load(c, id)
   if (g.deleteState === 'returning') return { id: g.id, deleteState: 'returning' as const }
-  if (g.walletAddress) {
-    if (await openTxFrom(db, g.walletAddress)) throw busy()
-    const { withdrawable: w, transferGas } = await withdrawable(g)
-    if (w > transferGas) throw new GiveawayError(409, 'send_back_first', 'Send your POL back before deleting this giveaway.')
-  }
-  await db.update(giveaways).set({ enabled: false, deleteState: 'returning', updatedAt: new Date() }).where(eq(giveaways.id, g.id))
-  return { id: g.id, deleteState: 'returning' as const }
+  return db.transaction(async (tx) => {
+    await tx.select({ id: giveaways.id }).from(giveaways).where(eq(giveaways.id, g.id)).for('update')
+    if (g.walletAddress) {
+      await refuseWhileUnsettled(tx, g, g.walletAddress)
+      const { withdrawable: w, transferGas } = await withdrawable(g)
+      if (w > transferGas) throw new GiveawayError(409, 'send_back_first', 'Send your POL back before deleting this giveaway.')
+    }
+    const now = new Date()
+    await tx.update(giveaways).set({ enabled: false, disabledAt: g.enabled ? now : g.disabledAt, deleteState: 'returning', updatedAt: now })
+      .where(eq(giveaways.id, g.id))
+    return { id: g.id, deleteState: 'returning' as const }
+  })
 }
 
-/** The items the caller can give away on this chain (Amoy for Virvi admins only). */
-export async function listCreatorItems(c: GiveawayCaller, chainParam: unknown) {
+/** Where a send-back from this giveaway can go: its owner's verified wallets (an admin acting on it sees the owner's). */
+export async function sendBackWallets(c: GiveawayCaller, id: string) {
+  const g = await load(c, id)
+  return { wallets: (await verifiedWalletsOf(g.ownerId)).map((w) => getAddress(w)) }
+}
+
+/**
+ * The items the caller can give away on this chain (Amoy for Virvi admins only). With a giveaway id, its owner's items
+ * on its chain, so an admin acting on someone else's giveaway picks from the owner's collections (setItems checks those).
+ */
+export async function listCreatorItems(c: GiveawayCaller, chainParam: unknown, giveawayId?: unknown) {
+  if (giveawayId !== undefined && giveawayId !== '') {
+    const g = await load(c, giveawayId as string)
+    return { items: await creatorItems(g.chain, await verifiedWalletsOf(g.ownerId)) }
+  }
   const chain = (chainParam ?? 'polygon') as GiveawayChain
   if (!GIVEAWAY_CHAINS.includes(chain)) throw new GiveawayError(400, 'bad_chain', 'Pick Polygon.')
   if (chain === 'polygon-amoy' && !c.admin) throw new GiveawayError(403, 'forbidden', 'Test giveaways are for Virvi admins.')

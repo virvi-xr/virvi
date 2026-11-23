@@ -52,7 +52,8 @@ export const GIVEAWAY_TOOLS: ToolDef<any>[] = [
     label: (a) => `Create giveaway "${a.name}"`,
     summarize: (res) => {
       const g = ((res as Obj[]).at(-1) ?? {}) as Obj
-      return { ...fields(g, ['id', 'name', 'enabled', 'walletAddress', 'builderUrl']), next: `Giveaway wallet ${g.walletAddress}. ${GIVEAWAY_NEXT}` }
+      const wallet = typeof g.walletAddress === 'string' && g.walletAddress ? `Giveaway wallet ${g.walletAddress}. ` : ''
+      return { ...fields(g, ['id', 'name', 'enabled', 'walletAddress', 'builderUrl']), next: `${wallet}${GIVEAWAY_NEXT}` }
     },
   },
 ]

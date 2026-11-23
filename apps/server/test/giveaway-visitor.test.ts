@@ -198,7 +198,7 @@ describe('giveaway visitor routes (LIV-194)', () => {
       await db.update(giveawayClaimMints).set({ txId: tx.id, status: 'sent' }).where(and(eq(giveawayClaimMints.claimId, row.id), eq(giveawayClaimMints.contractAddress, C1)))
       await db.update(giveawayClaims).set({ status: 'sent', sentAt: new Date() }).where(eq(giveawayClaims.id, row.id))
       expect((await current(v)).json().giveaway.claim).toEqual({
-        status: 'sent', secondsPresent: 600, txUrl: `https://polygonscan.com/tx/0x${'12'.repeat(32)}`, failReason: null,
+        status: 'sent', secondsPresent: 600, txUrl: `https://polygonscan.com/tx/0x${'12'.repeat(32)}`, failReason: null, delayed: false,
       })
     })
   })
@@ -209,7 +209,7 @@ describe('giveaway visitor routes (LIV-194)', () => {
       const v = await visitor()
       const res = await track(v, g)
       expect(res.statusCode, res.body).toBe(200)
-      expect(res.json().giveaway.claim).toEqual({ status: 'present', secondsPresent: 0, txUrl: null, failReason: null })
+      expect(res.json().giveaway.claim).toEqual({ status: 'present', secondsPresent: 0, txUrl: null, failReason: null, delayed: false })
       const row = await claimRow(g.id, v.user.id)
       expect(row).toMatchObject({ wallet: v.wallet, consentVersion: GIVEAWAY_CONSENT_VERSION, status: 'present' })
       // Again: idempotent
@@ -344,6 +344,38 @@ describe('giveaway visitor routes (LIV-194)', () => {
       expect((await claim(a, g)).statusCode).toBe(200)
       const res = await claim(b, g)
       expect([res.statusCode, res.json().error]).toEqual([409, 'sold_out'])
+    })
+
+    it('M-11: giveaways sharing an item share its supply: a claim queued in one takes it from the other', async () => {
+      const g1 = await seed({}, [sceneA], 1)
+      const g2 = await seed({}, [sceneA], 1)
+      const a = await present(g1, 600)
+      const b = await present(g2, 600)
+      expect((await claim(a, g1)).statusCode).toBe(200)
+      const res = await claim(b, g2)
+      expect([res.statusCode, res.json().error]).toEqual([409, 'sold_out'])
+    })
+
+    it('M-12: failed claims do not count toward the cap', async () => {
+      const g = await seed({ claimCap: 1 })
+      await db.insert(giveawayClaims).values({ giveawayId: g.id, wallet: randomWallet().toLowerCase(), consentVersion: 1, status: 'failed', failReason: 'reverted' })
+      const v = await present(g, 600)
+      const res = await claim(v, g)
+      expect(res.statusCode, res.body).toBe(200)
+      const late = await visitor()
+      expect([(await track(late, g)).statusCode, (await track(late, g)).json().error]).toEqual([409, 'closed'])
+    })
+
+    it('M-8: a queued claim is delayed while the giveaway is paused or once it waited 10 minutes', async () => {
+      const g = await seed()
+      const v = await present(g, 600)
+      expect((await claim(v, g)).json().giveaway.claim).toMatchObject({ status: 'waiting', delayed: false })
+      await db.update(giveaways).set({ pausedReason: 'low_gas', pausedAt: new Date() }).where(eq(giveaways.id, g.id))
+      expect((await current(v)).json().giveaway.claim.delayed).toBe(true)
+      await db.update(giveaways).set({ pausedReason: null, pausedAt: null }).where(eq(giveaways.id, g.id))
+      expect((await current(v)).json().giveaway.claim.delayed).toBe(false)
+      await db.update(giveawayClaims).set({ claimedAt: at(-11 * 60_000) }).where(eq(giveawayClaims.userId, v.user.id))
+      expect((await current(v)).json().giveaway.claim.delayed).toBe(true)
     })
 
     it('closed once the giveaway is switched off', async () => {

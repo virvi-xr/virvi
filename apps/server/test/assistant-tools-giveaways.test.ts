@@ -85,6 +85,13 @@ describe('assistant: automatic giveaways (LIV-194)', () => {
     expect(toolsForModel().map((t) => t.name)).not.toContain('create_giveaway')
   })
 
+  it('M-3: a result without a wallet says nothing about one', () => {
+    const out = JSON.stringify(TOOLS.create_giveaway.summarize!([{ id: 'g1', name: 'Launch party', enabled: false }], {} as any))
+    expect(out).not.toContain('undefined')
+    expect(out).not.toContain('Giveaway wallet')
+    expect(out).toContain('Add it as a minter')
+  })
+
   describe("the show's wearable step", () => {
     const WALLET = '0x' + 'cd'.repeat(20)
     const prev = { enabled: config.assistantEnabled, audience: config.assistantAudience, studio: config.studioEnabled }

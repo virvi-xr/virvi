@@ -26,6 +26,8 @@ export class FakeGiveawayChain {
   gasPriceWei = 1_000_000_000n // what a mined transaction pays per gas
   items = new Map<string, Partial<GiveawayItemState>>()
   down = false
+  /** Only item reads (itemState) fail, as when the RPC drops some calls. */
+  itemsDown = false
   signs: FakeSigned[] = []
   broadcasts: string[] = []
   pool = new Map<string, FakeSigned>()
@@ -108,7 +110,11 @@ export class FakeGiveawayChain {
       chain,
       balanceWei: async (a) => { this.#check(); return this.balance(a) },
       feeData: async () => { this.#check('fees'); return { maxFeePerGas: this.maxFeePerGas, maxPriorityFeePerGas: 30_000_000_000n, baseFeePerGas: 1n } },
-      itemState: async (contract, itemId) => { this.#check('items'); return this.state(contract, itemId) },
+      itemState: async (contract, itemId) => {
+        this.#check('items')
+        if (this.itemsDown) throw new GiveawayRpcError('items', 'NETWORK_ERROR')
+        return this.state(contract, itemId)
+      },
       nonce: async (a, tag) => {
         this.#check('nonce')
         const latest = this.latestNonce(a)
@@ -179,8 +185,11 @@ export class FakeMarketplace {
     this.calls.push(url.toString())
     const creator = url.searchParams.get('creator') ?? ''
     const category = url.searchParams.get('category')
-    const data = (this.byCreator.get(creator) ?? []).filter((i) => i.category === category)
-    return new Response(JSON.stringify({ data, total: data.length }), { status: 200, headers: { 'content-type': 'application/json' } })
+    const all = (this.byCreator.get(creator) ?? []).filter((i) => i.category === category)
+    const skip = Number(url.searchParams.get('skip') ?? 0)
+    const first = Number(url.searchParams.get('first') ?? 100)
+    const data = all.slice(skip, skip + first)
+    return new Response(JSON.stringify({ data, total: all.length }), { status: 200, headers: { 'content-type': 'application/json' } })
   }
 }
 

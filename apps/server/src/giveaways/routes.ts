@@ -8,8 +8,8 @@ import { sceneExists } from '../beats/service.js'
 import { GiveawayError } from './errors.js'
 import { checkInGiveaway, claimGiveaway, currentGiveaway, stopGiveaway, trackGiveaway } from './visitor.js'
 import {
-  createGiveaway, deleteGiveaway, giveawayAvailability, hostView, listClaims, listCreatorItems, listGiveaways, sendBack, setItems, setScenes,
-  updateGiveaway, type GiveawayCaller,
+  createGiveaway, deleteGiveaway, giveawayAvailability, hostView, listClaims, listCreatorItems, listGiveaways, sendBack, sendBackWallets,
+  setItems, setScenes, updateGiveaway, type GiveawayCaller,
 } from './host.js'
 
 const AVAILABILITY = '/api/giveaways/availability'
@@ -49,8 +49,9 @@ export default async function giveawayRoutes(app: FastifyInstance) {
   app.post('/api/giveaways', async (request, reply) =>
     run(reply, async () => ({ giveaway: await createGiveaway(await caller(request), body(request)) }), 201))
 
-  app.get<{ Querystring: { chain?: string } }>('/api/giveaways/creator-items', async (request, reply) =>
-    run(reply, async () => listCreatorItems(await caller(request), request.query.chain)))
+  // With ?giveawayId= the giveaway owner's items on its chain (an admin acting on someone else's giveaway)
+  app.get<{ Querystring: { chain?: string; giveawayId?: string } }>('/api/giveaways/creator-items', async (request, reply) =>
+    run(reply, async () => listCreatorItems(await caller(request), request.query.chain, request.query.giveawayId)))
 
   app.get<Id>('/api/giveaways/:id', async (request, reply) => run(reply, async () => hostView(await caller(request), request.params.id)))
   app.patch<Id>('/api/giveaways/:id', async (request, reply) =>
@@ -66,6 +67,8 @@ export default async function giveawayRoutes(app: FastifyInstance) {
   app.get<Id & { Querystring: { cursor?: string } }>('/api/giveaways/:id/claims', async (request, reply) =>
     run(reply, async () => listClaims(await caller(request), request.params.id, request.query.cursor)))
 
+  app.get<Id>('/api/giveaways/:id/send-back-wallets', async (request, reply) =>
+    run(reply, async () => sendBackWallets(await caller(request), request.params.id)))
   app.post<Id>('/api/giveaways/:id/send-back', async (request, reply) =>
     run(reply, async () => sendBack(await caller(request), request.params.id, body(request)), 202))
 

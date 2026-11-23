@@ -178,6 +178,40 @@ describe('giveaway host API (LIV-194)', () => {
     })
   })
 
+  describe('final review minors', () => {
+    it('M-1: the list carries claim counts per status', async () => {
+      const g = await create()
+      const other = await create()
+      for (const status of ['waiting', 'sent', 'sent'] as const) {
+        await db.insert(giveawayClaims).values({ giveawayId: g.id, wallet: randomWallet().toLowerCase(), consentVersion: 1, status })
+      }
+      const list = (await call('GET', '/api/giveaways')).json().giveaways
+      expect(list.find((x: any) => x.id === g.id).counts).toEqual({ present: 0, waiting: 1, minting: 0, sent: 2, failed: 0 })
+      expect(list.find((x: any) => x.id === other.id).counts).toEqual({ present: 0, waiting: 0, minting: 0, sent: 0, failed: 0 })
+    })
+
+    it('M-13: creator items are paged past the first 100 per category', async () => {
+      for (let i = 2; i < 152; i++) market.add(host.wallet!, { contractAddress: CONTRACT, itemId: String(i), name: `Hat ${i}` })
+      const res = await call('GET', '/api/giveaways/creator-items?chain=polygon')
+      expect(res.statusCode).toBe(200)
+      expect(res.json().items).toHaveLength(152)
+    })
+
+    it("M-14: an admin acting on someone else's giveaway sees the owner's items and send-back wallets", async () => {
+      const g = await create()
+      const admin = await createUser({ role: 'admin', wallet: randomWallet() })
+      market.add(admin.wallet!, { contractAddress: OTHER_CONTRACT, itemId: '5', name: 'Admin hat' })
+      const items = await call('GET', `/api/giveaways/creator-items?giveawayId=${g.id}`, admin)
+      expect(items.statusCode, items.body).toBe(200)
+      expect(items.json().items.map((i: any) => i.name).sort()).toEqual(['Prize dance', 'Prize hat'])
+      const wallets = await call('GET', `/api/giveaways/${g.id}/send-back-wallets`, admin)
+      expect(wallets.json()).toEqual({ wallets: [getAddress(host.wallet!)] })
+      // Someone else's giveaway stays 404 to a non-admin
+      expect((await call('GET', `/api/giveaways/${g.id}/send-back-wallets`, stranger)).statusCode).toBe(404)
+      expect((await call('GET', `/api/giveaways/creator-items?giveawayId=${g.id}`, stranger)).statusCode).toBe(404)
+    })
+  })
+
   describe('items and scenes', () => {
     it("caches the item's name, thumbnail and rarity, and refuses someone else's item", async () => {
       const g = await create()
@@ -345,6 +379,40 @@ describe('giveaway host API (LIV-194)', () => {
       const res = await call('POST', `/api/giveaways/${g.id}/send-back`, host, { toWallet: host.wallet })
       expect(res.statusCode).toBe(409)
       expect(res.json()).toMatchObject({ error: 'nothing_to_send' })
+    })
+  })
+
+  describe('unsettled top-ups and replaced holds', () => {
+    const topup = (g: { id: string; walletAddress: string }, status: 'sending' | 'sent' | 'replaced', value = '0.5') =>
+      db.insert(giveawayTxs).values({ giveawayId: g.id, chain: 'polygon', kind: 'topup', fromAddress: randomWallet(), toAddress: g.walletAddress, status, valueWei: pol(value).toString() })
+
+    it('I-2: send back is refused (busy) while a top-up into the wallet is unsettled', async () => {
+      const g = await create()
+      chain.setBalance(g.walletAddress, pol('7'))
+      await topup(g, 'sent', '5')
+      const res = await call('POST', `/api/giveaways/${g.id}/send-back`, host, { toWallet: host.wallet })
+      expect([res.statusCode, res.json().error]).toEqual([409, 'busy'])
+      expect(await db.select().from(giveawayTxs).where(eq(giveawayTxs.kind, 'withdraw'))).toHaveLength(0)
+    })
+
+    it('I-3: delete is refused (busy) while a top-up into the wallet is unsettled', async () => {
+      const g = await create()
+      await topup(g, 'sending')
+      const res = await call('DELETE', `/api/giveaways/${g.id}`)
+      expect([res.statusCode, res.json().error]).toEqual([409, 'busy'])
+      expect((await db.select().from(giveaways).where(eq(giveaways.id, g.id)))[0].deleteState).toBeNull()
+    })
+
+    it('M-5: send back and delete are refused (replaced_hold) while a replaced transfer is unresolved; nothing shows as withdrawable', async () => {
+      const g = await create()
+      chain.setBalance(g.walletAddress, pol('3'))
+      await topup(g, 'replaced')
+      const res = await call('POST', `/api/giveaways/${g.id}/send-back`, host, { toWallet: host.wallet })
+      expect([res.statusCode, res.json().error]).toEqual([409, 'replaced_hold'])
+      expect(res.json().message).toBe('A transaction from this wallet is being checked. Virvi support will sort it out.')
+      const del = await call('DELETE', `/api/giveaways/${g.id}`)
+      expect([del.statusCode, del.json().error]).toEqual([409, 'replaced_hold'])
+      expect((await call('GET', `/api/giveaways/${g.id}`)).json().funding).toMatchObject({ balanceWei: pol('3').toString(), withdrawableWei: '0' })
     })
   })
 

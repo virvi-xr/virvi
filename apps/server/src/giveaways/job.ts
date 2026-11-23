@@ -3,7 +3,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from 'driz
 import { GIVEAWAY_CHAINS, GIVEAWAY_GAS_PER_ITEM, GIVEAWAY_MAX_CLAIMS_PER_TX, type GiveawayChain, type GiveawayFailReason, type GiveawayPauseReason } from '@virvixr/shared'
 import { config } from '../config.js'
 import { db } from '../db/connection.js'
-import { giveawayClaimMints, giveawayClaims, giveaways, giveawayTxs } from '../db/schema.js'
+import { giveawayClaimMints, giveawayClaims, giveawayItems, giveaways, giveawayTxs } from '../db/schema.js'
 import { withLock } from '../errors/jobs.js'
 import { logSafe } from '../errors/log-safe.js'
 import { recordJobFailure } from '../errors/record.js'
@@ -11,7 +11,7 @@ import {
   GIVEAWAY_TRANSFER_GAS, GiveawayRevert, GiveawayRpcError, collectionInterface, giveawayChainClient, revertReason,
   type GiveawayChainClient, type GiveawayFees, type GiveawayReceipt,
 } from './chain.js'
-import { accounting, ownerIsPaid, type GiveawayRow } from './funding.js'
+import { accounting, ownerIsPaid, replacedHold, unsettledTopUp, type GiveawayAccounting, type GiveawayRow } from './funding.js'
 import { mintCheck, type GiveawayMintCheck } from './host.js'
 import { giveawaySigner } from './keys.js'
 
@@ -23,9 +23,12 @@ import { giveawaySigner } from './keys.js'
  *    sent (a crash between the two), confirms by receipt (3 blocks deep on Polygon, 1 on Amoy), notices a nonce used
  *    elsewhere, and reprices after 3 minutes (same nonce and gas limit, fees +15%).
  * 2. Signs the host send-backs (`withdraw` rows sendBack queued without a raw tx), never touching Virvi's float.
- * 3. Mints queued claims: one issueTokens per collection contract, up to GIVEAWAY_MAX_CLAIMS_PER_TX claims, from the
- *    giveaway's own wallet, topping a paid owner's wallet up from the gas tank when it is short.
- * 4. Returns Virvi's unspent float to the tank when a giveaway ends or is deleted, and finishes deletes.
+ * 3. Mints queued claims (also of a giveaway switched off or past its end: only new claims stop): one issueTokens per
+ *    collection contract, up to GIVEAWAY_MAX_CLAIMS_PER_TX claims, from the giveaway's own wallet. A paid owner's mints
+ *    (with a gas tank) are covered and spend only Virvi's float, which the tank tops up when it is short; the host's
+ *    own POL pays only uncovered mints (free plan, no tank, or the tank at its floor).
+ * 4. Returns Virvi's unspent float to the tank when a giveaway ends, is deleted, or sits switched off and idle for 7
+ *    days, and finishes deletes. Nothing leaves a wallet while a top-up into it is unsettled.
  *
  * Every wallet has at most one open transaction: a new one is signed only under the giveaway row's lock (which sendBack
  * takes too) when nothing else from that wallet is open, and its row (raw tx and hash) is written before the broadcast.
@@ -53,15 +56,15 @@ export const GIVEAWAY_REPLACED_AFTER_BLOCKS = 30
 const OPEN = ['sending', 'sent'] as const
 /** Rows a receipt may still settle: open ones, and 'replaced' ones (their outcome unknown). */
 const UNSETTLED = ['sending', 'sent', 'replaced'] as const
-/** How long the job keeps looking for a receipt of a 'replaced' row (from its last send; at least 7 days after it was replaced). */
-const REPLACED_WATCH_MS = 8 * 24 * 60 * 60_000
+/** How long the job keeps looking for a receipt of a 'replaced' row, from when it was marked replaced. */
+const REPLACED_WATCH_MS = 7 * 24 * 60 * 60_000
+/** A giveaway switched off this long, with nothing queued or sent meanwhile, returns Virvi's float like an ended one. */
+export const GIVEAWAY_OFF_RETURN_AFTER_MS = 7 * 24 * 60 * 60_000
 const QUEUED = ['waiting', 'minting'] as const
 
 export type GiveawayJobDeps = { client: (chain: GiveawayChain) => GiveawayChainClient }
 type TxRow = typeof giveawayTxs.$inferSelect
-type Exec = Pick<typeof db, 'select' | 'update' | 'insert' | 'delete' | 'execute'>
-/** Claim failures only the job writes, for a human to look at: a mint lost to a replaced nonce, an item removed. */
-type ClaimFailReason = GiveawayFailReason | 'replaced' | 'item_removed'
+type Exec = Pick<typeof db, 'select' | 'selectDistinct' | 'update' | 'insert' | 'delete' | 'execute'>
 
 // ── In-memory state (one instance runs the job) ──────────────────────────────
 
@@ -186,7 +189,7 @@ async function settleClaims(exec: Exec, claimIds: string[], now: Date): Promise<
 }
 
 /** Fails queued claims and their mint rows not yet sent. */
-async function failClaims(exec: Exec, claimIds: string[], reason: ClaimFailReason): Promise<void> {
+async function failClaims(exec: Exec, claimIds: string[], reason: GiveawayFailReason): Promise<void> {
   if (!claimIds.length) return
   await exec.update(giveawayClaims).set({ status: 'failed', failReason: reason })
     .where(and(inArray(giveawayClaims.id, claimIds), inArray(giveawayClaims.status, [...QUEUED])))
@@ -332,7 +335,7 @@ async function reconcile(client: GiveawayChainClient, t: TxRow, now: Date): Prom
       return false
     }
     if (at - t.replacedSeenBlock < GIVEAWAY_REPLACED_AFTER_BLOCKS) return false
-    await replaced(t)
+    await replaced(t, now)
     return true
   }
   if (t.replacedSeenBlock !== null) await db.update(giveawayTxs).set({ replacedSeenBlock: null }).where(eq(giveawayTxs.id, t.id))
@@ -406,7 +409,7 @@ async function reprice(client: GiveawayChainClient, t: TxRow, now: Date): Promis
     // A replacement the wallet can't cover would be refused for funds while the earlier signing still waits
     const g = await giveawayOf(t.giveawayId)
     const [balance, acc] = await Promise.all([client.balanceWei(t.fromAddress), g ? accounting(g.id) : null])
-    const room = spendable(t.covered, balance, acc?.virviUnspentWei ?? 0n)
+    const room = spendable(t.covered, balance, acc)
     if (old.gasLimit * maxFee > room) return cantReprice(client, t, g, now, { need: old.gasLimit * maxFee, room })
     const call = collectionInterface.decodeFunctionData('issueTokens', old.data)
     const wallets = (call[0] as string[]).map(String)
@@ -432,22 +435,31 @@ async function reprice(client: GiveawayChainClient, t: TxRow, now: Date): Promis
   await broadcast(client, next, signed.raw, now)
 }
 
-/** What a mint may spend on gas: all of the balance when the tank covers it, else only the host's part (Virvi is never short). */
-function spendable(covered: boolean, balance: bigint, virviUnspent: bigint): bigint {
-  if (covered) return balance
-  return balance > virviUnspent ? balance - virviUnspent : 0n
+/**
+ * What a mint may spend on gas: a covered one only Virvi's unspent float that has surely landed (not a top-up still on
+ * its way or of unknown outcome), so never the host's POL; an uncovered one only the host's part (so Virvi is never
+ * short). `acc` null: nothing known of the float.
+ */
+function spendable(covered: boolean, balance: bigint, acc: GiveawayAccounting | null): bigint {
+  const unspent = acc?.virviUnspentWei ?? 0n
+  if (covered) {
+    const landed = unspent - (acc?.pendingTopUpsWei ?? 0n) - (acc?.replacedTopUpsWei ?? 0n)
+    return landed > 0n ? minBig(balance, landed) : 0n
+  }
+  return balance > unspent ? balance - unspent : 0n
 }
 
 /**
- * A transaction that can't be repriced keeps going out as it was signed (rebroadcast, reported once). For a mint whose
- * owner is paid, the tank tops the wallet up meanwhile (the tank is its own sender, so no nonce is at stake) so a
+ * A transaction that can't be repriced keeps going out as it was signed (rebroadcast, reported once). For a covered mint
+ * whose owner is still paid, the tank tops the wallet up meanwhile (the tank is its own sender, so no nonce is at stake) so a
  * later pass can bump it.
  */
 async function cantReprice(
   client: GiveawayChainClient, t: TxRow, g: GiveawayRow | null, now: Date, mint: { need: bigint; room: bigint } | null,
 ): Promise<void> {
   reportOnce(`reprice:${t.id}`, 'giveaway_reprice', `Giveaway ${t.kind} tx ${t.id} (giveaway ${t.giveawayId}) can't be repriced: the higher fee doesn't fit; rebroadcasting it as signed`)
-  if (mint && g) {
+  // Only a covered mint spends the float a top-up adds to
+  if (mint && g && t.covered) {
     const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(giveawayClaimMints).where(eq(giveawayClaimMints.txId, t.id))
     const result = await topUp(client, g, await ownerIsPaid(g.ownerId), mint.need / BigInt(Math.max(1, n)), mint.room, now)
     if (result === 'low_gas') {
@@ -456,6 +468,22 @@ async function cantReprice(
     }
   }
   await broadcast(client, t, t.rawTx!, now)
+}
+
+/**
+ * Takes a confirmed mint's tokens off the stored supply of its items, in every giveaway that has them, in the same
+ * transaction: the visitor open check reads it, and the chain read after (refreshItems) may fail.
+ */
+async function takeSupply(exec: Exec, t: TxRow): Promise<void> {
+  if (!t.rawTx || !t.contractAddress) return
+  const call = collectionInterface.decodeFunctionData('issueTokens', Transaction.from(t.rawTx).data)
+  const counts = new Map<string, number>()
+  for (const id of call[1] as bigint[]) counts.set(id.toString(), (counts.get(id.toString()) ?? 0) + 1)
+  for (const [itemId, n] of counts) {
+    await exec.update(giveawayItems).set({ remaining: sql`greatest(0, ${giveawayItems.remaining} - ${n})` }).where(and(
+      sql`lower(${giveawayItems.contractAddress}) = ${lc(t.contractAddress)}`, eq(giveawayItems.itemId, itemId), isNotNull(giveawayItems.remaining),
+    ))
+  }
 }
 
 /** A receipt deep enough: the transaction is confirmed and, for a mint, its claims' rows sent with their token ids. */
@@ -478,6 +506,7 @@ async function confirmed(client: GiveawayChainClient, t: TxRow, hash: string, rc
         .where(and(eq(giveawayClaimMints.claimId, r.claimId), eq(giveawayClaimMints.txId, t.id)))
     }
     await settleClaims(tx, rows.map((r) => r.claimId), now)
+    await takeSupply(tx, t)
     if (missing) console.warn(`[giveaways] mint ${t.id} confirmed without Issue logs for ${missing} of ${rows.length} claims`)
     console.log(`[giveaways] mint ${t.id} confirmed for ${rows.length} claims (giveaway ${t.giveawayId})`)
     return true
@@ -531,9 +560,9 @@ async function reverted(client: GiveawayChainClient, t: TxRow, hash: string, rc:
  * mint's claims are failed ('replaced') for a human, never minted again (they may have been); accounting counts a
  * replaced top-up as received and a replaced return as sent; and the wallet sends no withdraw or return.
  */
-async function replaced(t: TxRow): Promise<void> {
+async function replaced(t: TxRow, now: Date): Promise<void> {
   await db.transaction(async (tx) => {
-    const [row] = await tx.update(giveawayTxs).set({ status: 'replaced', lastError: 'replaced' })
+    const [row] = await tx.update(giveawayTxs).set({ status: 'replaced', lastError: 'replaced', replacedAt: now })
       .where(and(eq(giveawayTxs.id, t.id), inArray(giveawayTxs.status, [...OPEN]))).returning({ id: giveawayTxs.id })
     if (!row || t.kind !== 'mint') return
     const rows = await tx.select({ claimId: giveawayClaimMints.claimId }).from(giveawayClaimMints).where(eq(giveawayClaimMints.txId, t.id))
@@ -544,29 +573,31 @@ async function replaced(t: TxRow): Promise<void> {
 }
 
 /**
- * A replaced mint's receipt turned up: its claims (failed 'replaced') are queued again as they were, so the receipt is
- * applied as a normal confirmation or revert: this tx's rows back to minting, their other contracts' rows to waiting.
+ * A replaced mint's receipt turned up: the claims it failed ('replaced') are queued again as they were, so the receipt
+ * is applied as a normal confirmation or revert: their rows of this tx back to minting, their other contracts' rows to
+ * waiting. Claims failed for any other reason since (a delete failing them 'ended') are left as they are.
  */
 async function reviveReplaced(exec: Exec, txId: string): Promise<void> {
-  const rows = await exec.update(giveawayClaimMints).set({ status: 'minting' })
-    .where(and(eq(giveawayClaimMints.txId, txId), eq(giveawayClaimMints.status, 'failed'))).returning({ claimId: giveawayClaimMints.claimId })
-  const claimIds = rows.map((r) => r.claimId)
-  if (!claimIds.length) return
-  const revived = await exec.update(giveawayClaims).set({ status: 'minting', failReason: null })
-    .where(and(inArray(giveawayClaims.id, claimIds), eq(giveawayClaims.status, 'failed'), eq(giveawayClaims.failReason, 'replaced')))
-    .returning({ id: giveawayClaims.id })
-  if (revived.length) {
-    await exec.update(giveawayClaimMints).set({ status: 'waiting' }).where(and(
-      inArray(giveawayClaimMints.claimId, revived.map((r) => r.id)), eq(giveawayClaimMints.status, 'failed'), isNull(giveawayClaimMints.txId),
+  const mine = await exec.selectDistinct({ claimId: giveawayClaimMints.claimId }).from(giveawayClaimMints)
+    .innerJoin(giveawayClaims, eq(giveawayClaims.id, giveawayClaimMints.claimId))
+    .where(and(
+      eq(giveawayClaimMints.txId, txId), eq(giveawayClaimMints.status, 'failed'),
+      eq(giveawayClaims.status, 'failed'), eq(giveawayClaims.failReason, 'replaced'),
     ))
-  }
+  const claimIds = mine.map((r) => r.claimId)
+  if (!claimIds.length) return
+  await exec.update(giveawayClaims).set({ status: 'minting', failReason: null }).where(inArray(giveawayClaims.id, claimIds))
+  await exec.update(giveawayClaimMints).set({ status: 'minting' })
+    .where(and(inArray(giveawayClaimMints.claimId, claimIds), eq(giveawayClaimMints.txId, txId), eq(giveawayClaimMints.status, 'failed')))
+  await exec.update(giveawayClaimMints).set({ status: 'waiting' })
+    .where(and(inArray(giveawayClaimMints.claimId, claimIds), eq(giveawayClaimMints.status, 'failed'), isNull(giveawayClaimMints.txId)))
 }
 
 /** Keeps reading the receipts of 'replaced' rows (for REPLACED_WATCH_MS); one deep enough settles the row as usual. */
 async function watchReplaced(client: GiveawayChainClient, now: Date): Promise<void> {
   const rows = await db.select().from(giveawayTxs).where(and(
     eq(giveawayTxs.chain, client.chain), eq(giveawayTxs.status, 'replaced'),
-    sql`coalesce(${giveawayTxs.sentAt}, ${giveawayTxs.createdAt}) > ${new Date(now.getTime() - REPLACED_WATCH_MS).toISOString()}::timestamptz`,
+    sql`coalesce(${giveawayTxs.replacedAt}, ${giveawayTxs.sentAt}, ${giveawayTxs.createdAt}) > ${new Date(now.getTime() - REPLACED_WATCH_MS).toISOString()}::timestamptz`,
   ))
   for (const t of rows) {
     await step(client.chain, `replaced:${t.id}`, `replaced tx ${t.id}`, async () => {
@@ -584,15 +615,13 @@ async function watchReplaced(client: GiveawayChainClient, now: Date): Promise<vo
 }
 
 /**
- * Whether a replaced transfer (top-up, withdraw or return) of this giveaway is still unresolved: its wallet sends no
- * withdraw or return until a human (or a late receipt) settles it. Reported once.
+ * Whether a replaced transfer (top-up, withdraw or return) of this giveaway is still unresolved (funding.replacedHold):
+ * its wallet sends no withdraw, return or uncovered mint until a human (or a late receipt) settles it. Reported once.
  */
-async function heldByReplaced(g: { id: string }): Promise<boolean> {
-  const [row] = await db.select({ id: giveawayTxs.id }).from(giveawayTxs).where(and(
-    eq(giveawayTxs.giveawayId, g.id), eq(giveawayTxs.status, 'replaced'), inArray(giveawayTxs.kind, ['topup', 'withdraw', 'return']),
-  )).limit(1)
-  if (!row) return false
-  reportOnce(`held:${g.id}`, 'giveaway_replaced_hold', `Giveaway ${g.id}: tx ${row.id} was replaced with no receipt; withdraws and returns from its wallet are held until it is resolved`)
+async function heldByReplaced(g: { id: string }, exec: Pick<typeof db, 'select'> = db): Promise<boolean> {
+  const id = await replacedHold(g.id, exec)
+  if (!id) return false
+  reportOnce(`held:${g.id}`, 'giveaway_replaced_hold', `Giveaway ${g.id}: tx ${id} was replaced with no receipt; withdraws, returns and uncovered mints from its wallet are held until it is resolved`)
   return true
 }
 
@@ -612,7 +641,8 @@ async function signWithdraws(client: GiveawayChainClient, now: Date): Promise<vo
 }
 
 /**
- * Under the giveaway row's lock (sendBack takes it too), with nothing else open from the wallet: the value is re-checked
+ * Under the giveaway row's lock (sendBack takes it too), with nothing else open from the wallet and no top-up into it
+ * unsettled (it waits; a replaced transfer fails it, replaced_hold): the value is re-checked
  * at today's fees so value + fee fits in the balance less Virvi's unspent float, lowered to what fits, or the row fails
  * (nothing_to_send) when nothing does. Then it is signed and written, before any broadcast.
  */
@@ -625,13 +655,15 @@ async function signWithdraw(client: GiveawayChainClient, r: TxRow): Promise<TxRo
       await tx.update(giveawayTxs).set({ status: 'failed', lastError: 'no_wallet' }).where(eq(giveawayTxs.id, cur.id))
       return null
     }
-    if (await heldByReplaced(g)) {
+    if (await heldByReplaced(g, tx)) {
       await tx.update(giveawayTxs).set({ status: 'failed', lastError: 'replaced_hold' }).where(eq(giveawayTxs.id, cur.id))
       console.warn(`[giveaways] withdraw ${cur.id} refused: a replaced transaction of this giveaway is unresolved`)
       return null
     }
     if (await openFrom(tx, cur.chain, cur.fromAddress, cur.id)) return null
-    const [balance, fees, acc] = await Promise.all([client.balanceWei(cur.fromAddress), client.feeData(), accounting(g.id)])
+    // A top-up on its way may already be in the balance: the withdraw waits until it settles
+    if (await unsettledTopUp(g.id, tx)) return null
+    const [balance, fees, acc] = await Promise.all([client.balanceWei(cur.fromAddress), client.feeData(), accounting(g.id, tx)])
     const fits = balance - acc.virviUnspentWei - GIVEAWAY_TRANSFER_GAS * fees.maxFeePerGas
     const value = minBig(BigInt(cur.valueWei), fits)
     if (value <= 0n) {
@@ -656,7 +688,8 @@ async function mintAll(client: GiveawayChainClient, now: Date): Promise<void> {
     .innerJoin(giveawayClaims, eq(giveawayClaims.giveawayId, giveaways.id))
     .innerJoin(giveawayClaimMints, eq(giveawayClaimMints.claimId, giveawayClaims.id))
     .where(and(
-      eq(giveaways.chain, client.chain), eq(giveaways.enabled, true), isNull(giveaways.deletedAt), isNull(giveaways.deleteState),
+      // Switched off or past its end still mints what is queued; only a delete fails it (endOne)
+      eq(giveaways.chain, client.chain), isNull(giveaways.deletedAt), isNull(giveaways.deleteState),
       isNotNull(giveaways.walletAddress), isNotNull(giveaways.walletKeyEnc),
       inArray(giveawayClaims.status, [...QUEUED]), eq(giveawayClaimMints.status, 'waiting'),
     ))
@@ -673,9 +706,14 @@ async function queuedRows(g: GiveawayRow): Promise<Queued[]> {
 }
 
 /**
- * The giveaway's next mint, when nothing is open from its wallet: the minter check (a failure pauses it), claims past
- * the remaining supply failed (sold_out), then one batch for one contract signed under the row lock. A wallet short of
- * gas gets a top-up from the tank when its owner is paid, or is paused low_gas.
+ * The giveaway's next mint, when nothing is open from its wallet: the minter check (a failure pauses it), claims whose
+ * contract has no items any more failed (item_removed), claims the supply can't cover failed (sold_out), then one batch
+ * for one contract signed under the row lock. A wallet short of gas gets a top-up from the tank when its owner is paid,
+ * or is paused low_gas.
+ *
+ * Supply is shared out before anything is minted: each contract has the least remaining of its items, and each claim,
+ * oldest first, takes one from every contract it still needs. A claim that can't get all of them fails as a whole
+ * rather than be minted part of its set.
  */
 async function mintNext(client: GiveawayChainClient, g: GiveawayRow, now: Date): Promise<void> {
   const from = g.walletAddress!
@@ -690,48 +728,73 @@ async function mintNext(client: GiveawayChainClient, g: GiveawayRow, now: Date):
     console.log(`[giveaways] giveaway ${g.id} paused: ${bad.state}`)
     return
   }
+  const itemsFor = (contract: string) => involved.filter((c) => lc(c.contractAddress) === contract)
+    .sort((a, b) => (BigInt(a.itemId) < BigInt(b.itemId) ? -1 : 1))
+  const drop = async (ids: string[], reason: 'item_removed' | 'sold_out') => {
+    await db.transaction((tx) => failClaims(tx, ids, reason))
+    queued = queued.filter((q) => !ids.includes(q.claimId))
+  }
+
+  // The contract's items were removed after these claims queued: nothing to mint for them
+  const gone = [...new Set(queued.filter((q) => !itemsFor(lc(q.contractAddress)).length).map((q) => q.claimId))]
+  if (gone.length) {
+    await drop(gone, 'item_removed')
+    console.warn(`[giveaways] giveaway ${g.id}: ${gone.length} claims failed, their contract has no items any more`)
+  }
+
+  const left = new Map<string, number>()
+  for (const c of contracts) {
+    const items = itemsFor(c)
+    if (items.length) left.set(c, Math.min(...items.map((i) => (i.state === 'sold_out' ? 0 : i.remaining))))
+  }
+  const needs = new Map<string, string[]>() // claim → the contracts it still needs, oldest claim first
+  for (const q of queued) needs.set(q.claimId, [...(needs.get(q.claimId) ?? []), lc(q.contractAddress)])
+  const over: string[] = []
+  for (const [claimId, cs] of needs) {
+    if (cs.every((c) => (left.get(c) ?? 0) > 0)) for (const c of cs) left.set(c, left.get(c)! - 1)
+    else over.push(claimId)
+  }
+  if (over.length) {
+    await drop(over, 'sold_out')
+    console.log(`[giveaways] giveaway ${g.id}: ${over.length} claims failed sold out`)
+  }
+
   for (const contract of contracts) {
-    const items = involved.filter((c) => lc(c.contractAddress) === contract).sort((a, b) => (BigInt(a.itemId) < BigInt(b.itemId) ? -1 : 1))
     const rows = queued.filter((q) => lc(q.contractAddress) === contract)
     if (!rows.length) continue
-    if (!items.length) {
-      // The contract's items were removed after these claims queued: nothing to mint for them
-      const gone = rows.map((r) => r.claimId)
-      await db.transaction((tx) => failClaims(tx, gone, 'item_removed'))
-      console.warn(`[giveaways] giveaway ${g.id}: ${gone.length} claims failed, their contract has no items any more`)
-      queued = queued.filter((q) => !gone.includes(q.claimId))
-      continue
-    }
-    const supply = Math.min(...items.map((i) => (i.state === 'sold_out' ? 0 : i.remaining)))
-    const over = rows.slice(supply).map((r) => r.claimId)
-    if (over.length) {
-      await db.transaction((tx) => failClaims(tx, over, 'sold_out'))
-      console.log(`[giveaways] giveaway ${g.id}: ${over.length} claims failed sold out`)
-      queued = queued.filter((q) => !over.includes(q.claimId))
-    }
-    const batch = rows.slice(0, Math.min(supply, singles.has(g.id) ? 1 : GIVEAWAY_MAX_CLAIMS_PER_TX))
-    if (!batch.length) continue
-    await mintBatch(client, g, batch, items.map((i) => i.itemId), now)
+    const batch = rows.slice(0, singles.has(g.id) ? 1 : GIVEAWAY_MAX_CLAIMS_PER_TX)
+    await mintBatch(client, g, batch, itemsFor(contract).map((i) => i.itemId), now)
     return
   }
 }
 
-async function mintBatch(client: GiveawayChainClient, g: GiveawayRow, batch: Queued[], itemIds: string[], now: Date): Promise<void> {
+/**
+ * Signs one batch under the giveaway row's lock. A paid owner's mint (with a gas tank) is covered, top-up or not yet:
+ * it spends only Virvi's float, and the tank tops that up when it is short; only when the tank can't (at its floor)
+ * does the host's own POL pay, as an uncovered mint (`o.uncovered`).
+ */
+async function mintBatch(
+  client: GiveawayChainClient, g: GiveawayRow, batch: Queued[], itemIds: string[], now: Date, o: { uncovered?: boolean } = {},
+): Promise<void> {
   const from = g.walletAddress!
   const contract = batch[0].contractAddress
   const wallets: string[] = []
   const ids: string[] = []
   for (const b of batch) for (const i of itemIds) { wallets.push(b.wallet); ids.push(i) }
   const [paid, acc] = await Promise.all([ownerIsPaid(g.ownerId), accounting(g.id)])
-  // Covered once a top-up is known to have landed (a replaced one, outcome unknown, doesn't count here)
-  const covered = paid && acc.topUpsWei - acc.replacedTopUpsWei > 0n
+  const covered = !o.uncovered && paid && !!tankWallet()
+  // While a replaced transfer's outcome is unknown so is the host's share: no uncovered mint spends from the wallet
+  if (!covered && (await heldByReplaced(g))) {
+    console.warn(`[giveaways] giveaway ${g.id}: uncovered mint held, a replaced transaction of this giveaway is unresolved`)
+    return
+  }
   const signer = giveawaySigner(g.walletKeyEnc!)
   const claimIds = batch.map((b) => b.claimId)
 
   type Outcome = { kind: 'busy' } | { kind: 'signed'; row: TxRow } | { kind: 'revert'; err: GiveawayRevert } | { kind: 'low'; need: bigint; balance: bigint }
   const out: Outcome = await db.transaction(async (tx): Promise<Outcome> => {
     const [locked] = await tx.select().from(giveaways).where(eq(giveaways.id, g.id)).for('update')
-    if (!locked || !locked.enabled || locked.deletedAt || locked.deleteState) return { kind: 'busy' }
+    if (!locked || locked.deletedAt || locked.deleteState) return { kind: 'busy' }
     if (await openFrom(tx, g.chain, from)) return { kind: 'busy' }
     const still = await tx.select({ claimId: giveawayClaimMints.claimId }).from(giveawayClaimMints).where(and(
       inArray(giveawayClaimMints.claimId, claimIds), eq(giveawayClaimMints.contractAddress, contract), eq(giveawayClaimMints.status, 'waiting'),
@@ -745,14 +808,14 @@ async function mintBatch(client: GiveawayChainClient, g: GiveawayRow, batch: Que
       if (err instanceof GiveawayRevert) return { kind: 'revert', err }
       if (err instanceof GiveawayRpcError && err.code === 'INSUFFICIENT_FUNDS') {
         const fees = await client.feeData()
-        const room = spendable(covered, await client.balanceWei(from), acc.virviUnspentWei)
+        const room = spendable(covered, await client.balanceWei(from), acc)
         return { kind: 'low', need: GIVEAWAY_GAS_PER_ITEM * BigInt(wallets.length) * fees.maxFeePerGas, balance: room }
       }
       throw err
     }
     const need = signed.gasLimit * signed.fees.maxFeePerGas
-    // Uncovered gas comes out of the host's POL only, never Virvi's unspent float
-    const room = spendable(covered, await client.balanceWei(from), acc.virviUnspentWei)
+    // Covered gas comes out of Virvi's float only, uncovered gas out of the host's POL only
+    const room = spendable(covered, await client.balanceWei(from), acc)
     // The signed transaction is dropped unsent: its nonce stays free
     if (room * 10n < need * 12n) return { kind: 'low', need, balance: room }
     const [row] = await tx.insert(giveawayTxs).values({
@@ -789,55 +852,75 @@ async function mintBatch(client: GiveawayChainClient, g: GiveawayRow, batch: Que
     console.warn(`[giveaways] giveaway ${g.id}: mint of ${batch.length} claims reverts at estimate (${reason ?? 'unknown'})`)
     return
   }
-  const result = await topUp(client, g, paid, out.need / BigInt(batch.length), out.balance, now)
-  await setPause(g.id, result === 'low_gas' ? 'low_gas' : null, now)
+  if (covered) {
+    const result = await topUp(client, g, paid, out.need / BigInt(batch.length), out.balance, now)
+    // The tank can't top up (at its floor): the host's own POL, if there is enough, pays instead
+    if (result === 'low_gas') return mintBatch(client, g, batch, itemIds, now, { uncovered: true })
+    await setPause(g.id, null, now)
+    return
+  }
+  await setPause(g.id, 'low_gas', now)
 }
 
 /**
- * Tops a paid owner's giveaway wallet up from the tank to 50 claims' worth of gas (at most 5 POL), if the tank stays at
- * or above its floor. 'low_gas' when that can't happen (not paid, no tank, tank at its floor); 'waiting' when a top-up is
- * already on its way or the tank is busy with another.
+ * Tops a paid owner's giveaway wallet up from the tank to 50 claims' worth of gas (at most 5 POL) beyond `balance` (what
+ * the mint may already spend), if the tank stays at or above its floor. Under the giveaway row's lock (deleteGiveaway
+ * takes it too), so a wallet being deleted never gets one, nor one a replaced transfer holds. 'low_gas' when it can't happen (not paid, no tank, tank at
+ * its floor); 'waiting' when a top-up is already on its way, the tank is busy with another, or the giveaway is going.
  */
 async function topUp(
   client: GiveawayChainClient, g: GiveawayRow, paid: boolean, perClaim: bigint, balance: bigint, now: Date,
 ): Promise<'low_gas' | 'waiting' | 'sent'> {
   const tank = tankWallet()
   if (!paid || !tank) return 'low_gas'
-  const [pending] = await db.select({ id: giveawayTxs.id }).from(giveawayTxs)
-    .where(and(eq(giveawayTxs.giveawayId, g.id), eq(giveawayTxs.kind, 'topup'), inArray(giveawayTxs.status, [...OPEN]))).limit(1)
-  if (pending || (await openFrom(db, g.chain, tank.address))) return 'waiting'
-  const want = perClaim * TOPUP_CLAIMS - balance
-  const amount = minBig(want, TOPUP_MAX_WEI)
-  if (amount <= 0n) return 'low_gas'
-  const [tankBalance, fees] = await Promise.all([client.balanceWei(tank.address), client.feeData()])
-  if (tankBalance - amount - GIVEAWAY_TRANSFER_GAS * fees.maxFeePerGas < config.giveaways.tankMinWeiByChain[g.chain]) {
-    reportTankLow(g.chain, now)
-    return 'low_gas'
-  }
-  const nonce = await nextNonce(client, tank.address)
-  const s = await client.signTransfer(tank, g.walletAddress!, amount, nonce, fees)
-  const [row] = await db.insert(giveawayTxs).values({
-    giveawayId: g.id, chain: g.chain, kind: 'topup', fromAddress: tank.address, toAddress: g.walletAddress!, valueWei: amount.toString(),
-    nonce, rawTx: s.raw, txHash: s.hash, txHashes: [s.hash], status: 'sending',
-  }).returning()
-  console.log(`[giveaways] giveaway ${g.id}: top-up ${row.id} from the tank`)
-  await broadcast(client, row, s.raw, now)
+  const out = await db.transaction(async (tx): Promise<'low_gas' | 'waiting' | TxRow> => {
+    const [locked] = await tx.select().from(giveaways).where(eq(giveaways.id, g.id)).for('update')
+    if (!locked?.walletAddress || locked.deletedAt || locked.deleteState) return 'waiting'
+    // A wallet whose split is uncertain (a replaced transfer) gets no more tank POL until a human settles it
+    if (await replacedHold(g.id, tx)) return 'waiting'
+    const [pending] = await tx.select({ id: giveawayTxs.id }).from(giveawayTxs)
+      .where(and(eq(giveawayTxs.giveawayId, g.id), eq(giveawayTxs.kind, 'topup'), inArray(giveawayTxs.status, [...OPEN]))).limit(1)
+    if (pending || (await openFrom(tx, g.chain, tank.address))) return 'waiting'
+    const want = perClaim * TOPUP_CLAIMS - balance
+    const amount = minBig(want, TOPUP_MAX_WEI)
+    if (amount <= 0n) return 'low_gas'
+    const [tankBalance, fees] = await Promise.all([client.balanceWei(tank.address), client.feeData()])
+    if (tankBalance - amount - GIVEAWAY_TRANSFER_GAS * fees.maxFeePerGas < config.giveaways.tankMinWeiByChain[g.chain]) {
+      reportTankLow(g.chain, now)
+      return 'low_gas'
+    }
+    const nonce = await nextNonce(client, tank.address)
+    const s = await client.signTransfer(tank, locked.walletAddress, amount, nonce, fees)
+    const [row] = await tx.insert(giveawayTxs).values({
+      giveawayId: g.id, chain: g.chain, kind: 'topup', fromAddress: tank.address, toAddress: locked.walletAddress, valueWei: amount.toString(),
+      nonce, rawTx: s.raw, txHash: s.hash, txHashes: [s.hash], status: 'sending',
+    }).returning()
+    return row
+  })
+  if (typeof out === 'string') return out
+  console.log(`[giveaways] giveaway ${g.id}: top-up ${out.id} from the tank`)
+  await broadcast(client, out, out.rawTx!, now)
   return 'sent'
 }
 
 // ── 4. Ends and deletes ──────────────────────────────────────────────────────
 
 /**
- * Giveaways being deleted, and ended ones with a confirmed top-up not yet followed by a confirmed return: Virvi's
- * unspent float, less the transfer's gas, goes back to the tank once nothing is open from the wallet (an ended one also
- * waits for its queued claims). A delete with nothing left to return is finished: deletedAt set, the key dropped.
+ * Giveaways being deleted, and ended ones (past their end, or switched off with nothing sent for
+ * GIVEAWAY_OFF_RETURN_AFTER_MS) with a confirmed top-up not yet followed by a return: Virvi's unspent float, less the
+ * transfer's gas, goes back to the tank once nothing is open from the wallet and no top-up into it is unsettled (an
+ * ended one also waits for its queued claims). A delete with nothing left to return is finished: deletedAt set, the key
+ * dropped. A giveaway switched back on tops up again as usual.
  */
 async function endsAndDeletes(client: GiveawayChainClient, now: Date): Promise<void> {
   const toppedUpSinceReturn = sql`exists (select 1 from giveaway_txs t where t.giveaway_id = ${giveaways.id} and t.kind = 'topup' and t.status = 'confirmed'
     and not exists (select 1 from giveaway_txs r where r.giveaway_id = ${giveaways.id} and r.kind = 'return' and r.status in ('confirmed', 'replaced') and r.created_at > t.created_at))`
+  const idleCutoff = new Date(now.getTime() - GIVEAWAY_OFF_RETURN_AFTER_MS).toISOString()
+  const offAndIdle = sql`(${giveaways.enabled} = false and greatest(coalesce(${giveaways.disabledAt}, ${giveaways.createdAt}),
+    (select max(t.created_at) from giveaway_txs t where t.giveaway_id = ${giveaways.id})) <= ${idleCutoff}::timestamptz)`
   const rows = await db.select().from(giveaways).where(and(
     eq(giveaways.chain, client.chain), isNull(giveaways.deletedAt),
-    or(eq(giveaways.deleteState, 'returning'), and(lte(giveaways.endsAt, now), toppedUpSinceReturn)),
+    or(eq(giveaways.deleteState, 'returning'), and(or(lte(giveaways.endsAt, now), offAndIdle), toppedUpSinceReturn)),
   ))
   let fees: GiveawayFees | null = null
   const feesOnce = async () => (fees ??= await client.feeData())
@@ -849,6 +932,8 @@ async function endsAndDeletes(client: GiveawayChainClient, now: Date): Promise<v
 async function endOne(client: GiveawayChainClient, g: GiveawayRow, feesOnce: () => Promise<GiveawayFees>, now: Date): Promise<void> {
   const deleting = g.deleteState === 'returning'
   if (g.walletAddress && (await openFrom(db, g.chain, g.walletAddress))) return
+  // A top-up on its way would land after the return (or in a wallet whose key is gone): wait for it
+  if (await unsettledTopUp(g.id)) return
   // A replaced transfer of unknown outcome holds returns (and so the delete) for a human
   if (await heldByReplaced(g)) return
   if (!deleting) {

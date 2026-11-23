@@ -19,6 +19,8 @@ export interface CreatorItem {
 
 const CATEGORIES = ['wearable', 'emote'] as const
 const FIRST = 100
+/** Pages read per category and wallet: a creator's first 1000 items of each kind. */
+const MAX_ITEMS = 1000
 const MAX_BYTES = 4 * 1024 * 1024
 const CACHE_MS = 60_000
 const NAME_MAX = 80
@@ -39,8 +41,21 @@ const httpsUrl = (v: unknown) => (typeof v === 'string' && /^https:\/\//.test(v)
 
 const down = () => new GiveawayError(502, 'marketplace_down', "The Decentraland Marketplace isn't answering. Try again in a minute.")
 
+/** Every page of one category, up to MAX_ITEMS (a full page means there may be more). */
 async function fetchCategory(chain: GiveawayChain, wallet: string, category: (typeof CATEGORIES)[number]): Promise<CreatorItem[]> {
-  const q = new URLSearchParams({ creator: wallet, category, first: String(FIRST) })
+  const out: CreatorItem[] = []
+  for (let skip = 0; skip < MAX_ITEMS; skip += FIRST) {
+    const { items, full } = await fetchPage(chain, wallet, category, skip)
+    out.push(...items)
+    if (!full) break
+  }
+  return out
+}
+
+async function fetchPage(
+  chain: GiveawayChain, wallet: string, category: (typeof CATEGORIES)[number], skip: number,
+): Promise<{ items: CreatorItem[]; full: boolean }> {
+  const q = new URLSearchParams({ creator: wallet, category, first: String(FIRST), skip: String(skip) })
   let res: Response
   try {
     res = await fetchImpl(`${giveawayMarketplaceApi(chain)}/v1/items?${q}`, {
@@ -77,7 +92,7 @@ async function fetchCategory(chain: GiveawayChain, wallet: string, category: (ty
       available: Number.isFinite(available) && available > 0 ? Math.floor(available) : 0,
     })
   }
-  return out
+  return { items: out, full: data.length >= FIRST }
 }
 
 async function walletItems(chain: GiveawayChain, wallet: string, now: number): Promise<CreatorItem[]> {
