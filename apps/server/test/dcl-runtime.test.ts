@@ -12,7 +12,7 @@ describe('dcl runtime', () => {
     // The HUD registers with a virtual canvas (scales on high-DPI screens) and textures its launcher from the icon
     expect(src).toContain('virtualWidth')
     expect(src).toContain('images/virvi/hud-v.png')
-    expect(DCL_RUNTIME_VERSION).toBe(16)
+    expect(DCL_RUNTIME_VERSION).toBe(17)
   })
 
   it('names Virvi items for analytics (v4)', async () => {
@@ -98,7 +98,7 @@ describe('dcl runtime', () => {
   })
 
   it('carries the BEAT card fixes: consent v2, I agree, Stop tracking until a claim, final failures (v16, @virvixr/dcl 2.17.0, LIV-11)', async () => {
-    const src = Buffer.from((await runtimeFiles()).get('bin/index.js')!).toString('utf8')
+    const src = Buffer.from((await runtimeFiles(16)).get('bin/index.js')!).toString('utf8')
     expect(src).toContain('The scene checks in every 30 seconds')
     expect(src).toContain('I agree')
     expect(src).toContain("we've stopped trying")
@@ -106,8 +106,18 @@ describe('dcl runtime', () => {
     expect(src).toContain('2.17.0')
   })
 
-  it('keeps v3 to v15 for deploys still waiting to be signed', async () => {
-    for (const v of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]) expect((await runtimeFiles(v)).has('bin/index.js')).toBe(true)
+  it('carries the giveaway card: consent, the time left, Claim, On its way (v17, LIV-194)', async () => {
+    const src = Buffer.from((await runtimeFiles()).get('bin/index.js')!).toString('utf8')
+    expect(src).toContain('giveaway_available')
+    expect(src).toContain('/giveaway/current')
+    expect(src).toContain('Agree and continue')
+    expect(src).toContain('The host sees that this wallet claimed.')
+    expect(src).toContain('On its way.')
+    expect(src).toContain('this giveaway ran out.')
+  })
+
+  it('keeps v3 to v16 for deploys still waiting to be signed', async () => {
+    for (const v of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) expect((await runtimeFiles(v)).has('bin/index.js')).toBe(true)
   })
 
   it('speaks the Virvi protocol only', async () => {

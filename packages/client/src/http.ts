@@ -1,4 +1,4 @@
-import type { Scene, AuthProof, VirviPlatformAdapter, AnalyticsSceneRef, SceneLibraryItemData, AdServeRequest, AdServeResponse, AdEventBatch, PublicRaffle, RaffleMode, RaffleStatus, VisitorBeat } from '@virvixr/shared'
+import type { Scene, AuthProof, VirviPlatformAdapter, AnalyticsSceneRef, SceneLibraryItemData, AdServeRequest, AdServeResponse, AdEventBatch, PublicRaffle, RaffleMode, RaffleStatus, VisitorBeat, VisitorGiveaway } from '@virvixr/shared'
 import type { AuthResponse, MediaAsset } from './types.js'
 import { VirviAuth } from './auth.js'
 
@@ -372,6 +372,30 @@ export class VirviHttpClient {
 
   async stopTrackingBeat(sceneId: string, beatId: string): Promise<void> {
     await this._fetch(`/api/scenes/${encodeURIComponent(sceneId)}/beat/${encodeURIComponent(beatId)}/track`, { method: 'DELETE' })
+  }
+
+  // Automatic giveaways (LIV-194), the visitor side. Errors carry the server's code in the message, like the BEAT calls.
+  /** The scene's giveaway for the card (null when there is none), with the caller's claim. */
+  async currentGiveaway(sceneId: string): Promise<{ giveaway: VisitorGiveaway | null }> {
+    return this._fetch(`/api/scenes/${encodeURIComponent(sceneId)}/giveaway/current`)
+  }
+
+  /** Consent to the giveaway: from then on time in the scene counts toward claiming. */
+  async trackGiveaway(sceneId: string, giveawayId: string, consentVersion: number): Promise<{ giveaway: VisitorGiveaway }> {
+    return this._fetch(`/api/scenes/${encodeURIComponent(sceneId)}/giveaway/${encodeURIComponent(giveawayId)}/track`, { method: 'POST', body: JSON.stringify({ consentVersion }) })
+  }
+
+  async giveawayCheckIn(sceneId: string, giveawayId: string): Promise<{ giveaway: VisitorGiveaway }> {
+    return this._fetch(`/api/scenes/${encodeURIComponent(sceneId)}/giveaway/${encodeURIComponent(giveawayId)}/checkin`, { method: 'POST', body: '{}' })
+  }
+
+  async claimGiveaway(sceneId: string, giveawayId: string): Promise<{ giveaway: VisitorGiveaway }> {
+    return this._fetch(`/api/scenes/${encodeURIComponent(sceneId)}/giveaway/${encodeURIComponent(giveawayId)}/claim`, { method: 'POST', body: '{}' })
+  }
+
+  /** Withdraw consent before claiming (409 claimed once claimed). */
+  async stopGiveaway(sceneId: string, giveawayId: string): Promise<void> {
+    await this._fetch(`/api/scenes/${encodeURIComponent(sceneId)}/giveaway/${encodeURIComponent(giveawayId)}/track`, { method: 'DELETE' })
   }
 
   async getScenes(): Promise<{ scenes: Scene[] }> {
