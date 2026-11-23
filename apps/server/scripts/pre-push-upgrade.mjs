@@ -74,6 +74,15 @@ try {
       END IF;
     END IF;
   END $$`
+  // LIV-194: giveaway_claims was redefined (wallet, consent, minutes). The old one never held real claims; set it aside
+  // so push creates the new table instead of asking whether columns were renamed.
+  await sql`DO $$ BEGIN
+    IF to_regclass('giveaway_claims') IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'giveaway_claims' AND column_name = 'consent_version') THEN
+      ALTER TABLE giveaway_claims RENAME TO giveaway_claims_legacy;
+      ALTER INDEX IF EXISTS giveaway_claims_pkey RENAME TO giveaway_claims_legacy_pkey;
+    END IF;
+  END $$`
   console.log('[virvi-server] pre-push upgrade: legacy analytics tables cleared, scene_state dropped, deployment_wallets retired, vlm_scene_id renamed, playback_id ensured, heatmap cell_y ensured') // virvi-rename: keep
 } finally {
   await sql.end()

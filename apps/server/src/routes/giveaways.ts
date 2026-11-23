@@ -7,13 +7,11 @@ import { authenticate } from '../middleware/auth.js'
 interface CreateGiveawayBody {
   name: string
   enabled?: boolean
-  claimLimit?: number
 }
 
 interface UpdateGiveawayBody {
   name?: string
   enabled?: boolean
-  claimLimit?: number
 }
 
 interface CreateItemBody {
@@ -40,7 +38,7 @@ export default async function giveawayRoutes(app: FastifyInstance) {
   // ── POST /api/giveaways — create giveaway ────────────────────────────────
 
   app.post<{ Body: CreateGiveawayBody }>('/api/giveaways', async (request, reply) => {
-    const { name, enabled, claimLimit } = request.body
+    const { name, enabled } = request.body
 
     if (!name) {
       return reply.status(400).send({ error: 'name is required' })
@@ -51,8 +49,7 @@ export default async function giveawayRoutes(app: FastifyInstance) {
       .values({
         ownerId: request.user.id,
         name,
-        enabled: enabled ?? true,
-        claimLimit: claimLimit ?? 1,
+        enabled: enabled ?? false,
       })
       .returning()
 
@@ -99,7 +96,7 @@ export default async function giveawayRoutes(app: FastifyInstance) {
     '/api/giveaways/:giveawayId',
     async (request, reply) => {
       const { giveawayId } = request.params
-      const { name, enabled, claimLimit } = request.body
+      const { name, enabled } = request.body
 
       const giveaway = await db.query.giveaways.findFirst({ where: eq(giveaways.id, giveawayId) })
       if (!giveaway) return reply.status(404).send({ error: 'Giveaway not found' })
@@ -110,7 +107,6 @@ export default async function giveawayRoutes(app: FastifyInstance) {
       const updates: Record<string, unknown> = { updatedAt: new Date() }
       if (name !== undefined) updates.name = name
       if (enabled !== undefined) updates.enabled = enabled
-      if (claimLimit !== undefined) updates.claimLimit = claimLimit
 
       const [updated] = await db
         .update(giveaways)
@@ -207,8 +203,7 @@ export default async function giveawayRoutes(app: FastifyInstance) {
 
       const claims = await db.query.giveawayClaims.findMany({
         where: eq(giveawayClaims.giveawayId, giveawayId),
-        with: { item: true },
-        orderBy: (c, { desc }) => [desc(c.claimedAt)],
+        orderBy: (c, { desc }) => [desc(c.createdAt)],
       })
 
       return reply.send({ claims })

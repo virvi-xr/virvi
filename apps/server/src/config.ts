@@ -11,7 +11,7 @@ import { createHmac } from 'node:crypto'
 import { resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { getAddress, parseEther } from 'ethers'
-import { BEAT_CHAINS, BEAT_CLAIMS_PER_NETWORK_DEFAULT, type BeatChain } from '@virvixr/shared'
+import { BEAT_CHAINS, BEAT_CLAIMS_PER_NETWORK_DEFAULT, GIVEAWAY_JOB_EVERY_MS_DEFAULT, type BeatChain, type GiveawayChain } from '@virvixr/shared'
 import { resolveStorageProvider } from './storage/index.js'
 
 export type VirviMode = 'single' | 'scalable' | 'cloud'
@@ -197,6 +197,48 @@ export function validDeployKey(raw: string | undefined, name = 'VIRVI_DCL_DEPLOY
   throw new Error(`${name} is not a valid private key (32 bytes of hex). Fix it or unset it.`)
 }
 
+/** The JSON-RPC URL per chain (POLYGON_RPC_URL, POLYGON_AMOY_RPC_URL), shared by BEATs and giveaways. */
+function rpcUrlsFrom(e: Record<string, string | undefined>) {
+  return {
+    'polygon-amoy': e.POLYGON_AMOY_RPC_URL || 'https://polygon-amoy-bor-rpc.publicnode.com',
+    polygon: e.POLYGON_RPC_URL || 'https://polygon-bor-rpc.publicnode.com',
+  }
+}
+
+/**
+ * Automatic giveaway settings (LIV-194), checked once at startup. On only when GIVEAWAY_WALLET_SECRET (64 hex characters:
+ * the key that seals each giveaway wallet's private key) is set. A malformed secret or gas key refuses to start; no
+ * message ever includes the value.
+ */
+export function giveawaysFrom(e: Record<string, string | undefined>) {
+  const raw = e.GIVEAWAY_WALLET_SECRET?.trim()
+  if (raw && !/^[0-9a-f]{64}$/i.test(raw)) throw new Error('GIVEAWAY_WALLET_SECRET must be 64 hex characters')
+  const pol = (name: string, def: string) => {
+    try {
+      return parseEther(e[name] || def)
+    } catch {
+      throw new Error(`${name} must be a decimal amount of POL`)
+    }
+  }
+  const jobEveryRaw = e.GIVEAWAY_JOB_EVERY_MS
+  if (jobEveryRaw && !/^\d+$/.test(jobEveryRaw)) throw new Error('GIVEAWAY_JOB_EVERY_MS must be a whole number')
+  const tankMinWeiByChain: Record<GiveawayChain, bigint> = {
+    polygon: pol('GIVEAWAY_TANK_MIN_POL', '5'),
+    'polygon-amoy': pol('GIVEAWAY_TANK_MIN_POL_AMOY', '0.05'),
+  }
+  return {
+    enabled: !!raw,
+    walletSecret: raw ? Buffer.from(raw, 'hex') : null,
+    /** The shared gas tank's key: pays for the giveaways of paid accounts. Null: no tank. */
+    gasKey: validDeployKey(e.GIVEAWAY_GAS_KEY, 'GIVEAWAY_GAS_KEY'),
+    /** The tank's floor per chain; tankMinWei is Polygon's. */
+    tankMinWei: tankMinWeiByChain.polygon,
+    tankMinWeiByChain,
+    jobEveryMs: jobEveryRaw ? Number(jobEveryRaw) || GIVEAWAY_JOB_EVERY_MS_DEFAULT : GIVEAWAY_JOB_EVERY_MS_DEFAULT,
+    rpc: rpcUrlsFrom(e) as Record<GiveawayChain, string>,
+  }
+}
+
 /**
  * BEAT (free attendance token) settings, checked once at startup (LIV-11). Off unless BEAT_ENABLED=true. A bad chain,
  * contract address, minter key or number refuses to start; no message ever includes the key.
@@ -280,10 +322,7 @@ export function beatSettingsFrom(e: Record<string, string | undefined>) {
     /** The admin Safe on each chain (BEAT_ADMIN_SAFE_POLYGON[_AMOY]), for the reissue batch's meta; optional. */
     adminSafes,
     minterKey: validDeployKey(e.BEAT_MINTER_KEY, 'BEAT_MINTER_KEY'),
-    rpc: {
-      'polygon-amoy': e.POLYGON_AMOY_RPC_URL || 'https://polygon-amoy-bor-rpc.publicnode.com',
-      polygon: e.POLYGON_RPC_URL || 'https://polygon-bor-rpc.publicnode.com',
-    } as Record<BeatChain, string>,
+    rpc: rpcUrlsFrom(e) as Record<BeatChain, string>,
     price: {
       baseCents,
       includedMints: whole('BEAT_INCLUDED_MINTS', 100),
@@ -496,6 +535,8 @@ export const config = {
   studioMana: manaSettingsFrom(process.env),
   // BEAT attendance tokens (LIV-11): dark unless BEAT_ENABLED=true
   beats: beatSettingsFrom(process.env),
+  // Automatic wearable giveaways (LIV-194): dark unless GIVEAWAY_WALLET_SECRET is set
+  giveaways: giveawaysFrom(process.env),
   // The studio scene's parcels: each copy of the scene's base parcel, "x,y", separated by ";" or spaces
   // (for example "104,60; -9,-122"). Only these get the studio pass.
   studioSceneParcels: parcelList(env('STUDIO_SCENE_PARCEL')),
