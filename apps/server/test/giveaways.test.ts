@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { getAddress, parseEther } from 'ethers'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
@@ -263,6 +263,25 @@ describe('giveaway host API (LIV-194)', () => {
   })
 
   describe('claims list', () => {
+    it('never skips a claim created in the same millisecond as the last one on a page', async () => {
+      const g = await create()
+      const wallets = Array.from({ length: 51 }, () => randomWallet())
+      // 49 newer claims, then two in one millisecond (.123456 and .123200): the page boundary falls between them
+      for (const [i, w] of wallets.slice(0, 49).entries()) {
+        await db.insert(giveawayClaims).values({ giveawayId: g.id, wallet: w, consentVersion: 1, createdAt: new Date(Date.UTC(2030, 0, 1, 1, 0, i)) })
+      }
+      for (const [w, at] of [[wallets[49], '2030-01-01T00:00:00.123456Z'], [wallets[50], '2030-01-01T00:00:00.123200Z']]) {
+        await db.insert(giveawayClaims).values({ giveawayId: g.id, wallet: w, consentVersion: 1, createdAt: sql`${at}::timestamptz` as any })
+      }
+      const first = (await call('GET', `/api/giveaways/${g.id}/claims`)).json()
+      expect(first.claims).toHaveLength(50)
+      expect(first.claims[49].wallet).toBe(`${wallets[49].slice(0, 6)}…${wallets[49].slice(-4)}`)
+      const rest = (await call('GET', `/api/giveaways/${g.id}/claims?cursor=${encodeURIComponent(first.nextCursor)}`)).json()
+      expect(rest.claims.map((c: any) => c.wallet)).toEqual([`${wallets[50].slice(0, 6)}…${wallets[50].slice(-4)}`])
+      expect(rest.nextCursor).toBeNull()
+      expect((await call('GET', `/api/giveaways/${g.id}/claims?cursor=nonsense`)).statusCode).toBe(400)
+    })
+
     it('shows short wallets, status, times and tx links, 50 a page', async () => {
       const g = await create()
       const hash = '0x' + 'ab'.repeat(32)

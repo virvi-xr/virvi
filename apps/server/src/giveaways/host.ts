@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull, ne, or, sql, lt } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm'
 import { getAddress } from 'ethers'
 import {
   GIVEAWAY_CHAINS, GIVEAWAY_CLAIM_STATUSES, giveawayBuilderUrl, giveawayTxUrl, shortWallet,
@@ -276,9 +276,11 @@ export async function setItems(c: GiveawayCaller, id: string, body: Record<strin
   const g = await load(c, id)
   refuseWhileDeleting(g)
   const wanted = parseItems(body.items)
-  const [claimed] = await db.select({ id: giveawayClaims.id }).from(giveawayClaims)
-    .where(and(eq(giveawayClaims.giveawayId, g.id), ne(giveawayClaims.status, 'present'))).limit(1)
-  if (claimed) throw new GiveawayError(409, 'has_claims', "The items can't change once someone has claimed this giveaway.")
+  const hasClaims = () => new GiveawayError(409, 'has_claims', "The items can't change once someone has claimed this giveaway.")
+  const claimedIn = async (exec: Pick<typeof db, 'select'>) => (await exec.select({ id: giveawayClaims.id }).from(giveawayClaims)
+    .where(and(eq(giveawayClaims.giveawayId, g.id), ne(giveawayClaims.status, 'present'))).limit(1)).length > 0
+  // Checked early so a refused request skips the Marketplace and chain calls, and again under the lock below
+  if (await claimedIn(db)) throw hasClaims()
 
   const mine = await creatorItems(g.chain, await verifiedWalletsOf(g.ownerId))
   const found = wanted.map((w) => mine.find((m) => m.contractAddress.toLowerCase() === w.contractAddress.toLowerCase() && m.itemId === w.itemId))
@@ -298,6 +300,8 @@ export async function setItems(c: GiveawayCaller, id: string, body: Record<strin
     if (failing.length) throw new GiveawayError(409, 'not_ready', 'Every item must pass the minter check while the giveaway is on.', { items: failing })
   }
   await db.transaction(async (tx) => {
+    await tx.select({ id: giveaways.id }).from(giveaways).where(eq(giveaways.id, g.id)).for('update')
+    if (await claimedIn(tx)) throw hasClaims()
     await tx.delete(giveawayItems).where(eq(giveawayItems.giveawayId, g.id))
     await tx.insert(giveawayItems).values(found.map((m) => ({
       giveawayId: g.id, contractAddress: m!.contractAddress, itemId: m!.itemId, name: m!.name, imageUrl: m!.thumbnail, rarity: m!.rarity,
@@ -331,14 +335,17 @@ export async function setScenes(c: GiveawayCaller, id: string, body: Record<stri
 
 // ── Claims ───────────────────────────────────────────────────────────────────
 
-const encodeCursor = (at: Date, id: string) => Buffer.from(`${at.toISOString()}|${id}`).toString('base64url')
-function decodeCursor(v: unknown): { at: Date; id: string } | null {
+// The cursor keeps created_at to the microsecond, as Postgres stores it (a JS Date would drop to milliseconds and skip
+// rows created later in the same millisecond), and is compared in SQL
+const CURSOR_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/
+const cursorAtSql = sql<string>`to_char(${giveawayClaims.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+const encodeCursor = (at: string, id: string) => Buffer.from(`${at}|${id}`).toString('base64url')
+function decodeCursor(v: unknown): { at: string; id: string } | null {
   if (v === undefined || v === null || v === '') return null
   const bad = () => new GiveawayError(400, 'bad_cursor', 'That page link is no longer valid.')
   if (typeof v !== 'string') throw bad()
-  const [iso, id] = Buffer.from(v, 'base64url').toString('utf8').split('|')
-  const at = new Date(iso ?? '')
-  if (Number.isNaN(at.getTime()) || !id || !UUID.test(id)) throw bad()
+  const [at, id] = Buffer.from(v, 'base64url').toString('utf8').split('|')
+  if (!at || !CURSOR_AT.test(at) || !id || !UUID.test(id)) throw bad()
   return { at, id }
 }
 
@@ -346,12 +353,13 @@ function decodeCursor(v: unknown): { at: Date; id: string } | null {
 export async function listClaims(c: GiveawayCaller, id: string, cursor?: unknown) {
   const g = await load(c, id)
   const after = decodeCursor(cursor)
-  const rows = await db.select().from(giveawayClaims)
+  const found = await db.select({ claim: giveawayClaims, cursorAt: cursorAtSql }).from(giveawayClaims)
     .where(and(
       eq(giveawayClaims.giveawayId, g.id),
-      after ? or(lt(giveawayClaims.createdAt, after.at), and(eq(giveawayClaims.createdAt, after.at), lt(giveawayClaims.id, after.id))) : undefined,
+      after ? sql`(${giveawayClaims.createdAt}, ${giveawayClaims.id}) < (${after.at}::timestamptz, ${after.id}::uuid)` : undefined,
     ))
     .orderBy(desc(giveawayClaims.createdAt), desc(giveawayClaims.id)).limit(CLAIMS_PAGE + 1)
+  const rows = found.map((r) => r.claim)
   const page = rows.slice(0, CLAIMS_PAGE)
   const hashes = new Map<string, string[]>()
   if (page.length) {
@@ -360,7 +368,7 @@ export async function listClaims(c: GiveawayCaller, id: string, cursor?: unknown
       .where(and(inArray(giveawayClaimMints.claimId, page.map((r) => r.id)), eq(giveawayClaimMints.status, 'sent'), isNotNull(giveawayTxs.txHash)))
     for (const m of mints) hashes.set(m.claimId, [...(hashes.get(m.claimId) ?? []), m.txHash!])
   }
-  const last = page[page.length - 1]
+  const last = found[page.length - 1]
   return {
     claims: page.map((r) => {
       const txUrls = (hashes.get(r.id) ?? []).sort().map((h) => giveawayTxUrl(g.chain, h))
@@ -370,7 +378,7 @@ export async function listClaims(c: GiveawayCaller, id: string, cursor?: unknown
         txUrl: txUrls[0] ?? null, txUrls,
       }
     }),
-    nextCursor: rows.length > CLAIMS_PAGE && last ? encodeCursor(last.createdAt, last.id) : null,
+    nextCursor: rows.length > CLAIMS_PAGE && last ? encodeCursor(last.cursorAt, last.claim.id) : null,
   }
 }
 
