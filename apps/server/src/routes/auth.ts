@@ -7,6 +7,7 @@ import { db } from '../db/connection.js'
 import { users, userAuthMethods, passwordResetTokens, scenes } from '../db/schema.js'
 import { deleteUserWithModels, releaseModelFiles } from '../library/user-models.js'
 import { deleteMyBeatData } from '../beats/retention.js'
+import { deleteMyGiveawayData, giveawaysBlockingDelete } from '../giveaways/account.js'
 import { handOverDesigns } from '../studio/handover.js'
 import { authenticate } from '../middleware/auth.js'
 import { config } from '../config.js'
@@ -805,6 +806,9 @@ export default async function authRoutes(app: FastifyInstance) {
       }
 
       // Hosted worlds' rows would cascade away with it, leaving their Fly app, database and files running untracked.
+      // Giveaways hold their wallet's sealed key: they never cascade away with the account (LIV-194)
+      const giveawaysLeft = await giveawaysBlockingDelete(request.user.id)
+      if (giveawaysLeft) return reply.status(409).send(giveawaysLeft)
       const blocked = await hostedWorldsBlockingDelete({ userId: request.user.id })
       if (blocked) return reply.status(409).send(blocked)
       // Delete user — cascading deletes handle related data
@@ -815,6 +819,8 @@ export default async function authRoutes(app: FastifyInstance) {
         await handOverDesigns(tx, request.user.id, new Date())
         // BEAT claims: unminted go, minted lose name and link (the FK alone would leave a name behind), minting are flagged
         await deleteMyBeatData(request.user.id, new Date(), tx)
+        // Giveaway check-ins not yet claimed go; queued and settled claims stay, unlinked
+        await deleteMyGiveawayData(request.user.id, tx)
         return (await tx.delete(users).where(eq(users.id, request.user.id)).returning({ id: users.id })).length > 0
       })
       // Their imports' rows cascaded; the private files go too
