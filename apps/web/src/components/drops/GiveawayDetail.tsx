@@ -5,7 +5,7 @@ import { useApi, useDemoPrefix } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { fromLocalInput, toLocalInput } from '@/lib/beats'
 import {
-  TEST_BADGE, dropsError, giveawayAddressUrl, giveawayStatus, mintStep, notReadyLines, type HostGiveaway,
+  TEST_BADGE, dropsError, giveawayAddressUrl, giveawayStatus, mintStep, notReadyLines, rulesPatch, type HostGiveaway,
 } from '@/lib/drops'
 import { Badge, ConfirmAction, PageHeader, Skeleton } from '@/components/ui'
 import { ItemPicker } from './ItemPicker'
@@ -205,12 +205,9 @@ function RulesCard({ giveaway: g, disabled, onSaved }: { giveaway: HostGiveaway;
     setSaving(true)
     setMessage(null)
     try {
-      onSaved(await api.updateGiveaway(g.id, {
-        startsAt: fromLocalInput(startsAt) || null,
-        endsAt: fromLocalInput(endsAt) || null,
-        claimCap: cap.trim() === '' ? null : Number(cap),
-        minPresentSeconds: Math.round((Number(minutes) || 0) * 60),
-      }))
+      // Only what changed: an untouched past end time or lost seconds never block another field's edit
+      const patch = rulesPatch(g, { startsAt, endsAt, cap, minutes }, toLocalInput, fromLocalInput)
+      if (Object.keys(patch).length) onSaved(await api.updateGiveaway(g.id, patch))
       setMessage({ ok: true, text: 'Saved.' })
     } catch (err) {
       setMessage({ ok: false, text: dropsError(err) })

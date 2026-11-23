@@ -188,7 +188,10 @@ export function createDemoApi(opts: { trialId: string; now: () => number; storag
         mintState: i.mintState, remaining: i.remaining, checkedAt: stamp(),
       })),
       sceneIds: [...g.sceneIds],
-      funding: { balanceWei: g.balanceWei, withdrawableWei: g.balanceWei, claimsCovered, covered: false, tankMissing: false, lowGas: claimsCovered < LOW_GAS_CLAIMS },
+      funding: {
+        balanceWei: g.balanceWei, withdrawableWei: g.balanceWei, transferGasWei: (DEMO_TRANSFER_GAS * DEMO_GAS_PRICE).toString(), claimsCovered, covered: false, tankMissing: false,
+        lowGas: claimsCovered < LOW_GAS_CLAIMS, held: false,
+      },
       counts: counts(g.id),
     }
   }

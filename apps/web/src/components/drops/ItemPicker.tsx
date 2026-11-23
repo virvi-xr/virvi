@@ -2,16 +2,19 @@
 import { useState } from 'react'
 import { useApi } from '@/lib/api'
 import { useDialog } from '@/lib/use-dialog'
-import { dropsError, notReadyLines, type CreatorItem, type HostGiveaway } from '@/lib/drops'
+import { dropsError, notReadyLines, pickerItems, type HostGiveaway, type PickerItem } from '@/lib/drops'
 
 const ITEMS_MAX = 10
 const keyOf = (i: { contractAddress: string | null; itemId: string | null }) => `${(i.contractAddress ?? '').toLowerCase()}:${i.itemId ?? ''}`
 
-/** "Choose items": the host's own wearables and emotes on the giveaway's chain, up to 10, saved together. */
+/**
+ * "Choose items": the giveaway owner's wearables and emotes on its chain, up to 10, saved together. Current items the
+ * owner's list no longer shows stay as rows (selected), so saving never drops them silently.
+ */
 export function ItemPicker({ giveaway: g, onSaved }: { giveaway: HostGiveaway; onSaved: (g: HostGiveaway) => void }) {
   const api = useApi()
   const [open, setOpen] = useState(false)
-  const [items, setItems] = useState<CreatorItem[] | null>(null)
+  const [items, setItems] = useState<PickerItem[] | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<{ message: string; items: string[] } | null>(null)
@@ -22,7 +25,8 @@ export function ItemPicker({ giveaway: g, onSaved }: { giveaway: HostGiveaway; o
     setError(null)
     setItems(null)
     setPicked(new Set(g.items.map(keyOf)))
-    api.getGiveawayCreatorItems(g.chain).then((d) => setItems(d.items)).catch((err) => { setItems([]); setError({ message: dropsError(err), items: [] }) })
+    api.getGiveawayCreatorItems(g.id).then((d) => setItems(pickerItems(d.items, g.items)))
+      .catch((err) => { setItems(pickerItems([], g.items)); setError({ message: dropsError(err), items: [] }) })
   }
 
   const flip = (k: string) => setPicked((p) => {
@@ -41,7 +45,7 @@ export function ItemPicker({ giveaway: g, onSaved }: { giveaway: HostGiveaway; o
       onSaved(await api.setGiveawayItems(g.id, chosen))
       setOpen(false)
     } catch (err) {
-      const named = items.map((i) => ({ ...i, id: keyOf(i), mintState: null, remaining: null, checkedAt: null }))
+      const named = items.map(({ missing: _m, available: _a, ...i }) => ({ ...i, id: keyOf(i), mintState: null, remaining: null, checkedAt: null }))
       setError({ message: dropsError(err), items: notReadyLines(err, named, g.walletAddress) })
     }
     setSaving(false)
@@ -79,7 +83,9 @@ export function ItemPicker({ giveaway: g, onSaved }: { giveaway: HostGiveaway; o
                         : <span aria-hidden="true" className="h-9 w-9 rounded bg-gray-800" />}
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm">{i.name}</span>
-                        <span className="block text-xs text-gray-500">{[i.rarity, `${i.available.toLocaleString('en-US')} left`].filter(Boolean).join(' · ')}</span>
+                        <span className="block text-xs text-gray-500">
+                          {i.missing ? 'In this giveaway; not in your published items any more' : [i.rarity, `${i.available.toLocaleString('en-US')} left`].filter(Boolean).join(' · ')}
+                        </span>
                       </span>
                     </label>
                   </li>

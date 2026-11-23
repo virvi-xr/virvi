@@ -65,17 +65,67 @@ export const polIsZero = (wei: string) => weiOf(wei) === BigInt(0)
 /** "about 40 claims". */
 export const claimsCoveredLabel = (n: number) => `about ${plural(n, 'claim')}`
 
+export const HELD_LINE = 'A transaction from this wallet is being checked. Virvi support will sort it out; sending back waits until then.'
+
 /** The funding card's lines, and the low-gas warning when there is one. */
 export function fundingLines(f: HostGiveaway['funding']): { lines: string[]; warning: string | null } {
   if (f.covered) {
     const lines = ['Gas is covered by your plan.']
     if (!polIsZero(f.withdrawableWei)) lines.push(`You also have ${formatPol(f.withdrawableWei)} POL here.`)
+    if (f.held) lines.push(HELD_LINE)
     return { lines, warning: null }
   }
   const lines = f.tankMissing
     ? ["Gas cover isn't set up on this server yet. Send POL to the address above."]
     : [`Send POL to the address above. It covers ${claimsCoveredLabel(f.claimsCovered)}.`]
+  if (f.held) lines.push(HELD_LINE)
   return { lines, warning: f.lowGas ? `Running low: ${claimsCoveredLabel(f.claimsCovered)} left.` : null }
+}
+
+/** What a send-back would actually send: the withdrawable POL less one transfer's gas ('0' when that leaves nothing). */
+export function sendableWei(f: Pick<HostGiveaway['funding'], 'withdrawableWei' | 'transferGasWei'>): string {
+  const v = weiOf(f.withdrawableWei) - weiOf(f.transferGasWei)
+  return v > BigInt(0) ? v.toString() : '0'
+}
+
+/** The rules form as typed: datetime-local values, and the cap and minutes as text. */
+export interface RulesForm { startsAt: string; endsAt: string; cap: string; minutes: string }
+type RulesPatch = { startsAt?: string | null; endsAt?: string | null; claimCap?: number | null; minPresentSeconds?: number }
+
+/**
+ * The fields the host changed, and only those: an untouched end time already past, or seconds the form can't show,
+ * never make an edit to another field fail. `toLocal`/`fromLocal` convert as the form does (beats.ts).
+ */
+export function rulesPatch(
+  g: Pick<HostGiveaway, 'startsAt' | 'endsAt' | 'claimCap' | 'minPresentSeconds'>, f: RulesForm,
+  toLocal: (iso: string) => string, fromLocal: (v: string) => string,
+): RulesPatch {
+  const out: RulesPatch = {}
+  if (f.startsAt !== (g.startsAt ? toLocal(g.startsAt) : '')) out.startsAt = fromLocal(f.startsAt) || null
+  if (f.endsAt !== (g.endsAt ? toLocal(g.endsAt) : '')) out.endsAt = fromLocal(f.endsAt) || null
+  const cap = f.cap.trim() === '' ? null : Number(f.cap)
+  if (cap !== g.claimCap) out.claimCap = cap
+  if (f.minutes !== String(Math.round(g.minPresentSeconds / 60))) out.minPresentSeconds = Math.round((Number(f.minutes) || 0) * 60)
+  return out
+}
+
+/** A row of the item picker: a creator item, or a current item the creator list no longer has (`missing`). */
+export type PickerItem = CreatorItem & { missing: boolean }
+
+/**
+ * The picker's rows: the giveaway's current items the creator list doesn't have (so saving keeps them selected
+ * rather than drop them), then the creator's items.
+ */
+export function pickerItems(mine: CreatorItem[], current: HostGiveaway['items']): PickerItem[] {
+  const key = (i: { contractAddress: string | null; itemId: string | null }) => `${(i.contractAddress ?? '').toLowerCase()}:${i.itemId ?? ''}`
+  const have = new Set(mine.map(key))
+  const kept: PickerItem[] = current
+    .filter((i) => i.contractAddress && i.itemId && !have.has(key(i)))
+    .map((i) => ({
+      contractAddress: i.contractAddress!, itemId: i.itemId!, name: i.name || `Item ${i.itemId}`, thumbnail: i.thumbnail, rarity: i.rarity,
+      available: i.remaining ?? 0, missing: true,
+    }))
+  return [...kept, ...mine.map((i) => ({ ...i, missing: false }))]
 }
 
 // ── Items and status ─────────────────────────────────────────────────────────

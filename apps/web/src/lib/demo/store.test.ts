@@ -138,7 +138,7 @@ describe('createDemoApi', () => {
 
   it('items come only from the demo host’s own wearables, and the sample giveaway’s items are locked by its claims', async () => {
     const api = createDemoApi({ trialId: 't1', now: () => NOW, storage: memoryStorage() })
-    const { items } = await api.getGiveawayCreatorItems('polygon')
+    const { items } = await api.getGiveawayCreatorItems('demo-giveaway-1')
     expect(items.every((i) => i.thumbnail === null)).toBe(true)
     await expect(api.setGiveawayItems('demo-giveaway-1', [items[3]])).rejects.toMatchObject({ status: 409, body: { error: 'has_claims' } })
     const { giveaway } = await api.createGiveaway({ name: 'Caps' })
@@ -169,7 +169,7 @@ describe('createDemoApi', () => {
     expect(sample.funding).toMatchObject({ balanceWei: '1500000000000000000', covered: false, lowGas: false })
     expect(sample.funding.claimsCovered).toBeGreaterThan(10)
     await expect(api.deleteGiveaway('demo-giveaway-1')).rejects.toMatchObject({ status: 409, body: { error: 'send_back_first' } })
-    const { wallets } = await api.getGiveawaySendBackWallets()
+    const { wallets } = await api.getGiveawaySendBackWallets('demo-giveaway-1')
     await expect(api.sendBackGiveaway('demo-giveaway-1', '0x00000000000000000000000000000000000000aa')).rejects.toMatchObject({ body: { error: 'not_your_wallet' } })
     const sent = await api.sendBackGiveaway('demo-giveaway-1', wallets[0])
     expect(BigInt(sent.valueWei) > BigInt(0)).toBe(true)
@@ -247,7 +247,7 @@ describe('createDemoApi', () => {
     expect((await api.getGiveawayAvailability()).enabled).toBe(true)
     const { giveaway } = await api.createGiveaway({ name: 'Hats' })
     await api.updateGiveaway(giveaway.id, { claimCap: 2, minPresentSeconds: 600 })
-    const { items } = await api.getGiveawayCreatorItems('polygon')
+    const { items } = await api.getGiveawayCreatorItems('demo-giveaway-1')
     expect((await api.setGiveawayItems(giveaway.id, [items[0]])).items).toHaveLength(1)
     await api.setGiveawayScenes(giveaway.id, [scenes[0].id])
     expect((await api.getGiveaway(giveaway.id)).sceneIds).toEqual([scenes[0].id])

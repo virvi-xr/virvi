@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { HostGiveaway } from '@virvixr/shared'
 import {
-  claimsCoveredLabel, dropsError, formatPol, fundingLines, giveawayAddressUrl, giveawayStatus, mintStep, notReadyLines, polIsZero,
-  GIVEAWAYS_OFF, SEND_BACK_FIRST,
+  claimsCoveredLabel, dropsError, formatPol, fundingLines, giveawayAddressUrl, giveawayStatus, mintStep, notReadyLines, pickerItems, polIsZero,
+  rulesPatch, sendableWei, GIVEAWAYS_OFF, HELD_LINE, SEND_BACK_FIRST, type CreatorItem,
 } from './drops'
 
 const WALLET = '0x1234567890abcdef1234567890abcdef12345678'
 const NOW = Date.parse('2026-11-23T12:00:00Z')
 
 const funding = (over: Partial<HostGiveaway['funding']> = {}): HostGiveaway['funding'] => ({
-  balanceWei: '0', withdrawableWei: '0', claimsCovered: 0, covered: false, tankMissing: false, lowGas: false, ...over,
+  balanceWei: '0', withdrawableWei: '0', transferGasWei: '0', claimsCovered: 0, covered: false, tankMissing: false, lowGas: false, held: false, ...over,
 })
 
 describe('formatPol', () => {
@@ -56,6 +56,55 @@ describe('fundingLines', () => {
       .toEqual({ lines: ['Send POL to the address above. It covers about 40 claims.'], warning: null })
     expect(fundingLines(funding({ claimsCovered: 3, lowGas: true })))
       .toEqual({ lines: ['Send POL to the address above. It covers about 3 claims.'], warning: 'Running low: about 3 claims left.' })
+  })
+})
+
+describe('send back (M-2)', () => {
+  it('sendableWei is the withdrawable less one transfer of gas, never below 0', () => {
+    expect(sendableWei(funding({ withdrawableWei: '1000', transferGasWei: '300' }))).toBe('700')
+    expect(sendableWei(funding({ withdrawableWei: '300', transferGasWei: '300' }))).toBe('0')
+    expect(sendableWei(funding({ withdrawableWei: '100', transferGasWei: '300' }))).toBe('0')
+  })
+  it('a replaced-transaction hold says Virvi support is checking, and shows no POL as the host’s', () => {
+    expect(fundingLines(funding({ covered: true, held: true, withdrawableWei: '0' })).lines).toEqual(['Gas is covered by your plan.', HELD_LINE])
+    expect(fundingLines(funding({ held: true, claimsCovered: 40 })).lines).toContain(HELD_LINE)
+  })
+})
+
+describe('rulesPatch (M-2)', () => {
+  const g = { startsAt: '2026-11-20T10:00:30.000Z', endsAt: '2026-11-21T10:00:00.000Z', claimCap: 100, minPresentSeconds: 90 }
+  const form = (over: Partial<{ startsAt: string; endsAt: string; cap: string; minutes: string }> = {}) => ({
+    startsAt: 'L-start', endsAt: 'L-end', cap: '100', minutes: '2', ...over,
+  })
+  const local = (iso: string) => (iso === g.startsAt ? 'L-start' : iso === g.endsAt ? 'L-end' : `L:${iso}`)
+  const iso = (v: string) => (v === 'L-new' ? '2026-12-01T10:00:00.000Z' : '')
+
+  it('sends only what changed, so a past end or lost seconds never block a cap-only edit', () => {
+    expect(rulesPatch(g, form({ cap: '50' }), local, iso)).toEqual({ claimCap: 50 })
+    expect(rulesPatch(g, form({ cap: '' }), local, iso)).toEqual({ claimCap: null })
+    expect(rulesPatch(g, form(), local, iso)).toEqual({})
+  })
+  it('a changed or cleared time, and minutes, are sent', () => {
+    expect(rulesPatch(g, form({ endsAt: 'L-new', minutes: '5' }), local, iso)).toEqual({ endsAt: '2026-12-01T10:00:00.000Z', minPresentSeconds: 300 })
+    expect(rulesPatch(g, form({ startsAt: '' }), local, iso)).toEqual({ startsAt: null })
+    // 90 seconds shows as 2 minutes; leaving it alone keeps the 90
+    expect(rulesPatch(g, form({ minutes: '2' }), local, iso)).toEqual({})
+  })
+})
+
+describe('pickerItems (M-2)', () => {
+  const mine: CreatorItem = { contractAddress: '0xAbC0000000000000000000000000000000000001', itemId: '1', name: 'Hat', thumbnail: null, rarity: 'rare', available: 5 }
+  const current = (over: Partial<HostGiveaway['items'][number]>): HostGiveaway['items'][number] => ({
+    id: 'i', contractAddress: '0xabc0000000000000000000000000000000000002', itemId: '9', name: 'Old cape', thumbnail: null, rarity: null,
+    mintState: 'ready', remaining: 3, checkedAt: null, ...over,
+  })
+  it('keeps current items the creator list no longer has, first, so saving keeps them', () => {
+    const rows = pickerItems([mine], [current({}), current({ contractAddress: mine.contractAddress.toLowerCase(), itemId: '1', name: 'Hat' })])
+    expect(rows.map((r) => [r.name, r.missing])).toEqual([['Old cape', true], ['Hat', false]])
+    expect(rows[0]).toMatchObject({ contractAddress: '0xabc0000000000000000000000000000000000002', itemId: '9', available: 3 })
+  })
+  it('skips current items without a contract (old rows)', () => {
+    expect(pickerItems([], [current({ contractAddress: null })])).toEqual([])
   })
 })
 

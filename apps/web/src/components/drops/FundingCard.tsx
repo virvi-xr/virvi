@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { shortWallet } from '@/lib/studio-people'
-import { dropsError, formatPol, fundingLines, polIsZero, type HostGiveaway } from '@/lib/drops'
+import { dropsError, formatPol, fundingLines, polIsZero, sendableWei, type HostGiveaway } from '@/lib/drops'
 import { SelectField } from '@/components/ui'
 
 /** Who pays the gas, how far the POL goes, and sending the host's own POL back to one of their verified wallets. */
@@ -14,13 +14,15 @@ export function FundingCard({ giveaway: g, disabled, onSent }: { giveaway: HostG
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
-    api.getGiveawaySendBackWallets()
+    api.getGiveawaySendBackWallets(g.id)
       .then((d) => { setWallets(d.wallets); setTo((t) => t || d.wallets[0] || '') })
       .catch(() => setWallets([]))
-  }, [api])
+  }, [api, g.id])
 
   const { lines, warning } = fundingLines(g.funding)
-  const nothing = polIsZero(g.funding.withdrawableWei)
+  // What would actually go out: the host's share less the transfer's gas (the server refuses nothing_to_send otherwise)
+  const sendable = sendableWei(g.funding)
+  const nothing = polIsZero(sendable) || g.funding.held
 
   const sendBack = async () => {
     if (!to) return
@@ -45,7 +47,7 @@ export function FundingCard({ giveaway: g, disabled, onSent }: { giveaway: HostG
 
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-gray-800 pt-4">
         {wallets && wallets.length === 0 ? (
-          <p className="text-sm text-gray-500">Link a wallet to your account to send POL back.</p>
+          <p className="text-sm text-gray-500">Link a wallet to the owner's account to send POL back.</p>
         ) : (
           <>
             <SelectField label="Send to" value={to} onChange={setTo} className="w-56">
@@ -53,7 +55,7 @@ export function FundingCard({ giveaway: g, disabled, onSent }: { giveaway: HostG
             </SelectField>
             <button type="button" onClick={sendBack} disabled={nothing || !to || sending || disabled}
               className="rounded-md bg-gray-800 px-4 py-2 text-sm hover:bg-gray-700 disabled:opacity-50">
-              {sending ? 'Sending…' : `Send back ${formatPol(g.funding.withdrawableWei)} POL`}
+              {sending ? 'Sending…' : `Send back ${formatPol(sendable)} POL`}
             </button>
           </>
         )}

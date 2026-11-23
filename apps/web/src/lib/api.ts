@@ -615,8 +615,9 @@ function useRealApi() {
       apiFetch<HostGiveaway>(`/api/giveaways/${encodeURIComponent(id)}`, { method: 'PATCH', userAction: true, body: JSON.stringify(data) }),
     deleteGiveaway: (id: string) =>
       apiFetch<{ id: string; deleteState: 'returning' }>(`/api/giveaways/${encodeURIComponent(id)}`, { method: 'DELETE', userAction: true }),
-    getGiveawayCreatorItems: (chain: GiveawayChain) =>
-      apiFetch<{ items: GiveawayCreatorItem[] }>(`/api/giveaways/creator-items?chain=${encodeURIComponent(chain)}`),
+    /** The items the giveaway's owner can give away on its chain (an admin acting on it sees the owner's). */
+    getGiveawayCreatorItems: (giveawayId: string) =>
+      apiFetch<{ items: GiveawayCreatorItem[] }>(`/api/giveaways/creator-items?giveawayId=${encodeURIComponent(giveawayId)}`),
     setGiveawayItems: (id: string, items: { contractAddress: string; itemId: string }[]) =>
       apiFetch<HostGiveaway>(`/api/giveaways/${encodeURIComponent(id)}/items`, { method: 'PUT', userAction: true, body: JSON.stringify({ items }) }),
     setGiveawayScenes: (id: string, sceneIds: string[]) =>
@@ -625,10 +626,9 @@ function useRealApi() {
       apiFetch<GiveawayClaimsPage>(`/api/giveaways/${encodeURIComponent(id)}/claims${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
     sendBackGiveaway: (id: string, toWallet: string) =>
       apiFetch<GiveawaySendBack>(`/api/giveaways/${encodeURIComponent(id)}/send-back`, { method: 'POST', userAction: true, body: JSON.stringify({ toWallet }) }),
-    /** The wallets POL can go back to: the account's verified wallets that can still sign in. */
-    getGiveawaySendBackWallets: () =>
-      apiFetch<{ wallets: { address: string; blocked?: boolean }[] }>('/api/auth/wallets')
-        .then(({ wallets }) => ({ wallets: wallets.filter((w) => !w.blocked).map((w) => w.address) })),
+    /** The wallets this giveaway's POL can go back to: its owner's verified wallets (an admin acting on it sees the owner's). */
+    getGiveawaySendBackWallets: (id: string) =>
+      apiFetch<{ wallets: string[] }>(`/api/giveaways/${encodeURIComponent(id)}/send-back-wallets`),
 
     // Account
     updateProfile: (displayName: string) =>
