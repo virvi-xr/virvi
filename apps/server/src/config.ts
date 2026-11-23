@@ -223,15 +223,15 @@ export function giveawaysFrom(e: Record<string, string | undefined>) {
   const jobEveryRaw = e.GIVEAWAY_JOB_EVERY_MS
   if (jobEveryRaw && !/^\d+$/.test(jobEveryRaw)) throw new Error('GIVEAWAY_JOB_EVERY_MS must be a whole number')
   const tankMinWeiByChain: Record<GiveawayChain, bigint> = {
-    polygon: pol('GIVEAWAY_TANK_MIN_POL', '5'),
-    'polygon-amoy': pol('GIVEAWAY_TANK_MIN_POL_AMOY', '0.05'),
+    polygon: pol('GIVEAWAY_GAS_TANK_MIN_POL', '5'),
+    'polygon-amoy': parseEther('0.05'),
   }
   return {
     enabled: !!raw,
     walletSecret: raw ? Buffer.from(raw, 'hex') : null,
     /** The shared gas tank's key: pays for the giveaways of paid accounts. Null: no tank. */
     gasKey: validDeployKey(e.GIVEAWAY_GAS_KEY, 'GIVEAWAY_GAS_KEY'),
-    /** The tank's floor per chain; tankMinWei is Polygon's. */
+    /** The tank's floor per chain: GIVEAWAY_GAS_TANK_MIN_POL on Polygon (default 5), a fixed 0.05 POL on Amoy; tankMinWei is Polygon's. */
     tankMinWei: tankMinWeiByChain.polygon,
     tankMinWeiByChain,
     jobEveryMs: jobEveryRaw ? Number(jobEveryRaw) || GIVEAWAY_JOB_EVERY_MS_DEFAULT : GIVEAWAY_JOB_EVERY_MS_DEFAULT,

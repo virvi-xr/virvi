@@ -25,7 +25,9 @@ describe('giveawaysFrom (LIV-194)', () => {
 
   it('refuses a bad secret without echoing it', () => {
     expect(() => giveawaysFrom({ GIVEAWAY_WALLET_SECRET: 'abc' })).toThrow(/GIVEAWAY_WALLET_SECRET must be 64 hex/)
-    try { giveawaysFrom({ GIVEAWAY_WALLET_SECRET: 'abc' }) } catch (e) { expect(String(e)).not.toContain('abc\'') }
+    const bad = 'cd'.repeat(31) + 'c'
+    expect(() => giveawaysFrom({ GIVEAWAY_WALLET_SECRET: bad })).toThrow(/GIVEAWAY_WALLET_SECRET must be 64 hex/)
+    try { giveawaysFrom({ GIVEAWAY_WALLET_SECRET: bad }) } catch (e) { expect(String((e as Error).message)).not.toContain(bad) }
   })
 
   it('checks the gas key, and reuses the BEAT RPC variables', () => {
@@ -35,9 +37,9 @@ describe('giveawaysFrom (LIV-194)', () => {
   })
 
   it('reads the tank floor and job interval', () => {
-    const g = giveawaysFrom({ GIVEAWAY_TANK_MIN_POL: '2.5', GIVEAWAY_JOB_EVERY_MS: '5000' })
+    const g = giveawaysFrom({ GIVEAWAY_GAS_TANK_MIN_POL: '2.5', GIVEAWAY_JOB_EVERY_MS: '5000' })
     expect(g.tankMinWei).toBe(25n * 10n ** 17n)
     expect(g.jobEveryMs).toBe(5000)
-    expect(() => giveawaysFrom({ GIVEAWAY_TANK_MIN_POL: 'x' })).toThrow(/GIVEAWAY_TANK_MIN_POL/)
+    expect(() => giveawaysFrom({ GIVEAWAY_GAS_TANK_MIN_POL: 'x' })).toThrow(/GIVEAWAY_GAS_TANK_MIN_POL/)
   })
 })
