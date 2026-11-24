@@ -109,6 +109,14 @@ Sign-in is optional for seeing AR spaces. It is needed only to track a BEAT.
   (default 150 m, 50–1000 m). Without a pin, no location check. The pin locks at go-live with the rest of the location
   and is **not** put in the token's metadata. **[my call: the address alone can't be checked without geocoding, and a
   pin is more exact indoors]**
+- **Suggested pin [owner, 2026-11-24].** When the host has typed the venue's address, the form suggests a pin from it:
+  the server geocodes the address (street, venue, city or region, country) and the form shows the pin on a map with
+  "Suggested from the address. Drag it to the entrance if it's off." The host accepts, drags or clears it. A failed or
+  empty lookup says "Couldn't find that address on the map. Drop the pin yourself." Geocoding runs only on the host's
+  request (a **Suggest from address** button, and once automatically when the address fields first become complete),
+  server side, with the address alone (no account or user data). **[my call: OpenStreetMap's Nominatim, behind a
+  server route with a cache and 1 request per second, the map drawn with Leaflet and OpenStreetMap tiles; the
+  geocoder sits behind one function so it can be swapped]**
 
 ### 3. Claiming in an AR space (iPhone and Quest)
 
