@@ -177,6 +177,14 @@ async function loadManageable(c: BeatCaller, beatId: string) {
   return { row, sceneIds }
 }
 
+/** Throws unless the caller may run events on the BEAT's scenes (or made it): 404 for no such BEAT, 403 otherwise. */
+export async function assertBeatHost(c: BeatCaller, beatId: string): Promise<void> {
+  if (!UUID.test(beatId)) throw notFound()
+  const row = await db.query.beats.findFirst({ where: eq(beats.id, beatId) })
+  if (!row) throw notFound()
+  if (!(await canManage(c, row, await sceneIdsOf(row.id)))) throw new BeatError(403, 'forbidden', "You can't change this BEAT.")
+}
+
 export async function getBeat(c: BeatCaller, beatId: string): Promise<PublicBeat> {
   const { row } = await loadVisible(c, beatId)
   return (await toPublic([row]))[0]

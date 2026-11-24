@@ -5,9 +5,11 @@ import { actorFromClaims } from '../auth/actor.js'
 import { isAdminRequest } from '../auth/admin.js'
 import { boundScene, fromParam } from '../auth/scene-from.js'
 import {
-  BeatError, beatAvailability, cancelBeat, checkoutBeat, createBeat, endBeatEarly, getBeat, listBeats, listClaimants, listSceneBeats, mayRunBeatsIn,
+  BeatError, assertBeatHost, beatAvailability, cancelBeat, checkoutBeat, createBeat, endBeatEarly, getBeat, listBeats, listClaimants, listSceneBeats, mayRunBeatsIn,
   quoteBeat, raiseBeatCap, releaseBeatMints, removeBeatClaim, sceneExists, updateBeat, type BeatCaller,
 } from './service.js'
+import { beatArcPdf, ensureBeatArc } from './arc.js'
+import { MARKER_STYLES, type MarkerStyle } from '../ar/printfiles.js'
 import { checkInBeat, claimBeat, currentBeat, stopTrackingBeat, trackBeat } from './visitor.js'
 import walletBeatsRoutes, { WALLET_BEATS_ROUTE, collectionFor, walletsOf } from './collection.js'
 import beatMetadataRoutes, { BEAT_METADATA_ROUTE } from './metadata.js'
@@ -87,6 +89,31 @@ export default async function beatRoutes(app: FastifyInstance) {
   app.get<{ Params: { beatId: string } }>('/api/beats/:beatId/claimants', beatRead, async (request, reply) => {
     try {
       return reply.send(await listClaimants(await caller(request), request.params.beatId))
+    } catch (e) {
+      return fail(reply, e)
+    }
+  })
+
+  // The in-person BEAT's printed ARC: host-only (no scene pass), made on first request
+  app.get<{ Params: { beatId: string } }>('/api/beats/:beatId/arc', async (request, reply) => {
+    try {
+      await assertBeatHost(await caller(request), request.params.beatId)
+      return reply.send({ code: (await ensureBeatArc(request.params.beatId)).code })
+    } catch (e) {
+      return fail(reply, e)
+    }
+  })
+
+  app.get<{ Params: { beatId: string }; Querystring: { style?: unknown } }>('/api/beats/:beatId/arc/files', async (request, reply) => {
+    try {
+      await assertBeatHost(await caller(request), request.params.beatId)
+      const style = request.query.style ?? 'normal'
+      if (!MARKER_STYLES.includes(style as MarkerStyle)) return reply.status(400).send({ error: 'bad_request', message: 'Style is normal or inverted.' })
+      const { pdf, code } = await beatArcPdf(request.params.beatId, style as MarkerStyle)
+      return reply
+        .header('content-type', 'application/pdf')
+        .header('content-disposition', `attachment; filename="virvi-arc-${code}-beat${style === 'inverted' ? '-inverted' : ''}.pdf"`)
+        .send(pdf)
     } catch (e) {
       return fail(reply, e)
     }

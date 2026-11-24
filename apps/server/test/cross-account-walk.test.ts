@@ -273,6 +273,8 @@ const CASES: Case[] = [
   { route: 'GET /api/beats/:beatId', url: (f) => `/api/beats/${f.beat.id}` },
   { route: 'PATCH /api/beats/:beatId', url: (f) => `/api/beats/${f.beat.id}`, body: () => ({ name: 'pwned' }) },
   { route: 'GET /api/beats/:beatId/claimants', url: (f) => `/api/beats/${f.beat.id}/claimants` },
+  { route: 'GET /api/beats/:beatId/arc', url: (f) => `/api/beats/${f.beat.id}/arc` },
+  { route: 'GET /api/beats/:beatId/arc/files', url: (f) => `/api/beats/${f.beat.id}/arc/files` },
   { route: 'POST /api/beats/:beatId/cancel', url: (f) => `/api/beats/${f.beat.id}/cancel` },
   { route: 'POST /api/beats/:beatId/end-early', url: (f) => `/api/beats/${f.beat.id}/end-early` },
   { route: 'GET /api/beats/:beatId/quote', url: (f) => `/api/beats/${f.beat.id}/quote?cap=150` },

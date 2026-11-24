@@ -470,7 +470,19 @@ const MAX_PLAQUE_ON_LETTER_MM = 196 // 10 mm margins each side; leaves room for 
 const num = (n: number) => String(Math.round(n * 1000) / 1000)
 const pdfText = (s: string) => s.replace(/[\\()]/g, (c) => `\\${c}`)
 
-export function paperPdf(markerId: number, diameterMm: number, style: MarkerStyle = 'normal'): Buffer {
+/** Words wrapped to lines of at most 80 characters; anything the page font can't show (outside Latin-1) prints as "?". */
+function wrapCaption(caption: string): string[] {
+  const lines: string[] = []
+  let line = ''
+  for (const word of caption.replace(/[^\x20-\xff]/g, '?').split(/\s+/).filter(Boolean)) {
+    if (line && line.length + 1 + word.length > 80) { lines.push(line); line = word } else line = line ? `${line} ${word}` : word
+  }
+  if (line) lines.push(line)
+  return lines
+}
+
+/** `caption` (optional) is printed in black under the code line, wrapped to the page. */
+export function paperPdf(markerId: number, diameterMm: number, style: MarkerStyle = 'normal', caption?: string): Buffer {
   const side = ringPlaqueSizeMm(diameterMm)
   if (side > MAX_PLAQUE_ON_LETTER_MM) throw new Error('too_large_for_paper')
   const code = ringCodeOf(markerId)
@@ -517,6 +529,7 @@ export function paperPdf(markerId: number, diameterMm: number, style: MarkerStyl
   for (let t = 0; t <= 100; t += 10) ops.push(`${X(15 + t)} ${Y(barY)} m ${X(15 + t)} ${Y(barY - 2)} l S`)
   text(118, barY + 2.5, 11, '100 mm')
   text(15, barY + 12, 11, `${code}   virvi.io/s/${code}`)
+  if (caption) wrapCaption(caption).forEach((line, i) => text(15, barY + 22 + i * 5.5, 10, line))
 
   const content = ops.join('\n')
   const objects = [
