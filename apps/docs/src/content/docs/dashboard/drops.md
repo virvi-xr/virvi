@@ -86,6 +86,25 @@ Each wallet can claim a giveaway once, however many accounts it uses. If a send 
 
 Virvi-built scenes get the card the next time they are redeployed. A scene you build yourself with `@virvixr/dcl` needs version 2.18.0 or later.
 
+## Placing a giveaway kiosk
+
+A **giveaway kiosk** is something visitors walk up to and click to open the giveaway card, like a booth at an event. In a scene with a kiosk, the card no longer appears by itself: it opens when a visitor clicks a kiosk, and they can close it again.
+
+1. In the dashboard, open the scene, go to the **Kiosks** tab and choose **+ Add Giveaway kiosk**.
+2. Under **Giveaway**, pick one of your giveaways. Picking it adds this scene to the giveaway's scenes, so you don't have to add it on the Drops page too.
+3. Choose how the item shows under **Show the item as**:
+   - **Marketplace image:** the giveaway's first item, as the Decentraland Marketplace shows it.
+   - **Your image:** an image you upload or pick.
+   - **3D model:** a model you upload or pick. Like other models, it appears in-world after `npx @virvixr/dcl sync` and a redeploy.
+   - **Mannequin:** an avatar wearing the giveaway's wearables, with a male or female body, or **Dressed like the visitor** (their own avatar with the giveaway's wearables on).
+4. **Show the booth** puts the item in a booth with a roof sign, a panel and a counter with a Claim button. Pick the booth's three colours (roof and sides, panel, counter) and, if you like, a **Booth image** shown as a banner on the roof sign. Switch the booth off to show the item on its own.
+5. Optional: **Spin the item**, change the **Hover text** (it says "Claim" unless you change it), and move or resize the item with **Height** and **Size**.
+6. Place the kiosk with its instance's position, rotation and scale, like any other item.
+
+A scene shows one giveaway at a time. A kiosk whose giveaway isn't the one open in the scene right now (it is switched off, has ended, or isn't open yet) still stands there, but clicking it says **Not open right now**. Visitors without a wallet who click a kiosk see the **Connect a wallet** notice.
+
+Kiosks show in Decentraland. Virvi-built scenes get them the next time they are redeployed; a scene you build yourself with `@virvixr/dcl` needs version 2.19.0 or later. Other platforms don't show kiosks yet.
+
 ## Following claims
 
 The giveaway's page lists every claim with its status: waiting, minting, sent or failed. Sent claims have a Polygonscan link. Wallets are shown short. Totals are at the top.

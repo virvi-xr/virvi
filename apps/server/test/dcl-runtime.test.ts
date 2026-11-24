@@ -12,7 +12,7 @@ describe('dcl runtime', () => {
     // The HUD registers with a virtual canvas (scales on high-DPI screens) and textures its launcher from the icon
     expect(src).toContain('virtualWidth')
     expect(src).toContain('images/virvi/hud-v.png')
-    expect(DCL_RUNTIME_VERSION).toBe(17)
+    expect(DCL_RUNTIME_VERSION).toBe(18)
   })
 
   it('names Virvi items for analytics (v4)', async () => {
@@ -107,7 +107,7 @@ describe('dcl runtime', () => {
   })
 
   it('carries the giveaway card: consent, the time left, Claim, On its way (v17, LIV-194)', async () => {
-    const src = Buffer.from((await runtimeFiles()).get('bin/index.js')!).toString('utf8')
+    const src = Buffer.from((await runtimeFiles(17)).get('bin/index.js')!).toString('utf8')
     expect(src).toContain('giveaway_available')
     expect(src).toContain('/giveaway/current')
     expect(src).toContain('Agree and continue')
@@ -118,8 +118,20 @@ describe('dcl runtime', () => {
     expect(src).toContain('2.18.0')
   })
 
-  it('keeps v3 to v16 for deploys still waiting to be signed', async () => {
-    for (const v of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) expect((await runtimeFiles(v)).has('bin/index.js')).toBe(true)
+  it('carries giveaway kiosks: the booth, mannequins, and the card opened from a kiosk (v18, @virvixr/dcl 2.19.0)', async () => {
+    const src = Buffer.from((await runtimeFiles()).get('bin/index.js')!).toString('utf8')
+    expect(src).toContain('kiosk_click')
+    expect(src).toContain('kiosks_changed')
+    expect(src).toContain('Not open right now.')
+    expect(src).toContain('virvi-kiosk-')
+    expect(src).toContain('urn:decentraland:off-chain:base-avatars:BaseFemale')
+    // Still the giveaway card
+    expect(src).toContain('Agree and continue')
+    expect(src).toContain('2.19.0')
+  })
+
+  it('keeps v3 to v17 for deploys still waiting to be signed', async () => {
+    for (const v of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]) expect((await runtimeFiles(v)).has('bin/index.js')).toBe(true)
   })
 
   it('speaks the Virvi protocol only', async () => {
