@@ -113,6 +113,12 @@ export const BEAT_LOCATION_MAX = { platform: 60, url: 500, venue: 100, city: 80,
  * scenes (the scene's name with its World name or Genesis City coordinates) when it is saved. The other fields are null
  * where they don't apply. It locks at go-live with the rest of the metadata. Claiming happens only in Virvi scenes.
  */
+/** An in-person BEAT's venue pin: where the app checks that a visitor is, and how many metres around it count. Host-only: never in the token metadata. */
+export interface BeatPin {
+  lat: number
+  lng: number
+  radiusM: number
+}
 export interface BeatLocation {
   type: BeatLocationType
   label: string | null
@@ -123,6 +129,8 @@ export interface BeatLocation {
   country: string | null
   address: string | null
   mapUrl: string | null
+  /** In-person only; the host's own view (locks at go-live with the rest). */
+  pin?: BeatPin | null
 }
 
 export interface PublicBeat {

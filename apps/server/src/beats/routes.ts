@@ -8,6 +8,8 @@ import {
   BeatError, assertBeatHost, beatAvailability, cancelBeat, checkoutBeat, createBeat, endBeatEarly, getBeat, listBeats, listClaimants, listSceneBeats, mayRunBeatsIn,
   quoteBeat, raiseBeatCap, releaseBeatMints, removeBeatClaim, sceneExists, updateBeat, type BeatCaller,
 } from './service.js'
+import { geocodeAddress, parseGeocodeBody } from './geocode.js'
+import { TokenBucketLimiter } from '../analytics/limiter.js'
 import { beatArcPdf, ensureBeatArc } from './arc.js'
 import { MARKER_STYLES, type MarkerStyle } from '../ar/printfiles.js'
 import { checkInBeat, claimBeat, currentBeat, stopTrackingBeat, trackBeat } from './visitor.js'
@@ -22,6 +24,9 @@ export const beatCaller = async (request: FastifyRequest): Promise<BeatCaller> =
   passSceneId: request.user.kind === 'scene' ? request.user.sceneId ?? null : null,
 })
 
+/** Address lookups per user: 10 a minute. */
+const GEOCODE_LIMIT = { capacity: 10, refillPerSec: 10 / 60 }
+
 /**
  * BEAT host routes (LIV-11). Dark unless BEAT_ENABLED: every route but availability answers 404.
  * Who may do what is decided in the service (the creator, or `events.run` on the BEAT's scenes). Only the read routes take
@@ -31,6 +36,7 @@ export const beatCaller = async (request: FastifyRequest): Promise<BeatCaller> =
  * scene (404 otherwise). The token metadata (metadata.ts) is public and skips `authenticate`.
  */
 export default async function beatRoutes(app: FastifyInstance) {
+  const geocodeLimiter = new TokenBucketLimiter()
   // Dark launch: before authenticate, so a signed-out caller can't tell the routes exist either
   app.addHook('onRequest', async (request, reply) => {
     if (!config.beats.enabled && request.routeOptions.url !== '/api/beats/availability') {
@@ -59,6 +65,15 @@ export default async function beatRoutes(app: FastifyInstance) {
   }
 
   app.get('/api/beats/availability', async (request, reply) => reply.send(beatAvailability(await isAdminRequest(request))))
+
+  // Suggests a venue pin from the address; the host can drag it. Own budget per user: Nominatim allows little.
+  app.post('/api/beats/geocode', async (request, reply) => {
+    const limit = geocodeLimiter.take(`geocode:${request.user.id}`, 1, GEOCODE_LIMIT.capacity, GEOCODE_LIMIT.refillPerSec)
+    if (!limit.ok) return reply.status(429).send({ error: 'rate_limited', message: 'Too many address lookups. Try again in a minute.', retryAfter: Math.ceil(limit.retryAfterMs / 1000) })
+    const parts = parseGeocodeBody(body(request))
+    if (!parts) return reply.status(400).send({ error: 'bad_request', message: 'Give a country and a venue or an address.' })
+    return reply.send({ pin: await geocodeAddress(parts) })
+  })
 
   app.get('/api/beats', async (request, reply) => reply.send(await listBeats(await caller(request))))
 

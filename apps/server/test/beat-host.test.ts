@@ -124,7 +124,7 @@ describe('BEAT host API (LIV-11)', () => {
 
     it('location: a scene BEAT by default, labelled from its scenes (World name or Genesis City coordinates)', async () => {
       const res = await create()
-      expect(res.json().location).toEqual({ type: 'scene', label: 'A', platform: null, url: null, venue: null, city: null, country: null, address: null, mapUrl: null })
+      expect(res.json().location).toEqual({ type: 'scene', label: 'A', platform: null, url: null, venue: null, city: null, country: null, address: null, mapUrl: null, pin: null })
       await db.insert(dclWorldDestinations).values({ sceneId: sceneA, ownerUserId: host.id, ownerWallet: host.wallet!, worldName: 'moon.dcl.eth', base: '0,0', parcels: ['0,0'], mode: 'virvi' })
       await db.insert(dclWorldDestinations).values({ sceneId: sceneB, ownerUserId: host.id, ownerWallet: host.wallet!, kind: 'parcels', worldName: null, base: '10,-4', parcels: ['10,-4'], mode: 'virvi' })
       const sorted = [sceneA, sceneB].sort()

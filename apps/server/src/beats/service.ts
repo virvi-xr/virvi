@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gt, inArray, lt, ne, or, sql } from 'drizzle-orm'
 import {
   BEAT_DESCRIPTION_MAX, BEAT_IMAGE_MIN_PX, BEAT_MIN_PRESENT_DEFAULT_MINUTES, BEAT_MIN_PRESENT_MAX_MINUTES, BEAT_NAME_MAX,
-  BEAT_CLAIM_GRACE_MS, BEAT_LOCATION_MAX, BEAT_LOCATION_TYPES, BEAT_RETIRED_NOTE, BEAT_SUPPLY_CAP_DEFAULT, BEAT_SUPPLY_CAP_MAX, beatTxUrl,
+  BEAT_CLAIM_GRACE_MS, BEAT_LOCATION_MAX, BEAT_LOCATION_TYPES, BEAT_PIN_RADIUS, BEAT_RETIRED_NOTE, BEAT_SUPPLY_CAP_DEFAULT, BEAT_SUPPLY_CAP_MAX, beatTxUrl,
   type BeatChain, type BeatLocation, type BeatLocationType, type PublicBeat,
 } from '@virvixr/shared'
 import { config } from '../config.js'
@@ -155,6 +155,7 @@ export function locationOf(r: BeatRow): BeatLocation {
   return {
     type: r.locationType, label: r.locationLabel, platform: r.locationPlatform, url: r.locationUrl, venue: r.locationVenue,
     city: r.locationCity, country: r.locationCountry, address: r.locationAddress, mapUrl: r.locationMapUrl,
+    pin: r.pinLat !== null && r.pinLng !== null && r.pinRadiusM !== null ? { lat: r.pinLat, lng: r.pinLng, radiusM: r.pinRadiusM } : null,
   }
 }
 
@@ -308,7 +309,7 @@ function parseHold(v: unknown): boolean {
   return v
 }
 
-type LocationFields = Pick<typeof beats.$inferInsert, 'locationType' | 'locationPlatform' | 'locationUrl' | 'locationVenue' | 'locationCity' | 'locationCountry' | 'locationAddress' | 'locationMapUrl'>
+type LocationFields = Pick<typeof beats.$inferInsert, 'locationType' | 'locationPlatform' | 'locationUrl' | 'locationVenue' | 'locationCity' | 'locationCountry' | 'locationAddress' | 'locationMapUrl' | 'pinLat' | 'pinLng' | 'pinRadiusM'>
 const badLocation = (m: string) => new BeatError(400, 'bad_location', m)
 
 /** A trimmed text of at most `max` characters; null when empty and not `required`. */
@@ -336,12 +337,13 @@ function locationUrl(v: unknown, max: number, what: string, required: boolean): 
  * city, country, address?, mapUrl? }`. Fields that don't belong to the type are dropped. URLs are http(s) only.
  */
 function parseLocation(v: unknown): LocationFields {
-  if (v === undefined || v === null) return { locationType: 'scene', locationPlatform: null, locationUrl: null, locationVenue: null, locationCity: null, locationCountry: null, locationAddress: null, locationMapUrl: null }
+  if (v === undefined || v === null) return { locationType: 'scene', locationPlatform: null, locationUrl: null, locationVenue: null, locationCity: null, locationCountry: null, locationAddress: null, locationMapUrl: null, pinLat: null, pinLng: null, pinRadiusM: null }
   if (typeof v !== 'object' || Array.isArray(v)) throw badLocation('Say where the event is.')
   const o = v as Record<string, unknown>
   if (typeof o.type !== 'string' || !(BEAT_LOCATION_TYPES as readonly string[]).includes(o.type)) throw badLocation('Say where the event is.')
   const type = o.type as BeatLocationType
-  const none = { locationPlatform: null, locationUrl: null, locationVenue: null, locationCity: null, locationCountry: null, locationAddress: null, locationMapUrl: null }
+  const none = { locationPlatform: null, locationUrl: null, locationVenue: null, locationCity: null, locationCountry: null, locationAddress: null, locationMapUrl: null, pinLat: null, pinLng: null, pinRadiusM: null }
+  if (o.pin !== undefined && o.pin !== null && type !== 'in_person') throw badLocation('Only an in-person event can have a pin on the map.')
   if (type === 'scene') return { locationType: 'scene', ...none }
   const M = BEAT_LOCATION_MAX
   if (type === 'online') {
@@ -358,7 +360,22 @@ function parseLocation(v: unknown): LocationFields {
     locationCountry: locationText(o.country, M.country, 'country', true),
     locationAddress: locationText(o.address, M.address, 'street address', false),
     locationMapUrl: locationUrl(o.mapUrl, M.mapUrl, 'map link', false),
+    ...parsePin(o.pin),
   }
+}
+
+/** `pin`: `{ lat, lng, radiusM? }` (radius defaults to 150 m), or none. Stored as three columns. */
+function parsePin(v: unknown): Pick<LocationFields, 'pinLat' | 'pinLng' | 'pinRadiusM'> {
+  if (v === undefined || v === null) return { pinLat: null, pinLng: null, pinRadiusM: null }
+  const bad = () => badLocation('The pin on the map needs a latitude, a longitude and a radius of 50 to 1000 metres.')
+  if (typeof v !== 'object' || Array.isArray(v)) throw bad()
+  const { lat, lng, radiusM } = v as Record<string, unknown>
+  const R = BEAT_PIN_RADIUS
+  if (typeof lat !== 'number' || !Number.isFinite(lat) || lat < -90 || lat > 90) throw bad()
+  if (typeof lng !== 'number' || !Number.isFinite(lng) || lng < -180 || lng > 180) throw bad()
+  const radius = radiusM === undefined || radiusM === null ? R.defaultM : radiusM
+  if (typeof radius !== 'number' || !Number.isInteger(radius) || radius < R.minM || radius > R.maxM) throw bad()
+  return { pinLat: lat, pinLng: lng, pinRadiusM: radius }
 }
 
 const LABEL_MAX = 140
@@ -564,6 +581,7 @@ export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now?
     const location: LocationFields = has(body, 'location') ? parseLocation(body.location) : {
       locationType: row.locationType, locationPlatform: row.locationPlatform, locationUrl: row.locationUrl, locationVenue: row.locationVenue,
       locationCity: row.locationCity, locationCountry: row.locationCountry, locationAddress: row.locationAddress, locationMapUrl: row.locationMapUrl,
+      pinLat: row.pinLat, pinLng: row.pinLng, pinRadiusM: row.pinRadiusM,
     }
     if (paid && supplyCap !== row.supplyCap) throw locked('The supply is paid for. Add more supply instead.')
     const imageMediaId = newImage ?? row.imageMediaId
