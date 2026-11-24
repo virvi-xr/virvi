@@ -343,6 +343,25 @@ export async function setScenes(c: GiveawayCaller, id: string, body: Record<stri
   return view(g)
 }
 
+/**
+ * A giveaway kiosk placed in a scene links its giveaway there (the scene is added to the giveaway's scenes when it isn't
+ * one yet). The same rules as picking scenes: the caller manages the giveaway (404 otherwise) and may run events in the
+ * scene (403), and a giveaway being deleted takes no more scenes.
+ */
+export async function linkGiveawayToScene(c: GiveawayCaller, id: string, sceneId: string): Promise<void> {
+  const g = await load(c, id)
+  refuseWhileDeleting(g)
+  if (!(await sceneExists(sceneId)) || !(await mayRunBeatsIn(c, sceneId))) {
+    throw new GiveawayError(403, 'forbidden', "You can't run events in this scene.")
+  }
+  const linked = await db.select({ sceneId: giveawayScenes.sceneId }).from(giveawayScenes).where(eq(giveawayScenes.giveawayId, g.id))
+  if (linked.some((r) => r.sceneId === sceneId)) return
+  if (linked.length >= GIVEAWAY_SCENES_MAX) {
+    throw new GiveawayError(409, 'too_many_scenes', `A giveaway can be in up to ${GIVEAWAY_SCENES_MAX} scenes.`)
+  }
+  await db.insert(giveawayScenes).values({ giveawayId: g.id, sceneId }).onConflictDoNothing()
+}
+
 // ── Claims ───────────────────────────────────────────────────────────────────
 
 // The cursor keeps created_at to the microsecond, as Postgres stores it (a JS Date would drop to milliseconds and skip

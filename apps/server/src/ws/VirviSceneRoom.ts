@@ -33,7 +33,8 @@ import { authorizeSceneMessage, propertiesOf, type GuardResult, type GuardTarget
 import { getSceneLibraryItem } from '../library/scene-library.js'
 import { venueTopic, publishSceneTouched, STREAMS_TOPIC, type VenueEvent, type StreamStatusEvent } from '../realtime/bus.js'
 import { normalizeUrl, withLiveStatus, withLiveVideo } from '../streaming/live-status.js'
-import { FRAMEABLE_TYPES, VideoSourceType, checkFrame, type VenueAccessMessage } from '@virvixr/shared'
+import { withKioskElement, withKioskPreset } from '../giveaways/kiosk.js'
+import { FRAMEABLE_TYPES, KIOSK_ITEMS_KEY, VideoSourceType, checkFrame, type VenueAccessMessage } from '@virvixr/shared'
 import { screenShowingsMessages, SHOWINGS_REFRESH_MS } from '../scenes/showings.js'
 import { hold, holderOf, release, releaseAll, sweepExpired } from './draft-holds.js'
 import { checkParentInstance } from '../scenes/instance-parent.js'
@@ -345,7 +346,7 @@ export class VirviSceneRoom extends Room {
           })
 
           if (preset) {
-            const serialized = await withLiveStatus(serializePreset(preset))
+            const serialized = await withKioskPreset(await withLiveStatus(serializePreset(preset)))
             this.broadcast('scene_change_preset', {
               scenePreset: serialized,
               user: this.getClientMeta(client),
@@ -727,7 +728,7 @@ export class VirviSceneRoom extends Room {
           with: { elements: { with: { instances: true } } },
         })
         if (preset) {
-          this.broadcast('scene_change_preset', { scenePreset: await withLiveStatus(serializePreset(preset)), user: null })
+          this.broadcast('scene_change_preset', { scenePreset: await withKioskPreset(await withLiveStatus(serializePreset(preset))), user: null })
           await this.sendShowings()
         }
         return
@@ -771,7 +772,7 @@ export class VirviSceneRoom extends Room {
     this.broadcast('scene_preset_update', {
       action: 'upsert',
       element: element.type,
-      elementData: element.type === 'video' ? await withLiveVideo(serializeSingleElement(element)) : serializeSingleElement(element),
+      elementData: element.type === 'video' ? await withLiveVideo(serializeSingleElement(element)) : await withKioskElement(element.type, serializeSingleElement(element)),
     })
   }
 
@@ -846,7 +847,7 @@ export class VirviSceneRoom extends Room {
         return
       }
 
-      const serialized = await withLiveStatus(serializePreset(preset))
+      const serialized = await withKioskPreset(await withLiveStatus(serializePreset(preset)))
 
       client.send('scene_preset_update', {
         action: 'init',
@@ -986,6 +987,12 @@ export class VirviSceneRoom extends Room {
       const c = elementType && FRAMEABLE_TYPES.has(elementType) ? checkFrame(out.frame) : null
       if (c?.ok) out.frame = c.value
       else delete out.frame
+    }
+    // A giveaway kiosk's giveaway is picked in the dashboard only, where the server checks the caller manages it; the
+    // item list is the server's own (see giveaways/kiosk.ts)
+    if (elementType === 'claim_point') {
+      delete out.giveawayId
+      delete out[KIOSK_ITEMS_KEY]
     }
     return out
   }

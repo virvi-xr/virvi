@@ -89,7 +89,7 @@ const scheduleFields = {
 }
 
 const SHOWING_FIELDS = ['id', 'title', 'description', 'posterUrl', 'items', 'enabled', 'eventId', 'recurrence', 'startDate', 'startTime', 'weekdays', 'timezone'] as const
-const ELEMENT_TYPES = ['image', 'video', 'nft', 'sound', 'widget', 'model', 'custom', 'ad_space'] as const
+const ELEMENT_TYPES = ['image', 'video', 'nft', 'sound', 'widget', 'model', 'custom', 'ad_space', 'claim_point'] as const
 const INSTANCE_FIELDS = ['position', 'rotation', 'scale', 'enabled'] as const
 
 export const WRITE_TOOLS: ToolDef<any>[] = [

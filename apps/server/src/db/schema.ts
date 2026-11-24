@@ -40,6 +40,8 @@ export const elementTypeEnum = pgEnum('element_type', [
   'custom',
   'model',
   'ad_space',
+  // Giveaway kiosks
+  'claim_point',
 ])
 
 export const orgRoleEnum = pgEnum('org_role', ['owner', 'admin', 'member'])

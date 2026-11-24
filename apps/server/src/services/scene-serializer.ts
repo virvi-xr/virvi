@@ -3,7 +3,7 @@
  *
  * Transforms the generic V2 database format (scene_elements with type + properties JSONB)
  * into the V1-compatible wire format that adapters expect:
- *   { videos: [...], images: [...], sounds: [...], models: [...], widgets: [...], claimPoints: [...] }
+ *   { videos: [...], images: [...], sounds: [...], models: [...], widgets: [...], claimPoints: [...], adSpaces: [...] }
  *
  * Each element's `properties` JSONB is flattened into the config object,
  * and `id` is mapped to `sk` for backward compatibility with V1 adapters.
@@ -145,7 +145,7 @@ export function serializePreset(preset: DbPreset): SerializedPreset {
     models: byType('model'),
     nfts: byType('nft'),
     widgets: byType('widget'),
-    claimPoints: byType('claimpoint'),
+    claimPoints: byType('claim_point'),
     adSpaces: byType('ad_space'),
   }
 }

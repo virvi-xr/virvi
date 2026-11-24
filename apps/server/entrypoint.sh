@@ -612,6 +612,11 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TYPE element_type ADD VALUE IF NOT EXISTS 'model'\`;
         console.log('[virvi-server] model enum value ensured');
       } catch(e) { console.log('[virvi-server] model enum:', e.message); }
+      // Giveaway kiosks; matches elementTypeEnum in src/db/schema.ts
+      try {
+        await sql\`ALTER TYPE element_type ADD VALUE IF NOT EXISTS 'claim_point'\`;
+        console.log('[virvi-server] claim_point enum value ensured');
+      } catch(e) { console.log('[virvi-server] claim_point enum:', e.message); }
       // Hyperfy analytics location kind
       try {
         await sql\`ALTER TYPE analytics_scene_kind ADD VALUE IF NOT EXISTS 'hyperfy'\`;

@@ -1,4 +1,4 @@
-import { checkClickEvent, checkFrame, FRAMEABLE_TYPES } from '@virvixr/shared'
+import { checkClickEvent, checkFrame, checkKioskProperties, FRAMEABLE_TYPES, kioskSettings } from '@virvixr/shared'
 import { dclHudStatus, virviDeploysDcl } from '../scenes/hud-version.js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { eq, and, or, isNull, sql, inArray } from 'drizzle-orm'
@@ -28,6 +28,8 @@ import { getSubscription } from '../integrations/stripe.js'
 import { liveScene } from '../scenes/live.js'
 import { mayManageDeletion } from '../scenes/deleted.js'
 import { authorizeVideoControl } from '../ws/scene-guard.js'
+import { isAdminRequest } from '../auth/admin.js'
+import { GiveawayError, linkGiveawayToScene } from '../giveaways/host.js'
 import { checkParentInstance } from '../scenes/instance-parent.js'
 import { boundScene, fromElement, fromInstance, fromParam, fromPreset, isScenePass } from '../auth/scene-from.js'
 import { SceneGone, ThumbnailError, bodyLimitFor, removeSceneThumbnail, setSceneThumbnail } from '../scenes/thumbnail.js'
@@ -73,7 +75,7 @@ interface CreateSceneBody {
 }
 
 interface CreateElementBody {
-  type: 'image' | 'video' | 'nft' | 'sound' | 'widget' | 'model' | 'custom' | 'ad_space'
+  type: 'image' | 'video' | 'nft' | 'sound' | 'widget' | 'model' | 'custom' | 'ad_space' | 'claim_point'
   name: string
   enabled?: boolean
   customId?: string
@@ -197,6 +199,46 @@ function tidyFrame(type: unknown, before: unknown, body: { properties?: unknown 
   if (!c.ok) return bad(c.error)
   if (c.value) p.frame = c.value
   else delete p.frame
+  return true
+}
+
+/**
+ * A giveaway kiosk's settings (`claim_point`) are checked and stored tidied. Picking a giveaway (a new or changed
+ * `giveawayId`) needs a signed-in account that manages it, by the Drops routes' rules (404 for anyone else's, 403 for a
+ * scene the caller can't run events in), and links the giveaway to the scene when it isn't yet. False when the reply
+ * (400 bad_kiosk, 403, 404, 409 or 503 giveaways_off) was sent.
+ */
+async function tidyKiosk(request: FastifyRequest, reply: FastifyReply, type: unknown, before: unknown, sceneId: string): Promise<boolean> {
+  const body = request.body as { properties?: unknown } | null | undefined
+  if (type !== 'claim_point' || !body || body.properties === undefined) return true
+  const c = checkKioskProperties(body.properties)
+  if (!c.ok) {
+    reply.status(400).send({ error: 'bad_kiosk', message: c.error })
+    return false
+  }
+  // In place: the create route has already read `properties` off the body
+  if (body.properties && typeof body.properties === 'object') {
+    const props = body.properties as Record<string, unknown>
+    for (const k of Object.keys(props)) if (!(k in c.value)) delete props[k]
+    Object.assign(props, c.value)
+  }
+  const next = c.value.giveawayId
+  if (typeof next !== 'string' || next === kioskSettings(before).giveawayId) return true
+  if (!config.giveaways.enabled) {
+    reply.status(503).send({ error: 'giveaways_off', message: "Automatic giveaways aren't switched on for this server yet." })
+    return false
+  }
+  if (request.user.kind !== 'account' || request.user.trial) {
+    reply.status(403).send({ error: 'forbidden', message: "Pick the kiosk's giveaway in the Virvi dashboard." })
+    return false
+  }
+  try {
+    await linkGiveawayToScene({ userId: request.user.id, actor: actorFromClaims(request.user), admin: await isAdminRequest(request) }, next, sceneId)
+  } catch (e) {
+    if (!(e instanceof GiveawayError)) throw e
+    reply.status(e.status).send({ ...e.details, error: e.code, message: e.message })
+    return false
+  }
   return true
 }
 
@@ -558,6 +600,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
       const trialRefusal = request.user.trial ? trialElementRefusal(type, properties) : null
       if (trialRefusal) return refuseTrial(request, reply, trialRefusal)
       if (!tidyFrame(type, null, request.body, reply)) return reply
+      if (!(await tidyKiosk(request, reply, type, null, preset.sceneId))) return reply
 
       // A room-set asset gets the scene's own copy of its set (generated and uploaded before the transaction)
       let prepared: PreparedRoomSet | null = null
@@ -632,6 +675,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
       const trialRefusal = request.user.trial ? trialElementChangeRefusal(element, request.body) : null
       if (trialRefusal) return refuseTrial(request, reply, trialRefusal)
       if (!tidyFrame(request.body.type ?? element.type, element.properties, request.body, reply)) return reply
+      if (!(await tidyKiosk(request, reply, request.body.type ?? element.type, element.properties, element.preset.sceneId))) return reply
 
       const updates: Record<string, unknown> = { updatedAt: new Date() }
       for (const key of ['type', 'name', 'enabled', 'customId', 'customRendering', 'clickEvent', 'properties'] as const) {

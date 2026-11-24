@@ -74,9 +74,9 @@ describe('giveaway_available on join (LIV-194)', () => {
     await c.room.leave()
   })
 
-  it("tells a joining client the scene's open giveaway: its name and test flag only", async () => {
+  it("tells a joining client the scene's open giveaway: its name, test flag and id only", async () => {
     const c = await joinScene(gs.url, await setup())
-    expect(await c.waitFor('giveaway_available')).toEqual({ giveaway: { name: 'Launch party', test: false } })
+    expect(await c.waitFor('giveaway_available')).toEqual({ giveaway: { name: 'Launch party', test: false, giveawayId: expect.any(String) } })
   })
 
   it('null when the giveaway is not open', async () => {

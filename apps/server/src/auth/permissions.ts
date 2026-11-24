@@ -185,7 +185,10 @@ export async function can(actor: Actor, sceneId: string, scope: SceneScope, at =
 const PLAYLIST_KEYS = new Set(['playlist', 'playlistIndex'])
 const GRANT_FIELD_KEYS = new Set(['enabled'])
 
-/** Scopes a grant holder needs for this change, or null if grant holders may never make it. */
+/**
+ * Scopes a grant holder needs for this change, or null if grant holders may never make it. Giveaway kiosks
+ * (`claim_point`) have no venue scope: a kiosk links a giveaway, which only the scene's editors place.
+ */
 export function scopesForElementChange(type: string, propertyKeys: string[], fieldKeys: string[]): VenueScope[] | null {
   if (fieldKeys.some((k) => !GRANT_FIELD_KEYS.has(k))) return null
   const base: VenueScope | null =
