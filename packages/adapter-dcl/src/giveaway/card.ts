@@ -24,6 +24,8 @@ export type GiveawayCardState =
   | 'sending'
   | 'sent'
   | 'failed'
+  /** Opened from a giveaway kiosk whose giveaway isn't the scene's open one (or has none). */
+  | 'unavailable'
 
 /** What the card adds to the server's giveaway: who I am here and what I'm doing on it. */
 export interface GiveawayUi {
@@ -39,12 +41,25 @@ export interface GiveawayUi {
   note: string | null
   /** When (ms) the giveaway last came from the server: time present counts on locally from then. */
   seenAt: number | null
+  /**
+   * The scene has giveaway kiosks: the card shows only once one is clicked (`opened`, with the kiosk's giveaway) and
+   * until it is closed. Without kiosks the card shows by itself, as before.
+   */
+  kiosks: boolean
+  opened: KioskOpened | null
 }
 
-export const initialGiveawayUi = (guest: boolean, wallet: string | null): GiveawayUi =>
-  ({ guest, noticeDone: false, wallet, busy: false, note: null, seenAt: null })
+/** The kiosk click that opened the card: the giveaway the kiosk is for (null when the host picked none). */
+export interface KioskOpened { giveawayId: string | null }
 
-export type GiveawayAction = 'agree' | 'claim' | 'stop' | 'view_tx'
+export const initialGiveawayUi = (guest: boolean, wallet: string | null): GiveawayUi =>
+  ({ guest, noticeDone: false, wallet, busy: false, note: null, seenAt: null, kiosks: false, opened: null })
+
+export type GiveawayAction = 'agree' | 'claim' | 'stop' | 'view_tx' | 'close'
+
+/** The Close button a card opened from a kiosk has. */
+export const CLOSE_ACTION = { id: 'close' as const, label: 'Close' }
+export const UNAVAILABLE_LINE = 'Not open right now.'
 
 /** The BEAT card's withdraw label. */
 export const STOP_LABEL = 'Stop tracking'
@@ -70,6 +85,13 @@ const isVisitorGiveaway = (g: CardGiveaway): g is VisitorGiveaway => 'id' in g
 /** One per giveaway: its id, or for a guest's announced giveaway (no id) its name. */
 export const giveawayKey = (g: CardGiveaway | null): string | null => (g ? (isVisitorGiveaway(g) ? g.id : g.name) : null)
 
+/** The giveaway's id, for a guest's announced one too (when the server sent it); null without one. */
+export const giveawayIdOf = (g: CardGiveaway | null): string | null => (g ? (isVisitorGiveaway(g) ? g.id : g.giveawayId ?? null) : null)
+
+/** Whether a kiosk for `giveawayId` is for the scene's giveaway `g` (so clicking it shows that giveaway). */
+export const kioskShows = (g: CardGiveaway | null, opened: KioskOpened): boolean =>
+  !!opened.giveawayId && opened.giveawayId.toLowerCase() === giveawayIdOf(g)?.toLowerCase()
+
 /** Seconds as m:ss. */
 export function stayLeft(seconds: number): string {
   const s = Math.max(0, Math.ceil(seconds))
@@ -89,8 +111,14 @@ export function secondsPresentAt(g: VisitorGiveaway, ui: Pick<GiveawayUi, 'seenA
 }
 
 export function giveawayState(
-  g: CardGiveaway | null, ui: Pick<GiveawayUi, 'guest' | 'noticeDone' | 'seenAt'>, now: number = Date.now(),
+  g: CardGiveaway | null, ui: Pick<GiveawayUi, 'guest' | 'noticeDone' | 'seenAt'> & Partial<Pick<GiveawayUi, 'kiosks' | 'opened'>>, now: number = Date.now(),
 ): GiveawayCardState {
+  if (ui.kiosks) {
+    if (!ui.opened) return 'hidden'
+    if (!kioskShows(g, ui.opened)) return 'unavailable'
+    // Opened from the kiosk: a guest sees the wallet notice until they close it
+    if (ui.guest) return 'guest'
+  }
   if (!g) return 'hidden'
   if (ui.guest) return ui.noticeDone ? 'hidden' : 'guest'
   if (!isVisitorGiveaway(g)) return 'hidden'
@@ -116,10 +144,17 @@ const FAIL_REASONS: Record<string, string> = {
 }
 
 export function giveawayCardView(g: CardGiveaway | null, ui: GiveawayUi, now: number = Date.now()): GiveawayViewModel {
+  const v = cardView(g, ui, now)
+  // A card opened from a kiosk can be closed (one that shows by itself stays, as before)
+  return ui.kiosks && v.visible ? { ...v, actions: [...v.actions, CLOSE_ACTION] } : v
+}
+
+function cardView(g: CardGiveaway | null, ui: GiveawayUi, now: number): GiveawayViewModel {
   const state = giveawayState(g, ui, now)
   const base: GiveawayViewModel = {
     state, visible: state !== 'hidden', title: g?.name ?? '', test: !!g?.test, line: null, notice: null, txUrl: null, actions: [], note: ui.note,
   }
+  if (state === 'unavailable') return { ...base, title: 'Giveaway', test: false, line: UNAVAILABLE_LINE, note: null }
   if (!g) return base
   if (state === 'guest') return { ...base, line: `Connect a wallet to claim ${g.name}.` }
   if (state === 'hidden' || !isVisitorGiveaway(g)) return base

@@ -17,6 +17,9 @@ import {
   VideoEvent,
   videoEventsSystem,
   VideoState as DclVideoState,
+  AvatarShape,
+  AvatarBase,
+  AvatarEquippedData,
 } from '@dcl/sdk/ecs'
 import { Vector3, Quaternion, Color3, Color4 } from '@dcl/sdk/math'
 import { DCL_ENTITIES_PER_PARCEL } from '@virvixr/shared'
@@ -42,6 +45,7 @@ import type {
 } from '@virvixr/shared'
 import { localModelFile, DCL_HUD_PROTOCOL, DCL_HUD_VERSION } from '@virvixr/shared'
 import { adoptPlaced, releasePlaced } from './placements.js'
+import { mannequinShape } from './mannequin.js'
 
 /** Decentraland's entity limit for a scene, from its scene.json metadata: 200 per parcel; undefined when unknown. */
 export function maxEntitiesFor(metadataJson: string | undefined): number | undefined {
@@ -693,6 +697,20 @@ export class DclAdapter implements VirviPlatformAdapter {
       position: { x: t.position.x, y: t.position.y, z: t.position.z },
       rotation: { x: t.rotation.x, y: t.rotation.y, z: t.rotation.z, w: t.rotation.w },
     }
+  }
+
+  /** A giveaway kiosk's mannequin (see mannequin.ts); `player` copies the visitor's avatar as the scene knows it now. */
+  setAvatarShape(entity: EntityHandle, avatar: { bodyShape: 'male' | 'female' | 'player'; wearables: string[] }): void {
+    let visitor = null
+    if (avatar.bodyShape === 'player') {
+      const base = AvatarBase.getOrNull(engine.PlayerEntity)
+      const equipped = AvatarEquippedData.getOrNull(engine.PlayerEntity)
+      visitor = {
+        bodyShapeUrn: base?.bodyShapeUrn, wearableUrns: equipped?.wearableUrns ?? [],
+        skinColor: base?.skinColor, hairColor: base?.hairColor, eyesColor: base?.eyesColor,
+      }
+    }
+    AvatarShape.createOrReplace(entity as Entity, mannequinShape(`virvi-kiosk-${entity}`, avatar, visitor))
   }
 
   setText(entity: EntityHandle, text: string, opts: { fontSize: number }): void {
