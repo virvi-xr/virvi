@@ -6,6 +6,7 @@ import { ImageManager } from './managers/ImageManager.js'
 import { MeshManager } from './managers/MeshManager.js'
 import { SoundManager } from './managers/SoundManager.js'
 import { AdSpaceManager } from './managers/AdSpaceManager.js'
+import { KioskManager } from './managers/KioskManager.js'
 import type { AdHost } from './ads/host.js'
 import { EventBus } from './events/EventBus.js'
 
@@ -47,6 +48,7 @@ export class SceneManager {
       sound: new SoundManager(adapter, storage),
       // keyed by the element type on the wire
       ad_space: new AdSpaceManager(adapter, storage, ads, () => video.isStreamLive()),
+      claim_point: new KioskManager(adapter, storage, events),
     }
   }
 
@@ -144,6 +146,11 @@ export class SceneManager {
     this.managers[element]?.restoreTransform(sk)
   }
 
+  /** How many giveaway kiosk copies the scene shows. */
+  kioskCount(): number {
+    return (this.managers.claim_point as KioskManager).count()
+  }
+
   /** The modelSrc of each model element the platform can't load. */
   missingModelSrcs(): string[] {
     return (this.managers.model as MeshManager).missingSrcs()
@@ -188,5 +195,6 @@ export class SceneManager {
     this.managers.model?.init(preset.models || [])
     this.managers.sound?.init(preset.sounds || [])
     this.managers.ad_space?.init(preset.adSpaces || [])
+    this.managers.claim_point?.init(preset.claimPoints || [])
   }
 }

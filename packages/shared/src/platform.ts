@@ -75,6 +75,12 @@ export interface VirviPlatformAdapter {
   entityCount?(): number;
   /** Optional: show text on the entity (the "Ad" label). Without it, ads show no label. */
   setText?(entity: EntityHandle, text: string, opts: { fontSize: number }): void;
+  /**
+   * Optional: draw the entity as an avatar wearing these wearables (URNs), with a male or female body, or (`player`)
+   * dressed like the visitor, the wearables put on over their outfit. Giveaway kiosks' mannequins use it; without it,
+   * a mannequin kiosk shows no item.
+   */
+  setAvatarShape?(entity: EntityHandle, avatar: { bodyShape: 'male' | 'female' | 'player'; wearables: string[] }): void;
 
   // --- Video ---
   createVideoPlayer(entity: EntityHandle, options: VideoPlayerOptions): void;

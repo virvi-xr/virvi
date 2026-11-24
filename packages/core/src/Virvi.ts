@@ -6,6 +6,7 @@ import { VirviStorageImpl } from './storage.js'
 import type { Selected } from './transform/session.js'
 import { EventBus } from './events/EventBus.js'
 import { AdHost } from './ads/host.js'
+import type { KioskClick } from './managers/KioskManager.js'
 
 // Default API URLs by environment
 const API_URLS: Record<string, string> = {
@@ -635,6 +636,29 @@ export class Virvi {
     }
     this.events.on('giveaway_available', handler)
     return () => this.events.off('giveaway_available', handler)
+  }
+
+  /** A giveaway kiosk was clicked (which one, and the giveaway it is for). Returns an unsubscribe. */
+  onKioskClick(listener: (click: KioskClick) => void): () => void {
+    const handler = (c: KioskClick) => {
+      try { listener(c) } catch { /* swallow */ }
+    }
+    this.events.on('kiosk_click', handler)
+    return () => this.events.off('kiosk_click', handler)
+  }
+
+  /** How many giveaway kiosk copies the scene shows now. */
+  kioskCount(): number {
+    return this.sceneManager.kioskCount()
+  }
+
+  /** Called with the scene's kiosk count whenever it changes (a preset load, a kiosk added or removed). Returns an unsubscribe. */
+  onKiosksChanged(listener: (count: number) => void): () => void {
+    const handler = (n: number) => {
+      try { listener(n) } catch { /* swallow */ }
+    }
+    this.events.on('kiosks_changed', handler)
+    return () => this.events.off('kiosks_changed', handler)
   }
 
   /** A raffle draw happened: spin the wheel. Returns an unsubscribe. */
