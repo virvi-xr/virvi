@@ -62,6 +62,8 @@ export const AR_PAIRING = {
 } as const
 
 export type ArDeviceKind = 'personal' | 'shared'
+/** What a paired device is for: building spaces (`builder`, the default) or visiting them and earning BEATs (`visitor`). */
+export type ArDevicePurpose = 'builder' | 'visitor'
 export type ArDeviceStatus = 'pending' | 'approved' | 'refused' | 'claimed' | 'revoked'
 
 /** POST /api/ar/pair */

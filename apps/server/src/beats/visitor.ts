@@ -254,9 +254,9 @@ export async function claimBeat(
   const seen = await beatOnScene(sceneId, beatId)
   const pre = await myClaimRow(db, seen.id, userId)
   if (pre?.status === 'present') {
-    if (!(await platformCheck(c.platform ?? 'decentraland', pre.wallet, now))) throw profileRequired()
-    await checkNewWallet(c.ip, pre.wallet, now)
-    if (await isWalletBlocked(pre.wallet)) throw beatsBlocked()
+    if (!(await platformCheck(c.platform ?? 'decentraland', pre.wallet!, now))) throw profileRequired()
+    await checkNewWallet(c.ip, pre.wallet!, now)
+    if (await isWalletBlocked(pre.wallet!)) throw beatsBlocked()
   }
   await db.transaction(async (tx) => {
     const [b] = await tx.select().from(beats).where(eq(beats.id, seen.id)).for('update')

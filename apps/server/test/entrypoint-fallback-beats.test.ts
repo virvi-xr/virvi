@@ -33,7 +33,7 @@ function fallbackBlocks(label: string): string[] {
 }
 
 const SCHEMA = 'fallback_beats'
-const TABLES = ['beats', 'beat_scenes', 'beat_claims', 'beat_payments', 'beat_mint_batches', 'beat_network_claims', 'beat_reissue_requests', 'beat_reissue_files', 'beat_reissue_items', 'wallet_blocks', 'account_wallet_events', 'beat_holdings', 'beat_index_cursors']
+const TABLES = ['beats', 'beat_scenes', 'beat_claims', 'beat_payments', 'beat_mint_batches', 'beat_network_claims', 'beat_reissue_requests', 'beat_reissue_files', 'beat_reissue_items', 'wallet_blocks', 'account_wallet_events', 'beat_holdings', 'beat_index_cursors', 'beat_arcs', 'app_attest_keys']
 const SEQUENCES = ['beat_token_id_polygon_amoy_seq', 'beat_token_id_polygon_seq']
 
 type Col = { column_name: string; data_type: string; udt_name: string; is_nullable: string; column_default: string | null }
@@ -61,7 +61,7 @@ async function runFallback(statements: string[]) {
 
 describe('entrypoint schema fallback: BEATs', () => {
   it('creates the BEAT tables, sequences and indexes exactly as schema.ts does, and runs again harmlessly', async () => {
-    const statements = [...fallbackBlocks('Wallet blocks'), ...fallbackBlocks('BEATs')]
+    const statements = [...fallbackBlocks('Wallet blocks'), ...fallbackBlocks('BEATs'), ...fallbackBlocks('BEAT app')]
     await db.execute(sql.raw(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`))
     await db.execute(sql.raw(`CREATE SCHEMA ${SCHEMA}`))
     try {
@@ -122,5 +122,15 @@ describe('entrypoint schema fallback: BEATs', () => {
     const sqlText = fallbackBlocks('BEATs').join('\n')
     expect(sqlText).toContain('CREATE TABLE IF NOT EXISTS beat_holdings')
     expect(sqlText).toContain('CREATE TABLE IF NOT EXISTS beat_index_cursors')
+  })
+
+  it('the app claim additions: event ARCs, App Attest keys, venue pins, app claims and the visitor device purpose', async () => {
+    const sqlText = [...fallbackBlocks('BEATs'), ...fallbackBlocks('BEAT app')].join('\n')
+    for (const frag of [
+      'CREATE TABLE IF NOT EXISTS beat_arcs', 'CREATE TABLE IF NOT EXISTS app_attest_keys',
+      'ALTER TABLE beats ADD COLUMN IF NOT EXISTS pin_lat', 'ALTER TABLE beats ADD COLUMN IF NOT EXISTS pin_lng', 'ALTER TABLE beats ADD COLUMN IF NOT EXISTS pin_radius_m',
+      'ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS source', 'ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS install_key_id',
+      'ALTER TABLE beat_claims ALTER COLUMN wallet DROP NOT NULL', 'ALTER TABLE ar_devices ADD COLUMN IF NOT EXISTS purpose',
+    ]) expect(sqlText).toContain(frag)
   })
 })

@@ -75,7 +75,7 @@ export const STATUS_HELP: Record<BeatStatus, string> = {
   cancelled: 'Cancelled and refunded.',
 }
 export const CLAIM_STATUS_LABELS: Record<BeatClaimStatus, string> = {
-  present: 'Attending', claimed: 'Claimed', minting: 'Sending', minted: 'Delivered', failed: 'Failed', removed: 'Removed by you',
+  present: 'Attending', claimed: 'Claimed', minting: 'Sending', minted: 'Delivered', failed: 'Failed', removed: 'Removed by you', waiting: 'Waiting for a wallet',
 }
 /** A claimed claim waiting for the host's Send. */
 export const HELD_LABEL = 'Waiting for your Send'

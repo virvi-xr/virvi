@@ -516,8 +516,8 @@ async function confirmBatch(client: BeatChainClient, b: Batch, hash: string, log
     const rejected = new Set(client.skippedIn(logs).map(lc))
     const rows = await tx.select({ id: beatClaims.id, wallet: beatClaims.wallet }).from(beatClaims)
       .where(and(eq(beatClaims.batchId, b.id), eq(beatClaims.status, 'minting')))
-    const skip = rows.filter((c) => rejected.has(lc(c.wallet))).map((c) => c.id)
-    const ok = rows.filter((c) => !rejected.has(lc(c.wallet))).map((c) => c.id)
+    const skip = rows.filter((c) => rejected.has(lc(c.wallet!))).map((c) => c.id)
+    const ok = rows.filter((c) => !rejected.has(lc(c.wallet!))).map((c) => c.id)
     if (skip.length) await tx.update(beatClaims).set({ status: 'failed', failReason: 'receiver_rejected' }).where(inArray(beatClaims.id, skip))
     if (ok.length) {
       await tx.update(beatClaims).set({ status: 'minted', mintTx: hash, mintedAt: now, failReason: null }).where(inArray(beatClaims.id, ok))
@@ -615,7 +615,7 @@ async function unminedBatch(
       .where(and(eq(beatClaims.batchId, b.id), eq(beatClaims.status, 'minting')))
     const done: string[] = []
     const rest: string[] = []
-    for (const c of rows) (await client.isMinted(tokenId, c.wallet) ? done : rest).push(c.id)
+    for (const c of rows) (await client.isMinted(tokenId, c.wallet!) ? done : rest).push(c.id)
     await db.transaction(async (tx) => {
       await tx.update(beatMintBatches).set({ status: 'failed', lastError: o.lastError }).where(eq(beatMintBatches.id, b.id))
       if (done.length) {
@@ -790,11 +790,11 @@ async function mintPlan(client: BeatChainClient, beatId: string, tokenId: bigint
       .orderBy(asc(beatClaims.claimedAt), asc(beatClaims.id)).limit(1)
     if (rows.length) {
       const c = rows[0]
-      flagged.delete(lc(c.wallet))
+      flagged.delete(lc(c.wallet!))
       return {
-        ...(await (async () => { const has = await client.codeAt(c.wallet); return { codeCount: has ? 1 : 0, code: [has] } })()),
+        ...(await (async () => { const has = await client.codeAt(c.wallet!); return { codeCount: has ? 1 : 0, code: [has] } })()),
         kind: 'mint', beatId, single: true, claimIds: [c.id],
-        call: { kind: 'mint', tokenId, wallets: [c.wallet] },
+        call: { kind: 'mint', tokenId, wallets: [c.wallet!] },
       }
     }
     singles.delete(beatId)
@@ -805,7 +805,7 @@ async function mintPlan(client: BeatChainClient, beatId: string, tokenId: bigint
     .where(ready)
     .orderBy(asc(beatClaims.claimedAt), asc(beatClaims.id)).limit(limit)
   if (!rows.length) return null
-  const wallets = rows.map((c) => c.wallet)
+  const wallets = rows.map((c) => c.wallet!)
   const code = await codeFlags(client, wallets)
   return {
     kind: 'mint', beatId, single: rows.length === 1, claimIds: rows.map((c) => c.id), codeCount: code.filter(Boolean).length, code,

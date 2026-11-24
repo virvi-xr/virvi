@@ -4,11 +4,19 @@ import {
   BEAT_CHAINS, BEAT_CHAIN_INFO, BEAT_CONSENT_VERSION, BEAT_NAME_MAX, BEAT_DESCRIPTION_MAX, BEAT_SUPPLY_CAP_DEFAULT,
   BEAT_SUPPLY_CAP_MAX, BEAT_MIN_PRESENT_DEFAULT_MINUTES, BEAT_MIN_PRESENT_MAX_MINUTES, BEAT_IMAGE_MIN_PX, BEAT_MAX_BATCH,
   BEAT_CLAIM_GRACE_MS, BEAT_CARD_LEAD_MS, BEAT_RETENTION_DAYS, BEAT_JOB_EVERY_MS, BEAT_SEND_MAX_ATTEMPTS,
-  BEAT_REPRICE_AFTER_MS, BEAT_FEE_BUMP_PERCENT, beatConsentText, beatPriceCents, beatTopupCents, beatTxUrl, beatTokenUrl,
+  BEAT_REPRICE_AFTER_MS, BEAT_FEE_BUMP_PERCENT, beatConsentText, BEAT_APP_CONSENT_VERSION, beatAppConsentText, BEAT_PIN_RADIUS, beatPriceCents, beatTopupCents, beatTxUrl, beatTokenUrl,
 } from '@virvixr/shared'
 
 /** Shared BEAT constants and copy (LIV-11). The shared package has no runner of its own; its tests live here. */
 const P = { baseCents: 500, includedMints: 100, extraMintCents: 2 }
+
+describe('BEAT app consent and pin', () => {
+  it('pins the app consent text, its version and the pin radius', () => {
+    expect(BEAT_APP_CONSENT_VERSION).toBe(1)
+    expect(beatAppConsentText('Launch')).toBe("To track your attendance for the Launch BEAT, Virvi stores your account, how long you're here and, when you claim, the wallet you choose. Virvi checks your location only when you check in and when you claim, and doesn't keep it. The hosts of this event will see your name and time. If you claim, your wallet, this BEAT and the time it was sent are recorded on Polygon, a public blockchain: anyone can see that record, and nobody can delete it. You can stop tracking at any time before you claim, which deletes what was stored.")
+    expect(BEAT_PIN_RADIUS).toEqual({ defaultM: 150, minM: 50, maxM: 1000 })
+  })
+})
 
 describe('BEAT constants', () => {
   it('pins the values', () => {

@@ -23,7 +23,7 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
-import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus, BeatChain, BeatLocationType, BeatStatus, BeatClaimStatus, BeatReissueStatus, BeatReissueLoss, BeatReissueItemState, BeatReissueFileStatus, GiveawayChain, GiveawayClaimStatus, GiveawayPauseReason, GiveawayMintState, SignInMethod, ShowItem } from '@virvixr/shared'
+import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus, BeatChain, BeatLocationType, BeatStatus, BeatClaimStatus, BeatClaimSource, BeatArcKind, ArDevicePurpose, BeatReissueStatus, BeatReissueLoss, BeatReissueItemState, BeatReissueFileStatus, GiveawayChain, GiveawayClaimStatus, GiveawayPauseReason, GiveawayMintState, SignInMethod, ShowItem } from '@virvixr/shared'
 import type { PoolEntry } from '../raffles/draw.js'
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -1299,6 +1299,7 @@ export const arDevices = pgTable('ar_devices', {
   secretHash: text('secret_hash').notNull(), // SHA-256 of the headset's secret, sent at start
   deviceName: text('device_name'),
   kind: text('kind'), // personal | shared, set on approval
+  purpose: text('purpose').$type<ArDevicePurpose>().notNull().default('builder'), // builder | visitor
   status: text('status').notNull().default('pending'), // pending | approved | refused | claimed | revoked
   codeExpiresAt: timestamp('code_expires_at', { withTimezone: true }).notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }), // set on claim; slides forward on each pass for a personal headset
@@ -2877,6 +2878,10 @@ export const beats = pgTable('beats', {
   locationCountry: text('location_country'),
   locationAddress: text('location_address'),
   locationMapUrl: text('location_map_url'),
+  // The venue pin of an in-person BEAT: where the app's location check is made (never stored, only pass/fail), and how far from it counts as there
+  pinLat: doublePrecision('pin_lat'),
+  pinLng: doublePrecision('pin_lng'),
+  pinRadiusM: integer('pin_radius_m'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
@@ -2954,7 +2959,8 @@ export const beatClaims = pgTable('beat_claims', {
   id: uuid('id').primaryKey().defaultRandom(),
   beatId: uuid('beat_id').notNull().references(() => beats.id, { onDelete: 'cascade' }),
   userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
-  wallet: text('wallet').notNull(),
+  // Null for an app claim made before a wallet is linked (status 'waiting')
+  wallet: text('wallet'),
   displayName: text('display_name'),
   consentVersion: integer('consent_version').notNull(),
   // consented_at, seconds_present, last_seen_at and claimed_at are nulled when a minted claim is unlinked (privacy M1)
@@ -2962,6 +2968,9 @@ export const beatClaims = pgTable('beat_claims', {
   secondsPresent: integer('seconds_present').default(0),
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
   status: text('status').$type<BeatClaimStatus>().notNull().default('present'),
+  source: text('source').$type<BeatClaimSource>().notNull().default('decentraland'),
+  // The App Attest key of the phone that started an app claim: one claim per key per BEAT
+  installKeyId: text('install_key_id'),
   deleteRequested: boolean('delete_requested').notNull().default(false),
   batchId: uuid('batch_id').references(() => beatMintBatches.id, { onDelete: 'set null' }),
   mintTx: text('mint_tx'),
@@ -2977,8 +2986,30 @@ export const beatClaims = pgTable('beat_claims', {
 }, (t) => ({
   walletUq: uniqueIndex('beat_claims_beat_wallet_uq').on(t.beatId, t.wallet),
   userUq: uniqueIndex('beat_claims_beat_user_uq').on(t.beatId, t.userId).where(sql`${t.userId} is not null`),
+  installKeyUq: uniqueIndex('beat_claims_beat_install_key_uq').on(t.beatId, t.installKeyId).where(sql`${t.installKeyId} is not null`),
   statusIdx: index('beat_claims_beat_status_idx').on(t.beatId, t.status),
+  walletOrStatus: check('beat_claims_wallet_or_status_chk', sql`${t.wallet} is not null or ${t.status} in ('present', 'waiting', 'removed')`),
 }))
+
+// The ARC of an event BEAT: visitors scan it with the app to start tracking. One per BEAT; ring_id and code are as in ar_markers.
+export const beatArcs = pgTable('beat_arcs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  beatId: uuid('beat_id').notNull().unique().references(() => beats.id, { onDelete: 'cascade' }),
+  ringId: bigint('ring_id', { mode: 'number' }).notNull().unique(),
+  code: text('code').notNull().unique(),
+  kind: text('kind').$type<BeatArcKind>().notNull().default('printed'), // printed | rotating
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// Apple App Attest keys of the Virvi app: the public key and the last assertion counter. Linked to the account once
+// someone signs in on that install.
+export const appAttestKeys = pgTable('app_attest_keys', {
+  keyId: text('key_id').primaryKey(),
+  publicKey: text('public_key').notNull(),
+  counter: bigint('counter', { mode: 'number' }).notNull().default(0),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
 
 // Who holds each BEAT, built from the contract's ERC-1155 transfer logs (LIV-185). Wallet and contract are lower case;
 // a balance of 0 is not stored.

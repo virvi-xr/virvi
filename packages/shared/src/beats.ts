@@ -9,8 +9,15 @@ export const BEAT_CHAIN_INFO: Record<BeatChain, { chainId: number; confirmations
 }
 
 export type BeatStatus = 'draft' | 'paid' | 'live' | 'ended' | 'cancelled'
-/** `removed`: a host took the claim out before it was sent (hold for review); it frees its supply and can't be claimed again. */
-export type BeatClaimStatus = 'present' | 'claimed' | 'minting' | 'minted' | 'failed' | 'removed'
+/**
+ * `removed`: a host took the claim out before it was sent (hold for review); it frees its supply and can't be claimed again.
+ * `waiting`: an app claim made without a linked wallet; it holds a copy and is sent once a wallet is linked.
+ */
+export type BeatClaimStatus = 'present' | 'claimed' | 'minting' | 'minted' | 'failed' | 'removed' | 'waiting'
+/** Where a claim was started: the Decentraland scene, or the Virvi app (in an AR space, or at an event's ARC). */
+export type BeatClaimSource = 'decentraland' | 'app_space' | 'app_event'
+/** How an event BEAT's ARC is shown: printed on paper, or rotating on a screen. */
+export type BeatArcKind = 'printed' | 'rotating'
 
 /**
  * The consent text's version, stored with each claim. Bump it whenever beatConsentText changes: a test pins each
@@ -18,6 +25,10 @@ export type BeatClaimStatus = 'present' | 'claimed' | 'minting' | 'minted' | 'fa
  * 2: adds the 30-second check-ins and the permanent public record on Polygon (privacy I1).
  */
 export const BEAT_CONSENT_VERSION = 2
+/** The app's consent text's version, stored with each app claim. Bump it whenever beatAppConsentText changes. */
+export const BEAT_APP_CONSENT_VERSION = 1
+/** A venue pin's radius in metres: the default, and the range a host may set. */
+export const BEAT_PIN_RADIUS = { defaultM: 150, minM: 50, maxM: 1000 } as const
 export const BEAT_NAME_MAX = 60
 export const BEAT_DESCRIPTION_MAX = 500
 export const BEAT_SUPPLY_CAP_DEFAULT = 100
@@ -46,6 +57,10 @@ export const BEAT_FEE_BUMP_PERCENT = 25
 
 export function beatConsentText(name: string): string {
   return `To track your attendance for the ${name} BEAT, Virvi stores your wallet address, your display name and how long you're here. The scene checks in every 30 seconds while you're in it. The hosts of this event will see your name, wallet and time. If you claim, your wallet, this BEAT and the time it was sent are recorded on Polygon, a public blockchain: anyone can see that record, and nobody can delete it. You can stop tracking at any time before you claim, which deletes what was stored.`
+}
+
+export function beatAppConsentText(name: string): string {
+  return `To track your attendance for the ${name} BEAT, Virvi stores your account, how long you're here and, when you claim, the wallet you choose. Virvi checks your location only when you check in and when you claim, and doesn't keep it. The hosts of this event will see your name and time. If you claim, your wallet, this BEAT and the time it was sent are recorded on Polygon, a public blockchain: anyone can see that record, and nobody can delete it. You can stop tracking at any time before you claim, which deletes what was stored.`
 }
 
 /**

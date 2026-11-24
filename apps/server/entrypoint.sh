@@ -558,8 +558,23 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TABLE beat_holdings ADD COLUMN IF NOT EXISTS replaced_by TEXT\`;
         await sql\`CREATE INDEX IF NOT EXISTS beat_holdings_chain_wallet_idx ON beat_holdings (chain, wallet)\`;
         await sql\`CREATE TABLE IF NOT EXISTS beat_index_cursors (chain TEXT NOT NULL, contract TEXT NOT NULL, last_block BIGINT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), CONSTRAINT beat_index_cursors_chain_contract_pk PRIMARY KEY (chain, contract))\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS pin_lat DOUBLE PRECISION\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS pin_lng DOUBLE PRECISION\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS pin_radius_m INTEGER\`;
+        await sql\`ALTER TABLE beat_claims ALTER COLUMN wallet DROP NOT NULL\`;
+        await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'decentraland'\`;
+        await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS install_key_id TEXT\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS beat_claims_beat_install_key_uq ON beat_claims (beat_id, install_key_id) WHERE install_key_id is not null\`;
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'beat_claims_wallet_or_status_chk' AND conrelid = 'beat_claims'::regclass) THEN ALTER TABLE beat_claims ADD CONSTRAINT beat_claims_wallet_or_status_chk CHECK (wallet is not null or status in ('present', 'waiting', 'removed')); END IF; END \$\$\`;
+        await sql\`CREATE TABLE IF NOT EXISTS beat_arcs (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), beat_id UUID NOT NULL CONSTRAINT beat_arcs_beat_id_unique UNIQUE CONSTRAINT beat_arcs_beat_id_beats_id_fk REFERENCES beats(id) ON DELETE CASCADE, ring_id BIGINT NOT NULL CONSTRAINT beat_arcs_ring_id_unique UNIQUE, code TEXT NOT NULL CONSTRAINT beat_arcs_code_unique UNIQUE, kind TEXT NOT NULL DEFAULT 'printed', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
         console.log('[virvi-server] BEAT tables ensured');
       } catch(e) { console.log('[virvi-server] BEAT tables:', e.message); }
+      // BEAT app: the Virvi app's BEAT claims: App Attest keys and the visitor purpose of a paired device (matches appAttestKeys and arDevices.purpose in src/db/schema.ts; ar_devices is made by drizzle-kit push, so its column is added only where the table exists)
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS app_attest_keys (key_id TEXT PRIMARY KEY, public_key TEXT NOT NULL, counter BIGINT NOT NULL DEFAULT 0, user_id UUID CONSTRAINT app_attest_keys_user_id_users_id_fk REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`DO \$\$ BEGIN IF to_regclass('ar_devices') IS NOT NULL THEN ALTER TABLE ar_devices ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'builder'; END IF; END \$\$\`;
+        console.log('[virvi-server] BEAT app tables ensured');
+      } catch(e) { console.log('[virvi-server] BEAT app tables:', e.message); }
       // BEAT contract backfill (LIV-11 I-2): BEATs created on chain before beats.contract_address existed are on the first
       // Amoy contract. Only rows still without one are touched (a create records its contract when it is planned), so
       // this is harmless on every boot

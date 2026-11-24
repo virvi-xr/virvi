@@ -235,7 +235,7 @@ export async function listClaimants(c: BeatCaller, beatId: string): Promise<Clai
     .orderBy(desc(beatClaims.createdAt))
   return claims.map((k) => ({
     id: k.id,
-    wallet: k.wallet,
+    wallet: k.wallet ?? '', // an app claim waiting for a wallet has none yet
     displayName: k.displayName,
     status: k.status,
     claimedAt: k.claimedAt?.toISOString() ?? null,
