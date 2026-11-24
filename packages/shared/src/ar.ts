@@ -48,6 +48,12 @@ export type ArSceneFeedResponse = { v: 1; version: string; scene: SerializedScen
 export type ArMarkerLookup = { spaceId: string; floorId: string; markerId: string; spaceName: string; whereText: string | null }
 
 /**
+ * What an ARC code opens in the Virvi app: an AR space's marker, or the ARC of an event BEAT. Task 8 adds an optional
+ * `card` to the BEAT variant.
+ */
+export type AppArc = { kind: 'space'; lookup: ArMarkerLookup } | { kind: 'beat'; beatId: string; name: string }
+
+/**
  * Headset pairing: the headset shows a code, a Virvi user approves it on the website as a personal headset (theirs,
  * stays paired while it is used) or a shared one (a venue's, one session). Codes use HYPERFY_PAIRING's alphabet and
  * length, and normalizePairingCode.

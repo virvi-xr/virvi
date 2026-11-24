@@ -1,11 +1,12 @@
 import { and, asc, count, eq, inArray } from 'drizzle-orm'
-import { RING_DEFAULT_DIAMETER_MM, randomRingId, ringCodeOf, type ArFloorView, type ArMarkerView, type ArSpaceView } from '@virvixr/shared'
+import { RING_DEFAULT_DIAMETER_MM, ringCodeOf, type ArFloorView, type ArMarkerView, type ArSpaceView } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { arFloors, arMarkers, arSpaces } from '../db/schema.js'
 import { publishSceneTouched } from '../realtime/bus.js'
 import { liveSceneIds } from '../scenes/live.js'
 import { isUuid } from '../auth/scene-from.js'
 import { floorScene, markerScene, spaceScene } from './access.js'
+import { allocateRingId } from './arcs.js'
 
 type MarkerRow = typeof arMarkers.$inferSelect
 type FloorRow = typeof arFloors.$inferSelect
@@ -134,7 +135,7 @@ export async function addMarker(floorId: string, input: { diameterMm?: number; w
   const sceneId = await floorScene(floorId)
   if (!sceneId) return null
   for (let attempt = 0; attempt < 8; attempt++) {
-    const ringId = randomRingId()
+    const ringId = await allocateRingId(db)
     try {
       const [row] = await db
         .insert(arMarkers)

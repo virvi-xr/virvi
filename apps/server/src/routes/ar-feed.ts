@@ -12,6 +12,7 @@ import { arSpaceSnapshot } from '../ar/snapshot.js'
 import { longPoll } from '../http/long-poll.js'
 import { TokenBucketLimiter } from '../analytics/limiter.js'
 import { getSpace } from '../ar/spaces.js'
+import { lookupArc } from '../ar/arcs.js'
 import { AR_ANALYTICS_PLATFORMS, recordArBatch } from '../ar/analytics.js'
 import { AR_REPORT_REASONS, createArReport } from '../ar/reports.js'
 
@@ -101,6 +102,14 @@ export default async function arFeedRoutes(app: FastifyInstance) {
       return reply.send(body)
     },
   )
+
+  // The Virvi app's ARC lookup: a space marker (by-code's published / builder rule) or the ARC of an event BEAT.
+  app.get<{ Params: { code: string } }>('/api/app/arcs/:code', async (request, reply) => {
+    if (!(await signInIfPresent(request, reply))) return
+    const arc = await lookupArc(request.params.code, (sceneId) => isBuilder(request, sceneId))
+    if (!arc) return reply.status(404).send({ error: 'not_found' })
+    return reply.send(arc)
+  })
 
   app.get<{ Params: { id: string }; Querystring: { since?: string } }>(
     '/api/ar/spaces/:id/feed',

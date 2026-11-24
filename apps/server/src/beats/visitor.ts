@@ -63,16 +63,16 @@ async function checkNewWallet(ip: string | null | undefined, wallet: string, now
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const VISIBLE: BeatStatus[] = ['paid', 'live', 'ended']
+export const VISIBLE: BeatStatus[] = ['paid', 'live', 'ended']
 /** The claims that take a token from the supply. */
 const TAKEN: BeatClaimStatus[] = ['claimed', 'minting', 'minted', 'failed']
 
 const notFound = () => new BeatError(404, 'not_found', 'BEAT not found.')
 const notTracking = () => new BeatError(404, 'not_tracking', "You're not tracking this BEAT.")
-const claimUntil = (b: BeatRow) => new Date(b.endsAt.getTime() + BEAT_CLAIM_GRACE_MS)
+export const claimUntil = (b: BeatRow) => new Date(b.endsAt.getTime() + BEAT_CLAIM_GRACE_MS)
 /** Test BEATs (Amoy) left over once the server runs on mainnet aren't shown to visitors. */
 // Test BEATs on mainnet, and retired ones (on a replaced contract: Virvi would never send a claim), aren't shown or claimable
-const hidden = (b: BeatRow) => (config.beats.chain === 'polygon' && b.chain === 'polygon-amoy') || beatRetired(b)
+export const hidden = (b: BeatRow) => (config.beats.chain === 'polygon' && b.chain === 'polygon-amoy') || beatRetired(b)
 
 /** The BEAT, when it is paid, live or ended and on this scene; 404 otherwise. */
 async function beatOnScene(sceneId: string, beatId: string): Promise<BeatRow> {

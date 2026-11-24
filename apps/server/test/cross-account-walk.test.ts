@@ -363,6 +363,7 @@ const CASES: Case[] = [
   { route: 'DELETE /api/ar/markers/:id', url: (f) => `/api/ar/markers/${f.arMarker.id}` },
   { route: 'GET /api/ar/markers/:id/files', url: (f) => `/api/ar/markers/${f.arMarker.id}/files?format=svg` },
   { route: 'GET /api/ar/markers/by-code/:code', url: () => `/api/ar/markers/by-code/${ringCodeOf(123456)}` },
+  { route: 'GET /api/app/arcs/:code', url: () => `/api/app/arcs/${ringCodeOf(123456)}` },
   { route: 'POST /api/ar/spaces/:id/analytics', url: (f) => `/api/ar/spaces/${f.arSpace.id}/analytics`, body: () => ({ v: 1, platform: 'ar-quest', events: [{ type: 'enter', playerId: 'p1', t: Date.now() }] }) },
   { route: 'POST /api/ar/spaces/:id/report', url: (f) => `/api/ar/spaces/${f.arSpace.id}/report`, body: () => ({ reason: 'spam', platform: 'ar-quest' }) },
   { route: 'GET /api/ar/spaces/:id/feed', url: (f) => `/api/ar/spaces/${f.arSpace.id}/feed` },
