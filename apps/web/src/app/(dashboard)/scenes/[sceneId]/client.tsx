@@ -14,6 +14,13 @@ import { PresetSchedules } from './PresetSchedules'
 import { ScreenShowings } from './ScreenShowings'
 import { ClickActionField } from './ClickAction'
 import { FrameField } from './FrameField'
+import { ColorSwatches } from './ColorSwatches'
+import { ClaimPointType, type KioskColor } from '@virvixr/shared'
+import { dropsError, type GiveawaySummary } from '@/lib/drops'
+import {
+  KIOSK_COLOR_FIELDS, KIOSK_DISPLAY_CHOICES, KIOSK_HELP, MANNEQUIN_CHOICES, NEW_KIOSK_PROPERTIES, colorToHex, hexToColor, kioskGiveawayNote,
+  kioskGiveawayOptions, kioskItemNote, kioskSaveError, kioskSettings,
+} from '@/lib/kiosk'
 import { SceneRoles } from './SceneRoles'
 import { Raffles } from './Raffles'
 import { SceneBeats } from '@/components/beats/SceneBeats'
@@ -40,7 +47,7 @@ import { offTypeLocked, sceneTabLocked } from '@/lib/trial-scene'
 // Types
 // ---------------------------------------------------------------------------
 
-type ElementType = 'video' | 'image' | 'sound' | 'model' | 'widget' | 'ad_space'
+type ElementType = 'video' | 'image' | 'sound' | 'model' | 'widget' | 'ad_space' | 'claim_point'
 type TabKey = ElementType | 'moderation' | 'roles' | 'raffles' | 'ar' | 'settings'
 
 interface Instance {
@@ -101,6 +108,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'sound', label: 'Sounds' },
   { key: 'widget', label: 'Widgets' },
   { key: 'ad_space', label: 'Ad spaces' },
+  { key: 'claim_point', label: 'Kiosks' },
   { key: 'moderation', label: 'Moderation' },
   { key: 'roles', label: 'Roles' },
   { key: 'raffles', label: 'Raffles' },
@@ -134,7 +142,7 @@ const AD_SPACE_FORMATS: { value: AdFormats; label: string }[] = [
 ]
 
 const ELEMENT_TYPE_LABELS: Record<ElementType, string> = {
-  video: 'Video', image: 'Image', model: 'Model', sound: 'Sound', widget: 'Widget', ad_space: 'Ad space',
+  video: 'Video', image: 'Image', model: 'Model', sound: 'Sound', widget: 'Widget', ad_space: 'Ad space', claim_point: 'Giveaway kiosk',
 }
 
 // ---------------------------------------------------------------------------
@@ -812,14 +820,47 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
 }) {
   const props = element.properties || {}
   const trial = useTrial()
-  const fileRef = useRef<HTMLInputElement>(null)
-  const [uploading, setUploading] = useState(false)
-  const [showPicker, setShowPicker] = useState(false)
-  const [uploadError, setUploadError] = useState('')
 
   const setModel = (url: string) => {
     onUpdateElement(element.id, { properties: { ...props, modelSrc: url } })
   }
+
+  return (
+    <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
+      <ElementHeader element={element} onUpdateElement={onUpdateElement} onDelete={onDeleteElement} />
+      <ClickActionField value={element.clickEvent} api={api} MediaPicker={MediaPicker}
+        onSave={(clickEvent) => onUpdateElement(element.id, { clickEvent }, { rethrow: true })} />
+
+      {element.roomSetId && !sceneTabLocked('room-set', trial) && <RoomSetPanel roomSetId={element.roomSetId} onSaved={(url) => onRoomSetSaved(element.id, url)} />}
+
+      <ModelSourceField value={props.modelSrc || ''} onChange={setModel} api={api} />
+
+      <div className="space-y-2">
+        <InstancesHeader count={element.instances.length} onAdd={() => onAddInstance(element.id)} onDeleteAll={() => onDeleteAllInstances(element.id)} />
+        {element.instances.map(inst => (
+          <InstanceEditor key={inst.id} instance={inst}
+            onUpdate={(data, opts) => onUpdateInstance(inst.id, data, opts)}
+            click={{ inherited: element.clickEvent, api }}
+            onDelete={() => onDeleteInstance(inst.id)} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** A model an element shows: its URL, Upload GLB (into 3D Models) or Choose from 3D Models. */
+function ModelSourceField({ value, onChange, api, label = 'Model URL' }: {
+  value: string
+  onChange: (url: string) => void
+  api: ReturnType<typeof import('@/lib/api').useApi>
+  label?: string
+}) {
+  const trial = useTrial()
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
+  const [showPicker, setShowPicker] = useState(false)
+  const [uploadError, setUploadError] = useState('')
+  const setModel = onChange
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -840,15 +881,9 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
   }
 
   return (
-    <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
-      <ElementHeader element={element} onUpdateElement={onUpdateElement} onDelete={onDeleteElement} />
-      <ClickActionField value={element.clickEvent} api={api} MediaPicker={MediaPicker}
-        onSave={(clickEvent) => onUpdateElement(element.id, { clickEvent }, { rethrow: true })} />
-
-      {element.roomSetId && !sceneTabLocked('room-set', trial) && <RoomSetPanel roomSetId={element.roomSetId} onSaved={(url) => onRoomSetSaved(element.id, url)} />}
-
+    <>
       <div className="space-y-2">
-        <TextInput label="Model URL" value={props.modelSrc || ''} onChange={setModel} />
+        <TextInput label={label} value={value} onChange={setModel} />
         <div className="flex items-center gap-2">
           {sceneTabLocked('uploads', trial) ? (
             <LockedButton tab="uploads" className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors">Upload GLB</LockedButton>
@@ -875,13 +910,129 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
       {showPicker && (
         <MediaPicker api={api} accept=".glb,model/gltf-binary" onSelect={setModel} onClose={() => setShowPicker(false)} />
       )}
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Giveaway Kiosk Element Editor (claim_point)
+// ---------------------------------------------------------------------------
+
+/** A booth colour, picked like a frame's. */
+function KioskColorField({ label, value, onChange }: { label: string; value: KioskColor; onChange: (c: KioskColor) => void }) {
+  return <ColorSwatches label={label} value={colorToHex(value)} onChange={(hex) => { const c = hexToColor(hex); if (c) onChange(c) }} />
+}
+
+function KioskElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, onDeleteElement, api }: {
+  element: Element
+  onUpdateElement: (id: string, data: Record<string, any>, opts?: SaveOpts) => void | Promise<void>
+  onUpdateInstance: (id: string, data: Partial<Instance>, opts?: SaveOpts) => void | Promise<void>
+  onDeleteInstance: (id: string) => void
+  onAddInstance: (elementId: string) => void
+  onDeleteAllInstances: (elementId: string) => void
+  onDeleteElement: (elementId: string) => void
+  api: ReturnType<typeof import('@/lib/api').useApi>
+  sceneId: string
+}) {
+  const props = element.properties || {}
+  const s = kioskSettings(props)
+  const [giveaways, setGiveaways] = useState<GiveawaySummary[] | null>(null)
+  const [listError, setListError] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let live = true
+    api.getGiveaways().then((r) => { if (live) setGiveaways(r.giveaways) }, (e) => { if (live) setListError(dropsError(e)) })
+    return () => { live = false }
+  }, [api])
+
+  const save = async (patch: Record<string, unknown>) => {
+    setError('')
+    try {
+      await onUpdateElement(element.id, { properties: { ...props, ...patch } }, { rethrow: true })
+    } catch (e) {
+      setError(kioskSaveError(e))
+    }
+  }
+
+  const select = 'w-56 rounded border border-gray-800 bg-gray-950 px-3 py-1.5 text-sm text-white outline-none focus:border-blue-400'
+  const note = listError || kioskGiveawayNote(giveaways, s)
+  const itemNote = kioskItemNote(s)
+
+  return (
+    <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
+      <ElementHeader element={element} onUpdateElement={onUpdateElement} onDelete={onDeleteElement} />
+      <p className="text-xs text-gray-500">{KIOSK_HELP}</p>
+
+      <div className="flex flex-col gap-1">
+        <span className="text-xs text-gray-500">Giveaway</span>
+        <select aria-label="Giveaway" value={s.giveawayId ?? ''} disabled={!giveaways && !listError} className={select}
+          onChange={(e) => void save({ giveawayId: e.target.value || null })}>
+          {kioskGiveawayOptions(giveaways ?? [], s.giveawayId).map((o) => <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>)}
+        </select>
+        {note && <p className="text-xs text-gray-500">{note} {giveaways?.length === 0 && <Link href="/drops" className="text-blue-400 hover:text-blue-300">Go to Drops</Link>}</p>}
+      </div>
+
+      <div className="flex flex-wrap gap-4">
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-gray-500">Show the item as</span>
+          <select aria-label="Show the item as" value={s.claimPointType} className={select}
+            onChange={(e) => void save({ claimPointType: Number(e.target.value) })}>
+            {KIOSK_DISPLAY_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+          </select>
+          <p className="max-w-xs text-xs text-gray-500">{KIOSK_DISPLAY_CHOICES.find((c) => c.value === s.claimPointType)?.hint}</p>
+        </div>
+        {s.claimPointType === ClaimPointType.MANNEQUIN && (
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-gray-500">Mannequin</span>
+            <select aria-label="Mannequin" value={s.mannequinType} className={select}
+              onChange={(e) => void save({ mannequinType: Number(e.target.value) })}>
+              {MANNEQUIN_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
+          </div>
+        )}
+      </div>
+      {s.claimPointType === ClaimPointType.CUSTOM_IMAGE && (
+        <ImageSourceField label="Image" value={s.imgSrc ?? undefined} onChange={(url) => void save({ imgSrc: url || null })} api={api} sceneId={sceneId} />
+      )}
+      {s.claimPointType === ClaimPointType.MODEL && (
+        <ModelSourceField label="Model" value={s.modelSrc ?? ''} onChange={(url) => void save({ modelSrc: url || null })} api={api} />
+      )}
+      {itemNote && <p className="text-xs text-amber-300">{itemNote}</p>}
+
+      <div className="space-y-3 rounded-md border border-gray-800 bg-gray-950 p-3">
+        <label className="flex items-center gap-2 text-sm text-gray-300">
+          <input type="checkbox" checked={s.enableKiosk} onChange={(e) => void save({ enableKiosk: e.target.checked })} className="accent-blue-500" />
+          Show the booth
+        </label>
+        <p className="text-xs text-gray-500">{s.enableKiosk ? 'A booth with a roof sign, a panel and a counter with a Claim button.' : 'The item stands on its own.'}</p>
+        {s.enableKiosk && (
+          <>
+            {KIOSK_COLOR_FIELDS.map((f) => (
+              <KioskColorField key={f.key} label={f.label} value={s[f.key]} onChange={(c) => void save({ [f.key]: c })} />
+            ))}
+            <ImageSourceField label="Booth image" value={s.kioskImgSrc ?? undefined} onChange={(url) => void save({ kioskImgSrc: url || null })}
+              hint="A banner on the roof sign. Optional." api={api} sceneId={sceneId} />
+          </>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-end gap-4">
+        <label className="flex items-center gap-2 text-sm text-gray-300">
+          <input type="checkbox" checked={s.enableSpin} onChange={(e) => void save({ enableSpin: e.target.checked })} className="accent-blue-500" />
+          Spin the item
+        </label>
+        <div className="w-56"><TextInput label="Hover text" value={s.hoverText} onChange={(v) => void save({ hoverText: v.trim() || null })} /></div>
+        <NumberInput label="Height (m)" value={s.itemYOffset} onChange={(v) => void save({ itemYOffset: v })} />
+        <NumberInput label="Size" value={s.itemScale} onChange={(v) => void save({ itemScale: v })} />
+      </div>
+      {error && <p role="alert" className="text-xs text-red-400">{error}</p>}
 
       <div className="space-y-2">
         <InstancesHeader count={element.instances.length} onAdd={() => onAddInstance(element.id)} onDeleteAll={() => onDeleteAllInstances(element.id)} />
         {element.instances.map(inst => (
           <InstanceEditor key={inst.id} instance={inst}
-            onUpdate={(data, opts) => onUpdateInstance(inst.id, data, opts)}
-            click={{ inherited: element.clickEvent, api }}
+            onUpdate={data => onUpdateInstance(inst.id, data)}
             onDelete={() => onDeleteInstance(inst.id)} />
         ))}
       </div>
@@ -1611,6 +1762,7 @@ export default function SceneEditorPage() {
       sound: { audioSrc: '', volume: 1, loop: false },
       widget: { controlType: 1, value: false, order: 0 },
       ad_space: { shape: '16:9', formats: 'both' },
+      claim_point: NEW_KIOSK_PROPERTIES,
     }
     try {
       const { element } = await api.createElement(activePreset.id, {
@@ -1872,6 +2024,7 @@ export default function SceneEditorPage() {
                 case 'model': return <ModelElementEditor key={el.id} {...editorProps} onRoomSetSaved={handleRoomSetSaved} api={api} />
                 case 'sound': return <SoundElementEditor key={el.id} {...editorProps} />
                 case 'ad_space': return <AdSpaceElementEditor key={el.id} {...editorProps} sceneId={sceneId} api={api} />
+                case 'claim_point': return <KioskElementEditor key={el.id} {...editorProps} sceneId={sceneId} api={api} />
                 default: return null
               }
             })
