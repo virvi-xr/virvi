@@ -13,7 +13,7 @@ export function StudioTabs({ active }: { active: StudioTab }) {
   const studioOn = useStudioAvailable()
   const tabs = visibleStudioTabs(!!studioOn || !!user?.trial)
   return (
-    <nav aria-label="Studio" className="-mx-1 mb-5 flex gap-1 overflow-x-auto border-b border-gray-800 px-1">
+    <nav aria-label="Studio" className="no-scrollbar -mx-1 mb-5 flex gap-1 overflow-x-auto border-b border-gray-800 px-1">
       {tabs.map((t) => {
         const on = t.tab === active
         return (

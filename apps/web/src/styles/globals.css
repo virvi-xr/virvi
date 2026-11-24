@@ -163,3 +163,12 @@
   .bw-ring, .bw-glitch { animation: none; }
 }
 .bw-medal-lg { width: min(26rem, 72vw); }
+
+/* Menus that can scroll (the sidebar on short screens, tab rows on narrow ones) do so without a visible scroll bar */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

@@ -146,7 +146,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
       <aside className="flex w-full shrink-0 flex-col border-b border-gray-800 bg-gray-950 md:sticky md:top-0 md:h-screen md:w-64 md:border-b-0 md:border-r">
-        <div className="flex items-center justify-between gap-3 px-4 pt-4 md:px-6 md:pt-7">
+        <div className="flex items-center justify-between gap-3 px-4 pt-4 md:px-6 md:pt-5">
           <BrandMark href={trial ? '/studio' : '/scenes'} />
           {/* The bell: signed-in accounts only (a trial has no notifications, and a scene pass may call nothing else) */}
           {!trial && !scenePass && (
@@ -156,16 +156,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
           )}
         </div>
-        <nav className="flex gap-1 overflow-x-auto px-3 py-3 md:block md:flex-1 md:overflow-y-auto md:px-3 md:py-6">
+        <nav className="no-scrollbar flex gap-1 overflow-x-auto px-3 py-3 md:block md:flex-1 md:overflow-y-auto md:px-3 md:py-4">
           {navSections.map((section, i) => (
-            <div key={section.label} className={`flex gap-1 md:block ${i > 0 ? 'md:mt-5 md:border-t md:border-gray-800 md:pt-5' : ''}`}>
+            <div key={section.label} className={`flex gap-1 md:block ${i > 0 ? 'md:mt-3 md:border-t md:border-gray-800 md:pt-3' : ''}`}>
               <p className="hidden px-3 pb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-gray-500 md:block">{section.label}</p>
               {section.items.map(({ href, label, icon: NavIcon, description }) => {
                 const open = trial ? trialNav(href) : { href, demo: false }
                 if (!open) {
                   return (
                     <button key={href} type="button" title={description} onClick={() => askSignUp(`nav:${href}`, label)}
-                      className="relative flex shrink-0 items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-left text-sm text-gray-500 transition-colors hover:bg-white/[0.03] hover:text-gray-300 md:mb-0.5">
+                      className="relative flex shrink-0 items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-left text-sm text-gray-500 transition-colors hover:bg-white/[0.03] hover:text-gray-300 md:mb-0.5 md:py-1.5">
                       <span className="text-gray-600"><NavIcon size={18} /></span>
                       {label}
                       <span className="ml-auto text-gray-600"><LockIcon size={14} /></span>
@@ -176,7 +176,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 const active = navActive(pathname, open.href)
                 return (
                   <Link key={href} href={open.href} title={description} aria-current={active ? 'page' : undefined}
-                    className={`relative flex shrink-0 items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-sm transition-colors md:mb-0.5 ${active ? 'bg-white/[0.05] text-white' : 'text-gray-400 hover:bg-white/[0.03] hover:text-white'}`}>
+                    className={`relative flex shrink-0 items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-sm transition-colors md:mb-0.5 md:py-1.5 ${active ? 'bg-white/[0.05] text-white' : 'text-gray-400 hover:bg-white/[0.03] hover:text-white'}`}>
                     {active && <span className="absolute inset-y-1.5 left-0 hidden w-0.5 rounded-full bg-accent md:block" />}
                     <span className={active ? 'text-accent' : 'text-gray-500'}><NavIcon size={18} /></span>
                     {label}
@@ -191,17 +191,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="border-t border-gray-800 px-3 py-2 md:px-3">
           <p className="hidden px-3 pb-1 pt-1 text-[11px] font-medium uppercase tracking-[0.2em] text-gray-500 md:block">Help</p>
           <a href={siteLinks().docs} target="_blank" rel="noopener"
-            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-gray-400 transition-colors hover:bg-white/[0.03] hover:text-white">
+            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-gray-400 md:py-1.5 transition-colors hover:bg-white/[0.03] hover:text-white">
             <span className="text-gray-500"><BookIcon size={18} /></span>
             Docs
           </a>
           <button type="button" onClick={() => reporter.openReport()}
-            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-gray-400 transition-colors hover:bg-white/[0.03] hover:text-white">
+            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-gray-400 md:py-1.5 transition-colors hover:bg-white/[0.03] hover:text-white">
             <span className="text-gray-500"><BugIcon size={18} /></span>
             Report a bug
           </button>
         </div>
-        <div className="flex items-center gap-3 border-t border-gray-800 px-4 py-3 md:px-6 md:py-5">
+        <div className="flex items-center gap-3 border-t border-gray-800 px-4 py-3 md:px-6 md:py-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-gray-800 text-sm font-semibold text-gray-200">
             {(user.displayName || '?').trim().charAt(0).toUpperCase()}
           </span>
