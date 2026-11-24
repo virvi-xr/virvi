@@ -39,7 +39,7 @@ const stored = (i: KioskInstance): TransformData => ({ position: i.position, rot
 /**
  * Giveaway kiosks (scene elements of type `claim_point`, the preset's `claimPoints`): draws each copy from
  * kiosk/layout.ts and reports clicks on the event bus (`kiosk_click`, a KioskClick) for the platform's giveaway card.
- * `kiosks_changed` carries how many kiosk copies the scene shows, whenever that changes. Parts the platform can't draw
+ * `kiosks_changed` carries how many kiosk copies the scene shows with something to click, whenever that changes. Parts the platform can't draw
  * are left out: boxes need `setSolidShape`, the label `setText`, a mannequin `setAvatarShape`, and a model the platform
  * can't load (resolveModelSrc null) shows nothing. Not editable in-world (the dashboard places kiosks).
  */
@@ -210,14 +210,24 @@ export class KioskManager {
     }
   }
 
-  private changed(): void {
-    if (this.instances.size === this.shown) return
-    this.shown = this.instances.size
-    this.events?.emit('kiosks_changed', this.shown)
+  /** A copy counts once something of it is drawn that takes a click (one left off at the entity limit, or with nothing to show, doesn't). */
+  private clickable(i: KioskInstance): boolean {
+    return i.parts.some((p, n) => p.click && i.entities[n] !== null && i.entities[n] !== undefined)
   }
 
-  /** How many kiosk copies the scene shows. */
-  count(): number { return this.instances.size }
+  private changed(): void {
+    const n = this.count()
+    if (n === this.shown) return
+    this.shown = n
+    this.events?.emit('kiosks_changed', n)
+  }
+
+  /** How many kiosk copies the scene shows that a visitor can click. */
+  count(): number {
+    let n = 0
+    for (const i of this.instances.values()) if (this.clickable(i)) n++
+    return n
+  }
 
   // CRUD, as the other managers
 
@@ -245,6 +255,7 @@ export class KioskManager {
     config.settings = kioskSettings(merged)
     config.items = kioskItemsOf(merged)
     for (const i of this.instances.values()) if (i.configSk === config.sk) this.draw(i)
+    this.changed()
   }
 
   update(elementId: string, property: string, value: unknown): void {

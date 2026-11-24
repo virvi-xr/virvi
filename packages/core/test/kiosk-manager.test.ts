@@ -153,6 +153,32 @@ describe('KioskManager', () => {
     expect(h.counts).toEqual([1, 0, 2, 1, 0])
   })
 
+  it('a kiosk that draws nothing clickable is not counted, so the card keeps showing by itself', () => {
+    // Left off at the entity limit
+    const full = setup({ maxEntities: 5 })
+    init(full, [kiosk()])
+    expect(full.sm.kioskCount()).toBe(0)
+    expect(full.counts).toEqual([])
+    // No booth and nothing to show (a marketplace image with no thumbnail yet)
+    const empty = setup()
+    init(empty, [kiosk({ enableKiosk: false, claimPointType: 0, imgSrc: undefined })])
+    expect(empty.live.size).toBe(0)
+    expect(empty.sm.kioskCount()).toBe(0)
+    // Picking an image makes it clickable; switching the item off again takes it back out
+    empty.sm.handlePresetUpdate({ action: 'update', element: 'claim_point', elementData: { sk: 'k1', claimPointType: 1, imgSrc: 'https://cdn/x.png' } })
+    expect(empty.sm.kioskCount()).toBe(1)
+    empty.sm.handlePresetUpdate({ action: 'update', element: 'claim_point', elementData: { sk: 'k1', imgSrc: '' } })
+    expect(empty.sm.kioskCount()).toBe(0)
+    expect(empty.counts).toEqual([1, 0])
+    // A platform without solid shapes draws a booth's label and item only: the item still takes the click
+    const plain = setup({ shapes: false })
+    init(plain, [kiosk()])
+    expect(plain.sm.kioskCount()).toBe(1)
+    const bare = setup({ shapes: false })
+    init(bare, [kiosk({ claimPointType: 0, imgSrc: undefined })])
+    expect(bare.sm.kioskCount()).toBe(0)
+  })
+
   it('a disabled kiosk or copy is not drawn', () => {
     const h = setup()
     init(h, [kiosk({ enabled: false }), kiosk({ sk: 'k2', instances: [{ ...inst('i9'), enabled: false }] })])

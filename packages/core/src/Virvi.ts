@@ -647,7 +647,7 @@ export class Virvi {
     return () => this.events.off('kiosk_click', handler)
   }
 
-  /** How many giveaway kiosk copies the scene shows now. */
+  /** How many giveaway kiosk copies the scene shows now with something a visitor can click. */
   kioskCount(): number {
     return this.sceneManager.kioskCount()
   }
