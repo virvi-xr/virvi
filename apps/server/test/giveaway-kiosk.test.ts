@@ -156,6 +156,44 @@ describe('saving kiosks', () => {
     expect((await propsOf(el.id)).giveawayId).toBeNull()
   })
 
+  it("an image can't smuggle someone else's giveaway into a kiosk by changing its type", async () => {
+    const stranger = await createUser()
+    const theirs = await giveawayFor(stranger)
+    // Creating an image with a giveawayId stores none
+    const made = await app.inject({ method: 'POST', url: `/api/presets/${presetId}/elements`, headers: as(host), payload: { type: 'image', name: 'Pic', properties: { textureSrc: 'a.png', giveawayId: theirs.id, giveawayItems: [{ urn: 'x' }] } } })
+    expect(made.statusCode).toBe(201)
+    expect(await propsOf(made.json().element.id)).toEqual({ textureSrc: 'a.png' })
+    // One stored before this check (or by hand): turning it into a kiosk, with no properties in the body, checks the giveaway
+    const old = await createElement(presetId, { type: 'image', name: 'Old', properties: { textureSrc: 'a.png', giveawayId: theirs.id } })
+    const put = await app.inject({ method: 'PUT', url: `/api/elements/${old.id}`, headers: as(host), payload: { type: 'claim_point' } })
+    expect(put.statusCode).toBe(404)
+    expect((await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, old.id) }))!.type).toBe('image')
+    expect(await scenesOf(theirs.id)).toEqual([])
+    // With properties that keep the old giveawayId, too
+    const put2 = await app.inject({ method: 'PUT', url: `/api/elements/${old.id}`, headers: as(host), payload: { type: 'claim_point', properties: { giveawayId: theirs.id } } })
+    expect(put2.statusCode).toBe(404)
+  })
+
+  it('a type change to a kiosk with the host\'s own giveaway links it and stores the settings tidied', async () => {
+    const g = await giveawayFor(host)
+    const el = await createElement(presetId, { type: 'image', name: 'Pic', properties: { giveawayId: g.id, hoverText: ' Hi ' } })
+    const put = await app.inject({ method: 'PUT', url: `/api/elements/${el.id}`, headers: as(host), payload: { type: 'claim_point' } })
+    expect(put.statusCode).toBe(200)
+    expect(await propsOf(el.id)).toEqual({ giveawayId: g.id, hoverText: 'Hi' })
+    expect(await scenesOf(g.id)).toEqual([sceneId])
+  })
+
+  it('a kiosk turned into something else drops its giveaway', async () => {
+    const g = await giveawayFor(host)
+    const el = await createElement(presetId, { type: 'claim_point', name: 'K', properties: { giveawayId: g.id, textureSrc: 'a.png' } })
+    const put = await app.inject({ method: 'PUT', url: `/api/elements/${el.id}`, headers: as(host), payload: { type: 'image' } })
+    expect(put.statusCode).toBe(200)
+    expect(await propsOf(el.id)).toEqual({ textureSrc: 'a.png' })
+    const upd = await app.inject({ method: 'PUT', url: `/api/elements/${el.id}`, headers: as(host), payload: { properties: { textureSrc: 'b.png', giveawayId: g.id } } })
+    expect(upd.statusCode).toBe(200)
+    expect(await propsOf(el.id)).toEqual({ textureSrc: 'b.png' })
+  })
+
   it('a giveaway being deleted takes no kiosk', async () => {
     const g = await giveawayFor(host, { deleteState: 'returning' })
     expect((await create({ giveawayId: g.id })).statusCode).toBe(409)
@@ -185,6 +223,30 @@ describe('kiosks reach the scene', () => {
     const up = await c.waitFor('scene_preset_update')
     expect(up).toMatchObject({ action: 'upsert', element: 'claim_point', elementData: { sk: el.id, enableSpin: true } })
     expect(up.elementData.giveawayItems).toHaveLength(3)
+  })
+
+  it("the room relays an edit without a giveaway or kiosk items, and no element type stores them", async () => {
+    const host = await createUser({ wallet: randomWallet() })
+    const { scene, preset } = await createScene(host)
+    const stranger = await createUser()
+    const theirs = await giveawayFor(stranger)
+    const el = await createElement(preset.id, { type: 'claim_point', name: 'K', properties: { hoverText: 'Claim' } })
+    const img = await createElement(preset.id, { type: 'image', name: 'P', properties: { textureSrc: 'a.png' } })
+    const sender = await joinScene(gs.url, scene.id, tokenFor(host))
+    const watcher = await joinScene(gs.url, scene.id, tokenFor(host))
+    await sender.waitFor('scene_preset_update')
+    await watcher.waitFor('scene_preset_update')
+    const forged = [{ name: 'Fake', thumbnail: 'https://evil/x.png', urn: 'urn:x' }]
+    sender.room.send('scene_preset_update', {
+      action: 'update', element: 'claim_point',
+      elementData: { sk: el.id, giveawayId: theirs.id, giveawayItems: forged, hoverText: 'Free', properties: { giveawayId: theirs.id, giveawayItems: forged } },
+    })
+    const relayed = await watcher.waitFor('scene_preset_update')
+    expect(relayed.elementData).toEqual({ sk: el.id, hoverText: 'Free', properties: {} })
+    sender.room.send('scene_preset_update', { action: 'update', element: 'image', elementData: { sk: img.id, giveawayId: theirs.id, textureSrc: 'b.png' } })
+    expect((await watcher.waitFor('scene_preset_update')).elementData).toEqual({ sk: img.id, textureSrc: 'b.png' })
+    await new Promise((r) => setTimeout(r, 300))
+    expect(await propsOf(img.id)).toEqual({ textureSrc: 'b.png' })
   })
 
   it("the room never stores a kiosk's giveaway (it is picked in the dashboard)", async () => {

@@ -77,6 +77,27 @@ export function runDraftSweep(now = Date.now()): void {
 }
 setInterval(() => runDraftSweep(), 30_000).unref()
 
+/**
+ * A client's scene_preset_update as the room relays it: `giveawayId` and the kiosk item list are taken out of its
+ * element and instance data (flat and nested `properties`), as persistPresetUpdate's extractProperties does when
+ * storing it. The client's own message is left as it was.
+ */
+export function withoutKioskKeys<M>(message: M): M {
+  if (!message || typeof message !== 'object') return message
+  const strip = (data: unknown): unknown => {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return data
+    const out: Record<string, unknown> = { ...(data as Record<string, unknown>) }
+    delete out.giveawayId
+    delete out[KIOSK_ITEMS_KEY]
+    if (out.properties && typeof out.properties === 'object' && !Array.isArray(out.properties)) out.properties = strip(out.properties)
+    return out
+  }
+  const m = { ...(message as Record<string, unknown>) }
+  if ('elementData' in m) m.elementData = strip(m.elementData)
+  if ('instanceData' in m) m.instanceData = strip(m.instanceData)
+  return m as M
+}
+
 export class VirviSceneRoom extends Room {
   private static activeRoomCount = 0
 
@@ -220,8 +241,9 @@ export class VirviSceneRoom extends Room {
       // Edits to a non-active preset (e.g. a booking clone during setup) are not broadcast
       if (!result.broadcast) return
 
-      // Broadcast to all OTHER clients in the room
-      this.broadcast('scene_preset_update', message, { except: client })
+      // Broadcast to all OTHER clients in the room, without what the room never stores (a kiosk's giveaway and items)
+      const relayed = withoutKioskKeys(message)
+      this.broadcast('scene_preset_update', relayed, { except: client })
 
       // Push to HTTP callbacks (Second Life, etc.)
       if (this.sceneId) {
@@ -229,7 +251,7 @@ export class VirviSceneRoom extends Room {
           action: 'config_update',
           elementId: result.target?.elementId || message.elementData?.sk || message.elementData?.id || message.id,
           element: message.element,
-          ...this.extractCompactPayload(message),
+          ...this.extractCompactPayload(relayed),
         }).catch(() => {})
       }
     })
@@ -989,11 +1011,9 @@ export class VirviSceneRoom extends Room {
       else delete out.frame
     }
     // A giveaway kiosk's giveaway is picked in the dashboard only, where the server checks the caller manages it; the
-    // item list is the server's own (see giveaways/kiosk.ts)
-    if (elementType === 'claim_point') {
-      delete out.giveawayId
-      delete out[KIOSK_ITEMS_KEY]
-    }
+    // item list is the server's own (see giveaways/kiosk.ts). No element type takes either through the room.
+    delete out.giveawayId
+    delete out[KIOSK_ITEMS_KEY]
     return out
   }
 

@@ -1,4 +1,4 @@
-import { checkClickEvent, checkFrame, checkKioskProperties, FRAMEABLE_TYPES, kioskSettings } from '@virvixr/shared'
+import { checkClickEvent, checkFrame, checkKioskProperties, FRAMEABLE_TYPES, KIOSK_ITEMS_KEY, kioskSettings } from '@virvixr/shared'
 import { dclHudStatus, virviDeploysDcl } from '../scenes/hud-version.js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { eq, and, or, isNull, sql, inArray } from 'drizzle-orm'
@@ -202,27 +202,59 @@ function tidyFrame(type: unknown, before: unknown, body: { properties?: unknown 
   return true
 }
 
+/** Kiosk-only keys: no other element type keeps them (the server makes `giveawayItems`; see giveaways/kiosk.ts). */
+const KIOSK_ONLY_KEYS = ['giveawayId', KIOSK_ITEMS_KEY] as const
+
+const isProps = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
+
 /**
- * A giveaway kiosk's settings (`claim_point`) are checked and stored tidied. Picking a giveaway (a new or changed
- * `giveawayId`) needs a signed-in account that manages it, by the Drops routes' rules (404 for anyone else's, 403 for a
- * scene the caller can't run events in), and links the giveaway to the scene when it isn't yet. False when the reply
- * (400 bad_kiosk, 403, 404, 409 or 503 giveaways_off) was sent.
+ * A giveaway kiosk's settings (`claim_point`) are checked and stored tidied. Picking a giveaway (a giveawayId that
+ * isn't the one a stored kiosk already has, including on an element whose type changes to claim_point, with or
+ * without properties in the body) needs a signed-in account that manages it, by the Drops routes' rules (404 for
+ * anyone else's, 403 for a scene the caller can't run events in), and links the giveaway to the scene when it isn't
+ * yet. Any other element type never keeps a giveawayId or kiosk items: they are taken out of what is stored.
+ * `stored` is the element as it is (null on create). False when the reply (400 bad_kiosk, 403, 404, 409 or 503
+ * giveaways_off) was sent.
  */
-async function tidyKiosk(request: FastifyRequest, reply: FastifyReply, type: unknown, before: unknown, sceneId: string): Promise<boolean> {
-  const body = request.body as { properties?: unknown } | null | undefined
-  if (type !== 'claim_point' || !body || body.properties === undefined) return true
-  const c = checkKioskProperties(body.properties)
-  if (!c.ok) {
-    reply.status(400).send({ error: 'bad_kiosk', message: c.error })
-    return false
+async function tidyKiosk(
+  request: FastifyRequest, reply: FastifyReply, type: unknown, stored: { type: string; properties: unknown } | null, sceneId: string,
+): Promise<boolean> {
+  const body = (request.body ?? {}) as { properties?: unknown }
+  const wasKiosk = stored?.type === 'claim_point'
+  // A stored non-kiosk's properties were never checked as a kiosk's: they count as no kiosk at all
+  const before = wasKiosk ? stored!.properties : null
+
+  if (type !== 'claim_point') {
+    if (isProps(body.properties)) {
+      for (const k of KIOSK_ONLY_KEYS) delete body.properties[k]
+    } else if (body.properties === undefined && stored && isProps(stored.properties) && KIOSK_ONLY_KEYS.some((k) => k in (stored.properties as object))) {
+      const rest = { ...stored.properties }
+      for (const k of KIOSK_ONLY_KEYS) delete rest[k]
+      body.properties = rest
+    }
+    return true
   }
-  // In place: the create route has already read `properties` off the body
-  if (body.properties && typeof body.properties === 'object') {
-    const props = body.properties as Record<string, unknown>
-    for (const k of Object.keys(props)) if (!(k in c.value)) delete props[k]
-    Object.assign(props, c.value)
+
+  let next: unknown
+  if (body.properties !== undefined) {
+    const c = checkKioskProperties(body.properties)
+    if (!c.ok) return refuse(reply, c.error)
+    // In place: the create route has already read `properties` off the body
+    if (isProps(body.properties)) {
+      const props = body.properties
+      for (const k of Object.keys(props)) if (!(k in c.value)) delete props[k]
+      Object.assign(props, c.value)
+    }
+    next = c.value.giveawayId
+  } else if (stored && !wasKiosk) {
+    // Becoming a kiosk with its old properties: they are checked and stored tidied, and their giveawayId is a pick
+    const c = checkKioskProperties(stored.properties)
+    if (!c.ok) return refuse(reply, c.error)
+    body.properties = c.value
+    next = c.value.giveawayId
+  } else {
+    return true
   }
-  const next = c.value.giveawayId
   if (typeof next !== 'string' || next === kioskSettings(before).giveawayId) return true
   if (!config.giveaways.enabled) {
     reply.status(503).send({ error: 'giveaways_off', message: "Automatic giveaways aren't switched on for this server yet." })
@@ -240,6 +272,11 @@ async function tidyKiosk(request: FastifyRequest, reply: FastifyReply, type: unk
     return false
   }
   return true
+}
+
+function refuse(reply: FastifyReply, message: string): false {
+  reply.status(400).send({ error: 'bad_kiosk', message })
+  return false
 }
 
 export default async function sceneRoutes(app: FastifyInstance) {
@@ -675,7 +712,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
       const trialRefusal = request.user.trial ? trialElementChangeRefusal(element, request.body) : null
       if (trialRefusal) return refuseTrial(request, reply, trialRefusal)
       if (!tidyFrame(request.body.type ?? element.type, element.properties, request.body, reply)) return reply
-      if (!(await tidyKiosk(request, reply, request.body.type ?? element.type, element.properties, element.preset.sceneId))) return reply
+      if (!(await tidyKiosk(request, reply, request.body.type ?? element.type, element, element.preset.sceneId))) return reply
 
       const updates: Record<string, unknown> = { updatedAt: new Date() }
       for (const key of ['type', 'name', 'enabled', 'customId', 'customRendering', 'clickEvent', 'properties'] as const) {
