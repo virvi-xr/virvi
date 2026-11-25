@@ -39,7 +39,7 @@ final class HintTextTests: XCTestCase {
     }
 
     func testTheNewDeviceAndWallCopy() {
-        XCTAssertEqual(VisitorCopy.NO_CAMERA, "Virvi AR needs camera access to find ARCs. Allow it in Settings → Apps → Virvi AR.")
+        XCTAssertEqual(VisitorCopy.NO_CAMERA, "Virvi needs camera access to find ARCs. Allow it in Settings → Apps → Virvi.")
         XCTAssertEqual(VisitorCopy.NO_WALL, "Can't see the wall behind this ARC. Look around the room so the phone can map it.")
     }
 

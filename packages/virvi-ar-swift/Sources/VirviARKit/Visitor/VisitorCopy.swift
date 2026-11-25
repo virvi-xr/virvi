@@ -59,7 +59,7 @@ public enum VisitorCopy {
     public static func beatOutsideClaim(venue: String) -> String { "Come back to \(venue) to claim this BEAT." }
     public static func beatOutsideCheckIn(venue: String) -> String { "You need to be at \(venue) to check in." }
 
-    public static let NO_CAMERA = "Virvi AR needs camera access to find ARCs. Allow it in Settings → Apps → Virvi AR."
+    public static let NO_CAMERA = "Virvi needs camera access to find ARCs. Allow it in Settings → Apps → Virvi."
     public static let NO_WALL = "Can't see the wall behind this ARC. Look around the room so the phone can map it."
 }
 
@@ -77,5 +77,5 @@ public let BEAT_APP_CONSENT_VERSION = 1
 
 /// What the visitor agrees to before tracking a BEAT: `beatAppConsentText(name)` in packages/shared/src/beats.ts, word for word.
 public func beatAppConsentText(_ name: String) -> String {
-    "To track your attendance for the \(name) BEAT, Virvi stores your account, how long you're here and, when you claim, the wallet you choose. Virvi checks your location only when you check in and when you claim, and doesn't keep it. The hosts of this event will see your name and time. If you claim, your wallet, this BEAT and the time it was sent are recorded on Polygon, a public blockchain: anyone can see that record, and nobody can delete it. You can stop tracking at any time before you claim, which deletes what was stored."
+    "To track your attendance for the \(name) BEAT, Virvi stores your account, how long you're here and, when you claim, the wallet you choose. Virvi checks your location only when you check in and when you claim, and doesn't keep it. The hosts of this event will see your name, your time and, if you claim, the wallet you choose. If you claim, your wallet, this BEAT and the time it was sent are recorded on Polygon, a public blockchain: anyone can see that record, and nobody can delete it. You can stop tracking at any time before you claim, which deletes what was stored."
 }
