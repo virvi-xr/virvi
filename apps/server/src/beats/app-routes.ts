@@ -9,9 +9,11 @@ import { BeatError } from './errors.js'
 import { parseFix } from './geo.js'
 import { appCheckIn, appClaim, appMyBeats, appSpaceBeat, appStopTracking, appTrack, type AppVia, type MayBuild } from './app.js'
 
+const SPACE_BEAT_URL = '/api/app/spaces/:spaceId/beat'
+
 /**
  * The Virvi app's routes (`/api/app/...`): App Attest registration, and BEATs in AR spaces. Every route needs a signed-in
- * account session (`authenticate`; no route here takes a scene pass, an AR headset pass or a trial), and every BEAT
+ * account session (`authenticate`, except a space's BEAT card, where signing in is optional; no route here takes a scene pass, an AR headset pass or a trial), and every BEAT
  * write needs the install's proof over the raw body (`requireAssertion`), so this scope keeps `request.rawBody`. The
  * BEAT routes are dark (404) unless BEAT_ENABLED.
  */
@@ -22,7 +24,12 @@ export default async function appBeatRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: 'not_found', message: 'Not found.' })
     }
   })
-  app.addHook('preHandler', authenticate)
+  // Every route needs the account session, except a space's BEAT card (`SPACE_BEAT_URL`, which a visitor who
+  // isn't signed in sees too, as the ARC lookup does): there a header, if sent, is checked like any other.
+  app.addHook('preHandler', async (request, reply) => {
+    if (request.routeOptions.url === SPACE_BEAT_URL && !request.headers.authorization) return
+    return authenticate(request, reply)
+  })
 
   const body = (request: FastifyRequest) => (request.body && typeof request.body === 'object' ? request.body : {}) as Record<string, unknown>
   const rawBody = (request: FastifyRequest) => (request as { rawBody?: string }).rawBody
@@ -49,9 +56,11 @@ export default async function appBeatRoutes(app: FastifyInstance) {
 
   // ── BEATs in AR spaces ─────────────────────────────────────────────────────
 
-  app.get<{ Params: { spaceId: string } }>('/api/app/spaces/:spaceId/beat', async (request, reply) => {
+  app.get<{ Params: { spaceId: string } }>(SPACE_BEAT_URL, async (request, reply) => {
     try {
-      return reply.send({ beat: await appSpaceBeat(request.params.spaceId, request.user.id, builderOf(request)) })
+      // Signed out: the card with no claim and no wallets, and only a published space (no one builds without signing in)
+      const userId = request.headers.authorization ? request.user.id : null
+      return reply.send({ beat: await appSpaceBeat(request.params.spaceId, userId, userId ? builderOf(request) : undefined) })
     } catch (e) {
       return fail(reply, e)
     }

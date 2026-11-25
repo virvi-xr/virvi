@@ -128,6 +128,22 @@ describe('BEATs in AR spaces with the Virvi app', () => {
     expect((await card(p, '00000000-0000-4000-8000-000000000000')).statusCode).toBe(404)
   })
 
+  it("shows a signed-out visitor a published space's BEAT with no claim and no wallets, hides an unpublished space, and refuses a scene pass", async () => {
+    const b = await seed({ locationType: 'scene' })
+    const anon = () => app.inject({ method: 'GET', url: `/api/app/spaces/${spaceId}/beat` })
+    const res = await anon()
+    expect(res.statusCode, res.body).toBe(200)
+    expect(res.json().beat).toMatchObject({ beatId: b.id, claim: null, wallets: [] })
+    // A bad token is refused as on any route; a scene pass gains nothing here
+    expect((await app.inject({ method: 'GET', url: `/api/app/spaces/${spaceId}/beat`, headers: { authorization: 'Bearer nope' } })).statusCode).toBe(401)
+    const pass = issueScenePass(app, host, host.wallet!, { sceneId, locationId: null }, null).accessToken
+    expect((await app.inject({ method: 'GET', url: `/api/app/spaces/${spaceId}/beat`, headers: { authorization: `Bearer ${pass}` } })).statusCode).toBeGreaterThanOrEqual(401)
+    // Writes stay signed-in only
+    expect((await app.inject({ method: 'POST', url: `/api/app/beats/${b.id}/track`, payload: {} })).statusCode).toBe(401)
+    await db.update(arSpaces).set({ published: false }).where(eq(arSpaces.id, spaceId))
+    expect((await anon()).statusCode).toBe(404)
+  })
+
   it('every write needs an App Attest assertion (401), and tracking needs the app consent and a verified email or wallet', async () => {
     const b = await seed()
     const p = await phone()
