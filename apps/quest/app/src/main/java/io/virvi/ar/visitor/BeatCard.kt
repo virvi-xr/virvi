@@ -44,6 +44,8 @@ data class AppBeatCard(
     val venue: String?,
     val claim: AppBeatClaim?,
     val wallets: List<String>,
+    /** The BEAT has a venue pin, so claiming it checks the phone's location. The headset never does, so it is sent to the phone. */
+    val pinned: Boolean = false,
 )
 
 /**
@@ -83,6 +85,7 @@ fun parseAppBeatCard(e: kotlinx.serialization.json.JsonElement?): AppBeatCard? {
       location.str("venue"),
       claim,
       (o["wallets"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull } ?: emptyList(),
+      (o["pinned"] as? JsonPrimitive)?.takeIf { !it.isString }?.contentOrNull == "true",
   )
 }
 
@@ -154,6 +157,8 @@ class BeatCard {
           "choose_wallet" -> BeatCardState.ChooseWallet(name, error.wallets)
           "outside" -> BeatCardState.Outside(c?.venue ?: VisitorCopy.THE_VENUE)
           "poor_fix" -> BeatCardState.PoorFix
+          // A pinned BEAT's claim wants a location the headset can't give
+          "location_needed" -> BeatCardState.Failed(VisitorCopy.BEAT_PHONE_ONLY)
           "not_yet" -> {
             val claim = c?.claim
             if (c != null && claim != null) BeatCardState.Counting(name, maxOf(1, minutesLeft(c, claim)))

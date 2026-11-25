@@ -70,6 +70,7 @@ object VisitorCopy {
   const val BEAT_CLAIM = "Claim your BEAT"
   const val BEAT_WAITING = "Saved for you. Link a wallet at virvi.io and it'll be sent."
   const val BEAT_POOR_FIX = "Couldn't get your location accurately. Step outside or near a window and try again."
+  const val BEAT_PHONE_ONLY = "This BEAT checks your location. Claim it with the Virvi app on your phone."
   const val BEAT_TRY_AGAIN = "Something went wrong. Try again in a moment."
   const val THE_VENUE = "the venue"
   const val MENU_SIGN_IN = "Sign in"

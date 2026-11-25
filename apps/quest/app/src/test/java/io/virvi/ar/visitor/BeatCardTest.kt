@@ -190,6 +190,26 @@ class BeatCardTest {
   }
 
   @Test
+  fun `the card says whether the BEAT has a venue pin, and a missing value means no`() {
+    fun json(pinned: String) =
+        """{"beatId":"b1","name":"Opening Night","imageUrl":"","minMinutes":5,"startsAt":"","endsAt":"",
+          |"location":{"type":"in_person","venue":null},"claim":null,"wallets":[]$pinned}"""
+            .trimMargin()
+    assertEquals(true, parseAppBeatCard(json(""","pinned":true"""))!!.pinned)
+    assertEquals(false, parseAppBeatCard(json(""","pinned":false"""))!!.pinned)
+    assertEquals(false, parseAppBeatCard(json(""))!!.pinned)
+  }
+
+  @Test
+  fun `a pinned BEAT that asks for the location sends the visitor to the phone, never to a location prompt`() {
+    val b = BeatCard()
+    b.apply(card(claim("present", 300)).copy(pinned = true), true, now)
+    b.apply(AppBeatError(400, "location_needed", "Your location is needed to check in at this event."))
+    assertEquals(BeatCardState.Failed(VisitorCopy.BEAT_PHONE_ONLY), b.state)
+    assertEquals("This BEAT checks your location. Claim it with the Virvi app on your phone.", b.text)
+  }
+
+  @Test
   fun `the visitor copy matches the plan`() {
     assertEquals("Sign in", VisitorCopy.MENU_SIGN_IN)
     assertEquals("Sign out", VisitorCopy.MENU_SIGN_OUT)
