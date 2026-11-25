@@ -85,11 +85,12 @@ async function waitingFor(userId: string, includeClaimTimes: boolean): Promise<C
   }))
 }
 
-/** The account's linked wallets (checksummed). */
+/** The account's linked wallets (checksummed), leaving out any marked unverified (`metadata.verified` false). */
 export async function walletsOf(userId: string): Promise<string[]> {
-  const rows = await db.select({ identifier: userAuthMethods.identifier }).from(userAuthMethods)
+  const rows = await db.select({ identifier: userAuthMethods.identifier, metadata: userAuthMethods.metadata }).from(userAuthMethods)
     .where(and(eq(userAuthMethods.userId, userId), eq(userAuthMethods.type, 'wallet')))
-  return rows.map((r) => r.identifier).filter((w) => isAddress(w.toLowerCase())).map((w) => getAddress(w.toLowerCase()))
+  return rows.filter((r) => (r.metadata as { verified?: unknown } | null)?.verified !== false)
+    .map((r) => r.identifier).filter((w) => isAddress(w.toLowerCase())).map((w) => getAddress(w.toLowerCase()))
 }
 
 export const WALLET_BEATS_ROUTE = '/api/wallets/:address/beats'

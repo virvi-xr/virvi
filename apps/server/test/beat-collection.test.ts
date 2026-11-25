@@ -122,6 +122,16 @@ describe('BEAT collection (LIV-185)', () => {
     expect((await mine(user)).json().beats.map((b: any) => b.name)).toEqual(['Real'])
   })
 
+  it('counts only verified wallets: one marked unverified is not listed (nor offered at an app claim, which reads walletsOf)', async () => {
+    const user = await createUser({ wallet: randomWallet() })
+    const unverified = randomWallet().toLowerCase()
+    await db.insert(userAuthMethods).values({ userId: user.id, type: 'wallet', identifier: unverified, metadata: { verified: false } })
+    const res = await app.inject({ method: 'GET', url: '/api/beats/collection', headers: { authorization: `Bearer ${tokenFor(user)}` } })
+    expect(res.json().wallets).toEqual([getAddress(user.wallet!)])
+    const { walletsOf } = await import('../src/beats/collection.js')
+    expect(await walletsOf(user.id)).toEqual([getAddress(user.wallet!)])
+  })
+
   it('refuses a trial or a scene pass and a signed-out caller', async () => {
     const user = await createUser({ wallet: randomWallet() })
     expect((await mine(user)).statusCode).toBe(200)
