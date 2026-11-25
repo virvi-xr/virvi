@@ -229,4 +229,14 @@ final class ArApiTests: XCTestCase {
         XCTAssertEqual(t.count("/feed"), 2)
         XCTAssertNil(t.requests.last!.value(forHTTPHeaderField: "Authorization"))
     }
+
+    func testFeedFallsBackToAnonymousOnAnyAuthRefusal() async {
+        for status in [403, 503] {
+            let t = FakeTransport()
+            t.on("/feed") { req in req.value(forHTTPHeaderField: "Authorization") == nil ? (200, self.feedBody) : (status, ["error": "account_required"]) }
+            let r = await signedInApi(t).feed(spaceId: "s", since: nil)
+            guard case .ok = r else { return XCTFail("\(status): \(r)") }
+            XCTAssertEqual(t.count("/api/auth/refresh"), 0)
+        }
+    }
 }

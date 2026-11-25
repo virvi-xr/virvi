@@ -27,6 +27,7 @@ public final class AppSession: @unchecked Sendable {
     private let store: SessionStore
     private let lock = NSLock()
     private var tokens: AppTokens?
+    private var refreshing: Task<String?, Never>?
 
     public init(baseUrl: URL, transport: HttpTransport, store: SessionStore) {
         var b = baseUrl.absoluteString.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -62,18 +63,55 @@ public final class AppSession: @unchecked Sendable {
 
     public func signOut() { set(nil) }
 
-    /// Sends with the access token. When the server answers 401 it refreshes once and sends again with the new token;
-    /// that answer is returned whatever it is (it is never refreshed twice). Nil when signed out, with nothing sent.
-    /// `send` is given the token each time, so a request that is signed per attempt signs again.
+    /// Sends with the access token. When the server answers 401 about the token it refreshes once and sends again with the
+    /// new token; that answer is returned whatever it is (it is never refreshed twice). A 401 about the install's proof
+    /// (`attest_required`, `bad_assertion`) is returned as is: a new token wouldn't help. Concurrent 401s share one refresh.
+    /// Nil when signed out, with nothing sent. `send` is given the token each time, so a request signed per attempt signs again.
     public func authorized(_ send: (String) async throws -> (Data, HTTPURLResponse)) async throws -> (Data, HTTPURLResponse)? {
         guard let used = current() else { return nil }
         let first = try await send(used.accessToken)
-        guard first.1.statusCode == 401 else { return first }
-        // Another request may have refreshed already: use its token rather than refreshing again.
-        var next = current()?.accessToken
-        if next == used.accessToken { next = await refresh(from: used) }
-        guard let next, current() != nil else { return first }
+        guard first.1.statusCode == 401, !isAttestRefusal(first.0) else { return first }
+        guard let next = await refreshedToken(after: used) else { return first }
         return try await send(next)
+    }
+
+    private func isAttestRefusal(_ data: Data) -> Bool {
+        guard let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let e = o["error"] as? String else { return false }
+        return e == "attest_required" || e == "bad_assertion"
+    }
+
+    /// The token to retry with: the one already in place if another request refreshed since `used`, the result of the
+    /// refresh already in flight, or of a new one. Nil when signed out or the refresh gave nothing.
+    private func refreshedToken(after used: AppTokens) async -> String? {
+        switch joinRefresh(after: used) {
+        case .token(let t): return t
+        case .running(let task): return await task.value
+        }
+    }
+
+    private enum Join {
+        case token(String?)
+        case running(Task<String?, Never>)
+    }
+
+    /// Under the lock: decides whether a refresh is needed and, if none is running, starts it.
+    private func joinRefresh(after used: AppTokens) -> Join {
+        lock.lock(); defer { lock.unlock() }
+        guard let now = tokens else { return .token(nil) }
+        if now.accessToken != used.accessToken { return .token(now.accessToken) }
+        if let running = refreshing { return .running(running) }
+        // The task's own first lock waits for this one to be released, so `refreshing` is set before it can clear it
+        let task = Task<String?, Never> { [self] in
+            let result = await refresh(from: used)
+            finishRefresh()
+            return result
+        }
+        refreshing = task
+        return .running(task)
+    }
+
+    private func finishRefresh() {
+        lock.lock(); refreshing = nil; lock.unlock()
     }
 
     private func refresh(from used: AppTokens) async -> String? {
@@ -89,21 +127,23 @@ public final class AppSession: @unchecked Sendable {
             var t = used
             t.accessToken = access
             if let refresh = o["refreshToken"] as? String, !refresh.isEmpty { t.refreshToken = refresh }
-            // A sign-out (or a new sign-in) while this was in flight wins
-            let stillSame = isStill(used)
-            if stillSame { set(t) }
-            return stillSame ? access : nil
+            return replace(used, with: t) ? access : nil
         case 400, 401, 403:
-            if isStill(used) { set(nil) }
+            _ = replace(used, with: nil)
             return nil
         default:
             return nil
         }
     }
 
-    private func isStill(_ used: AppTokens) -> Bool {
+    /// Compare-and-set under one lock: `used` becomes `t` only while it is still the session (a sign-out, or a new
+    /// sign-in, while the refresh was in flight wins). Memory and store change together, in this order.
+    private func replace(_ used: AppTokens, with t: AppTokens?) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        return tokens?.refreshToken == used.refreshToken
+        guard tokens?.refreshToken == used.refreshToken else { return false }
+        tokens = t
+        store.save(t)
+        return true
     }
 
     private func current() -> AppTokens? {
@@ -112,7 +152,8 @@ public final class AppSession: @unchecked Sendable {
     }
 
     private func set(_ t: AppTokens?) {
-        lock.lock(); tokens = t; lock.unlock()
+        lock.lock(); defer { lock.unlock() }
+        tokens = t
         store.save(t)
     }
 }

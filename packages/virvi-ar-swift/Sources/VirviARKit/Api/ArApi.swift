@@ -151,7 +151,8 @@ public final class ArApi: Sendable {
         }
     }
 
-    /// With `signedIn` and a signed-in session, sends with its token; a 401 that survives the session's one refresh is asked again anonymously.
+    /// With `signedIn` and a signed-in session, sends with its token; if the sign-in is what the server refused (401 even after
+    /// the session's one refresh, 403 `account_required`/`personal_only`, 503 `auth_unavailable`) it is asked again anonymously.
     private func send(_ r: URLRequest, signedIn: Bool) async throws -> (Data, HTTPURLResponse) {
         if signedIn, let session, session.signedIn {
             let answer = try await session.authorized { token in
@@ -159,7 +160,7 @@ public final class ArApi: Sendable {
                 a.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 return try await transport.send(a)
             }
-            if let answer, answer.1.statusCode != 401 { return answer }
+            if let answer, ![401, 403, 503].contains(answer.1.statusCode) { return answer }
         }
         return try await transport.send(r)
     }

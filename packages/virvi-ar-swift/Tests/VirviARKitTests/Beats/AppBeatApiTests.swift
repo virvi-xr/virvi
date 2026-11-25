@@ -158,4 +158,14 @@ final class AppBeatApiTests: XCTestCase {
         XCTAssertEqual(e.code, "attest_failed")
         XCTAssertTrue(t.requests.isEmpty)
     }
+
+    func testABadAssertionSurfacesAndSignsNobodyOut() async {
+        let t = FakeTransport()
+        t.on("/claim") { _ in (401, ["error": "bad_assertion", "message": "This app couldn't be verified. Update the Virvi app and try again."]) }
+        let (api, _) = make(t)
+        let r = await api.claim("b1", wallet: nil, location: nil)
+        guard case .error(let e) = r else { return XCTFail("\(r)") }
+        XCTAssertEqual(e.code, "bad_assertion")
+        XCTAssertEqual(t.count("/api/auth/refresh"), 0)
+    }
 }

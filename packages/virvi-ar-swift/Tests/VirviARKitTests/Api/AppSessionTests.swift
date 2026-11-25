@@ -140,4 +140,65 @@ final class AppSessionTests: XCTestCase {
         XCTAssertNil(r)
         XCTAssertTrue(t.requests.isEmpty)
     }
+
+    private func call(_ s: AppSession, _ t: HttpTransport) async throws -> (Data, HTTPURLResponse)? {
+        try await s.authorized { token in
+            var q = URLRequest(url: URL(string: "https://virvi.test/api/x")!)
+            q.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            return try await t.send(q)
+        }
+    }
+
+    func testConcurrentRefusalsShareOneRefresh() async throws {
+        let fake = FakeTransport()
+        fake.on("/api/auth/refresh") { _ in (200, ["accessToken": "new"]) }
+        fake.on("/api/x") { req in req.value(forHTTPHeaderField: "Authorization") == "Bearer new" ? (200, ["ok": true]) : (401, nil) }
+        let gated = GatedTransport(fake, gating: "/api/auth/refresh")
+        let store = MemoryStore(signedInTokens)
+        let s = AppSession(baseUrl: base, transport: gated, store: store)
+        async let a = call(s, gated)
+        async let b = call(s, gated)
+        await gated.waitUntilEntered()
+        // let the second call reach its own 401 while the refresh is held
+        while fake.count("/api/x") < 2 { await Task.yield() }
+        for _ in 0..<50 { await Task.yield() }
+        await gated.open()
+        let (ra, rb) = try await (a, b)
+        XCTAssertEqual(ra?.1.statusCode, 200)
+        XCTAssertEqual(rb?.1.statusCode, 200)
+        XCTAssertEqual(fake.count("/api/auth/refresh"), 1)
+        XCTAssertEqual(store.load()?.accessToken, "new")
+    }
+
+    func testSigningOutDuringARefreshStaysSignedOut() async throws {
+        let fake = FakeTransport()
+        fake.on("/api/auth/refresh") { _ in (200, ["accessToken": "new"]) }
+        fake.on("/api/x") { _ in (401, nil) }
+        let gated = GatedTransport(fake, gating: "/api/auth/refresh")
+        let store = MemoryStore(signedInTokens)
+        let s = AppSession(baseUrl: base, transport: gated, store: store)
+        async let r = call(s, gated)
+        await gated.waitUntilEntered()
+        s.signOut()
+        await gated.open()
+        let answer = try await r
+        XCTAssertEqual(answer?.1.statusCode, 401)
+        XCTAssertFalse(s.signedIn)
+        XCTAssertNil(store.load())
+        XCTAssertEqual(fake.count("/api/x"), 1)
+    }
+
+    func testAnAttestRefusalIsNotATokenProblem() async throws {
+        for code in ["bad_assertion", "attest_required"] {
+            let t = FakeTransport()
+            t.on("/api/auth/refresh") { _ in (200, ["accessToken": "new"]) }
+            t.on("/api/x") { _ in (401, ["error": code, "message": "This app couldn't be verified."]) }
+            let s = session(t, MemoryStore(signedInTokens))
+            let r = try await call(s, t)
+            XCTAssertEqual(r?.1.statusCode, 401, code)
+            XCTAssertEqual(t.count("/api/auth/refresh"), 0, code)
+            XCTAssertEqual(t.count("/api/x"), 1, code)
+            XCTAssertTrue(s.signedIn)
+        }
+    }
 }
