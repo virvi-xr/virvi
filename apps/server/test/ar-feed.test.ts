@@ -192,6 +192,27 @@ describe('AR marker lookup and space feed', () => {
     expect(res.statusCode).toBe(429)
     expect(res.json().error).toBe('rate_limited')
   })
+
+  // Venue Wi-Fi: every visitor polls from one address. Signed in, each account has its own allowance
+  it('limits signed-in pollers per account, so 60 on one network all stay present', async () => {
+    await publish()
+    const visitors = await Promise.all(Array.from({ length: 60 }, () => createUser({ wallet: null })))
+    const statuses: number[] = []
+    for (let round = 0; round < 3; round++) for (const v of visitors) statuses.push((await feed(undefined, as(v))).statusCode)
+    expect(statuses.filter((s) => s === 429)).toHaveLength(0)
+  })
+
+  it('still limits anonymous pollers, and a forged token, per IP', async () => {
+    await publish()
+    const statuses: number[] = []
+    for (let i = 0; i < 180; i++) statuses.push((await feed()).statusCode)
+    expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0)
+    // A token that doesn't verify is counted against the address, not the account it names
+    setArFeedLimiter(new TokenBucketLimiter())
+    const forged: number[] = []
+    for (let i = 0; i < 180; i++) forged.push((await feed(undefined, { authorization: `Bearer x.${Buffer.from(JSON.stringify({ id: crypto.randomUUID(), kind: 'account' })).toString('base64url')}.y` })).statusCode)
+    expect(forged.filter((s) => s === 429).length).toBeGreaterThan(0)
+  })
 })
 
 describe('scene draft feed for headset builders', () => {

@@ -10,6 +10,7 @@ import { sceneSnapshot } from '../hyperfy/snapshot.js'
 import { feedShowings } from '../hyperfy/showings.js'
 import { arSpaceSnapshot } from '../ar/snapshot.js'
 import { longPoll } from '../http/long-poll.js'
+import { rateKey } from '../http/rate-key.js'
 import { TokenBucketLimiter } from '../analytics/limiter.js'
 import { getSpace } from '../ar/spaces.js'
 import { lookupArc } from '../ar/arcs.js'
@@ -20,7 +21,7 @@ import { appBeatCard } from '../beats/app.js'
 
 let holdMs: number = AR_FEED.holdMs
 
-// Per IP: a headset polls about 3 times a minute, plus bursts on edits and errors.
+// Per signed-in account, else per IP (rateKey): a headset polls about 3 times a minute, plus bursts on edits and errors.
 export const AR_FEED_LIMIT = { capacity: 120, refillPerSec: 2 }
 let limiter = new TokenBucketLimiter()
 
@@ -133,10 +134,10 @@ export default async function arFeedRoutes(app: FastifyInstance) {
 
   app.get<{ Params: { id: string }; Querystring: { since?: string } }>(
     '/api/ar/spaces/:id/feed',
-    // Its own per-IP limit (bad tokens included); keep polls out of per-request logs.
+    // Its own limit, per account or per IP (bad tokens count against the IP); keep polls out of per-request logs.
     { logLevel: 'warn', config: { rateLimit: false, scenePass: { sceneFrom: fromSpace, ar: true } } },
     async (request, reply) => {
-      const limit = limiter.take(`ip:${request.ip}`, 1, AR_FEED_LIMIT.capacity, AR_FEED_LIMIT.refillPerSec)
+      const limit = limiter.take(rateKey(app, request), 1, AR_FEED_LIMIT.capacity, AR_FEED_LIMIT.refillPerSec)
       if (!limit.ok) return reply.status(429).send({ error: 'rate_limited', retryAfter: Math.ceil(limit.retryAfterMs / 1000) })
       if (!(await signInIfPresent(request, reply))) return
       const spaceId = request.params.id
@@ -166,10 +167,10 @@ export default async function arFeedRoutes(app: FastifyInstance) {
 
   app.get<{ Params: { id: string }; Querystring: { since?: string } }>(
     '/api/ar/scenes/:id/feed',
-    // Shares the space feed's per-IP limit; keep polls out of per-request logs.
+    // Shares the space feed's limit; keep polls out of per-request logs.
     { logLevel: 'warn', config: { rateLimit: false, scenePass: { sceneFrom: fromParam('id'), ar: 'personal' } } },
     async (request, reply) => {
-      const limit = limiter.take(`ip:${request.ip}`, 1, AR_FEED_LIMIT.capacity, AR_FEED_LIMIT.refillPerSec)
+      const limit = limiter.take(rateKey(app, request), 1, AR_FEED_LIMIT.capacity, AR_FEED_LIMIT.refillPerSec)
       if (!limit.ok) return reply.status(429).send({ error: 'rate_limited', retryAfter: Math.ceil(limit.retryAfterMs / 1000) })
       if (!(await signInIfPresent(request, reply))) return
       const sceneId = request.params.id
