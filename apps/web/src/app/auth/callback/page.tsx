@@ -5,11 +5,13 @@ import { API_URL } from '@/lib/config'
 import { noteMovedHeadsets, takeTrialHandover } from '@/lib/trial'
 import { tokenUserId } from '@/lib/session'
 import { adoptDraft } from '@/lib/wizard/draft'
+import { callbackBackToLogin, callbackErrorMessage } from '@/lib/auth-callback'
 import { useEffect, useState, Suspense } from 'react'
 
 function CallbackHandler() {
   const searchParams = useSearchParams()
   const [error, setError] = useState<string | null>(null)
+  const [backHref, setBackHref] = useState('/signin/')
 
   useEffect(() => {
     const token = searchParams.get('token')
@@ -20,7 +22,9 @@ function CallbackHandler() {
     try { handover = takeTrialHandover(sessionStorage, searchParams.get('state'), Date.now()) } catch {}
 
     if (!token || !refresh) {
-      setError('Missing authentication parameters. Please try signing in again.')
+      // Back to login keeps where the person was going (the sign-in page stored it before leaving)
+      try { setBackHref(callbackBackToLogin(sessionStorage.getItem('vlm_next'))) } catch {}
+      setError(callbackErrorMessage(searchParams.get('error')))
       return
     }
 
@@ -62,6 +66,7 @@ function CallbackHandler() {
         : Promise.resolve(null)
       moved.finally(() => { window.location.href = dest })
     } catch {
+      try { setBackHref(callbackBackToLogin(sessionStorage.getItem('vlm_next'))) } catch {}
       setError('Invalid authentication token. Please try signing in again.')
     }
   }, [searchParams])
@@ -71,7 +76,7 @@ function CallbackHandler() {
       <div className="flex min-h-screen items-center justify-center">
         <div className="w-full max-w-md rounded-xl bg-gray-900 p-8 text-center">
           <p className="mb-4 text-red-400">{error}</p>
-          <a href="/signin/" className="text-blue-400 underline underline-offset-2 hover:text-blue-300">
+          <a href={backHref} className="text-blue-400 underline underline-offset-2 hover:text-blue-300">
             Back to login
           </a>
         </div>
