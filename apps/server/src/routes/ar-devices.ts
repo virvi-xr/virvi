@@ -91,6 +91,8 @@ export default async function arDeviceRoutes(app: FastifyInstance) {
     const visitor = pending?.purpose === 'visitor'
     const kind = visitor ? 'personal' : (request.body as { kind?: unknown } | undefined)?.kind
     if (kind !== 'personal' && kind !== 'shared') return reply.status(400).send({ error: 'Missing or invalid field: kind (personal or shared)' })
+    // A visitor headset gets the approver's full account session: an API key can't vouch for that
+    if (visitor && request.user.viaApiKey) return reply.status(403).send({ error: 'API keys cannot sign a headset in' })
     const actor = actorFromClaims(request.user)
     if (visitor && actor.trial) {
       recordTrialBlocked(request.user.id, 'visitor_headset')

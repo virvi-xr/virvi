@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { arDevices, authHandoffCodes, users } from '../src/db/schema.js'
+import { apiKeys, arDevices, authHandoffCodes, users } from '../src/db/schema.js'
 import { resetDb } from './helpers/db.js'
 import { createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
 
@@ -10,6 +10,12 @@ const sha256 = (s: string) => createHash('sha256').update(s).digest('hex')
 const SECRET = 'headset-secret-visitor'
 const bearer = (t: string) => ({ authorization: `Bearer ${t}` })
 const as = (u: TestUser, extra: Record<string, unknown> = {}) => bearer(tokenFor(u, extra))
+/** An API key of the user's, as the Authorization header. */
+async function keyOf(u: TestUser): Promise<Record<string, string>> {
+  const key = `virvi_k1_${crypto.randomUUID().replace(/-/g, '')}`
+  await db.insert(apiKeys).values({ userId: u.id, name: 'k', keyHash: sha256(key), keyPrefix: key.slice(0, 8) })
+  return bearer(key)
+}
 
 describe('Virvi app and Quest visitor sign-in', () => {
   let app: Awaited<ReturnType<typeof testApp>>
@@ -73,6 +79,13 @@ describe('Virvi app and Quest visitor sign-in', () => {
       expect(await db.select().from(authHandoffCodes)).toHaveLength(0)
     })
 
+    it('refuses an API key: a key never becomes an app session', async () => {
+      const user = await createUser({ wallet: null })
+      const res = await appCode(await keyOf(user))
+      expect(res.statusCode).toBe(403)
+      expect(await db.select().from(authHandoffCodes)).toHaveLength(0)
+    })
+
     it('leaves the in-world hand-off refusing a wallet-less account', async () => {
       const user = await createUser({ wallet: null })
       const res = await app.inject({ method: 'POST', url: '/api/auth/handoff', headers: as(user) })
@@ -127,6 +140,14 @@ describe('Virvi app and Quest visitor sign-in', () => {
       await db.update(users).set({ isTrial: true, trialLastActiveAt: new Date() }).where(eq(users.id, trial.id))
       const { code } = (await start({ purpose: 'visitor' })).json()
       const res = await app.inject({ method: 'POST', url: `/api/ar/pair/${code}/approve`, headers: as(trial, { kind: 'trial' }), payload: {} })
+      expect(res.statusCode).toBe(403)
+      expect((await claim(code)).json()).toEqual({ status: 'pending' })
+    })
+
+    it('refuses an API key approving a visitor code', async () => {
+      const a = await createUser({ wallet: null })
+      const { code } = (await start({ purpose: 'visitor' })).json()
+      const res = await app.inject({ method: 'POST', url: `/api/ar/pair/${code}/approve`, headers: await keyOf(a), payload: {} })
       expect(res.statusCode).toBe(403)
       expect((await claim(code)).json()).toEqual({ status: 'pending' })
     })

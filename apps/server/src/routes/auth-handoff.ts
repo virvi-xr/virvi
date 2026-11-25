@@ -71,6 +71,8 @@ export default async function authHandoffRoutes(app: FastifyInstance) {
   // The Virvi app's sign-in: the website (signed in with any method, wallet or not) makes a 60 s code the iPhone app
   // trades for an account session. Real accounts only: a trial or a pass is refused (no `trial`/`scenePass` opt-in).
   app.post('/api/auth/app-handoff', { preHandler: authenticate }, async (request, reply) => {
+    // An API key is a builder's tool, never a sign-in: it can't become the app's full session
+    if (request.user.viaApiKey) return reply.status(403).send({ error: 'API keys cannot sign in the Virvi app' })
     const actor = actorFromClaims(request.user)
     if (request.user.kind !== 'account' || !actor.userId || !actor.verified) {
       return reply.status(401).send({ error: 'Signing in to the app needs a signed-in account' })
