@@ -2,7 +2,8 @@
  * AR headset pairing: the headset gets a code, a Virvi user approves it on the website as personal or shared, the
  * headset claims its device id and then mints AR passes for the spaces it opens.
  *
- * POST   /api/ar/pair                — (public) Start a pairing with the sha256 of the headset's secret; returns the code
+ * POST   /api/ar/pair                — (public) Start a pairing with the sha256 of the headset's secret; returns the code.
+ *                                       `purpose: 'visitor'` makes a visitor sign-in: its claim returns the approver's account session
  * GET    /api/ar/pair/:code          — (account or trial) What the approval page shows for a code
  * POST   /api/ar/pair/:code/approve  — (account or trial) Approve a code as a personal or a shared headset (a trial:
  *                                       personal only; its headset mints no pass and lists nothing, ar/devices.ts)
@@ -22,7 +23,7 @@
  */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { normalizePairingCode, type ArPairApprovalInfo, type ArPairStartResponse, type ArPassResponse } from '@virvixr/shared'
+import { normalizePairingCode, type ArDevicePurpose, type ArPairApprovalInfo, type ArPairStartResponse, type ArPassResponse } from '@virvixr/shared'
 import { config } from '../config.js'
 import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
@@ -60,12 +61,13 @@ function accountOrTrial(request: FastifyRequest, reply: FastifyReply): boolean {
 
 export default async function arDeviceRoutes(app: FastifyInstance) {
   app.post('/api/ar/pair', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
-    const body = (request.body ?? {}) as { secretHash?: unknown; deviceName?: unknown }
+    const body = (request.body ?? {}) as { secretHash?: unknown; deviceName?: unknown; purpose?: unknown }
     const deviceName = optName(body.deviceName)
-    if (typeof body.secretHash !== 'string' || !SHA256_HEX.test(body.secretHash) || deviceName === undefined) {
-      return reply.status(400).send({ error: 'Missing or invalid fields: secretHash (sha256 hex), deviceName' })
+    const purpose: ArDevicePurpose | undefined = body.purpose === undefined || body.purpose === 'builder' ? 'builder' : body.purpose === 'visitor' ? 'visitor' : undefined
+    if (typeof body.secretHash !== 'string' || !SHA256_HEX.test(body.secretHash) || deviceName === undefined || !purpose) {
+      return reply.status(400).send({ error: 'Missing or invalid fields: secretHash (sha256 hex), deviceName, purpose (builder or visitor)' })
     }
-    const { code, codeExpiresAt } = await startDevicePairing(body.secretHash.toLowerCase(), deviceName)
+    const { code, codeExpiresAt } = await startDevicePairing(body.secretHash.toLowerCase(), deviceName, purpose)
     const res: ArPairStartResponse = { code, approveUrl: approveUrlFor(code), codeExpiresAt: codeExpiresAt.toISOString() }
     return reply.send(res)
   })
@@ -76,7 +78,7 @@ export default async function arDeviceRoutes(app: FastifyInstance) {
     if (!code) return
     const info = await devicePairingForApproval(code)
     if (!info) return reply.status(404).send({ error: 'not_found' })
-    const res: ArPairApprovalInfo = { deviceName: info.deviceName, codeExpiresAt: info.codeExpiresAt.toISOString() }
+    const res: ArPairApprovalInfo = { deviceName: info.deviceName, codeExpiresAt: info.codeExpiresAt.toISOString(), purpose: info.purpose }
     return reply.send(res)
   })
 
@@ -84,9 +86,16 @@ export default async function arDeviceRoutes(app: FastifyInstance) {
     if (!accountOrTrial(request, reply)) return
     const code = codeParam(request, reply)
     if (!code) return
-    const kind = (request.body as { kind?: unknown } | undefined)?.kind
+    const pending = await devicePairingForApproval(code)
+    // A visitor headset signs the approver in as themselves, so it needs a real, verified account and has no kind.
+    const visitor = pending?.purpose === 'visitor'
+    const kind = visitor ? 'personal' : (request.body as { kind?: unknown } | undefined)?.kind
     if (kind !== 'personal' && kind !== 'shared') return reply.status(400).send({ error: 'Missing or invalid field: kind (personal or shared)' })
     const actor = actorFromClaims(request.user)
+    if (visitor && actor.trial) {
+      recordTrialBlocked(request.user.id, 'visitor_headset')
+      return reply.status(403).send({ error: 'account_required', action: 'visitor_headset' })
+    }
     if (actor.trial) {
       // A trial's headset only uploads its own room scans; a shared headset (visitors, a venue) needs an account.
       if (kind === 'shared') {
@@ -108,7 +117,7 @@ export default async function arDeviceRoutes(app: FastifyInstance) {
     if (!code) return
     const secret = secretOf(request)
     if (!secret) return reply.status(400).send({ error: 'Missing field: secret' })
-    const result = await claimDevicePairing(code, secret)
+    const result = await claimDevicePairing(app, code, secret)
     if (result === 'bad_secret') return reply.status(401).send({ error: 'bad_secret' })
     if (result === 'expired') return reply.status(404).send({ error: 'not_found' })
     return reply.send(result)

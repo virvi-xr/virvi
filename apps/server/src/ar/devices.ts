@@ -1,13 +1,14 @@
 import type { FastifyInstance } from 'fastify'
 import { randomInt } from 'node:crypto'
 import { and, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm'
-import { AR_PAIRING, HYPERFY_PAIRING, type ArDeviceKind, type ArDeviceScene, type ArDeviceSpace, type ArDeviceStatus, type ArDeviceSummary, type ArPairClaimResponse } from '@virvixr/shared'
+import { AR_PAIRING, HYPERFY_PAIRING, type ArDeviceKind, type ArDevicePurpose, type ArDeviceScene, type ArDeviceSpace, type ArDeviceStatus, type ArDeviceSummary, type ArPairClaimResponse } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { arDevices, arFloors, arMarkers, arSpaces, sceneCollaborators, sceneRoles, scenes, users } from '../db/schema.js'
 import { getSceneAccess } from '../auth/permissions.js'
 import type { Actor } from '../auth/actor.js'
 import { isUuid } from '../auth/scene-from.js'
 import { issueArPass } from '../auth/scene-pass.js'
+import { issueAccountSession } from '../auth/sessions.js'
 import { trialExpiresAt } from '../auth/trial.js'
 import { sameHash, sha256 } from '../auth/hash.js'
 import { verifiedWalletsOf } from '../analytics/claims.js'
@@ -36,12 +37,12 @@ const isUniqueClash = (err: unknown): boolean => {
 /** Paired and inside its lifetime. */
 const activeAt = (d: DeviceRow, now: Date) => d.status === 'claimed' && !!d.expiresAt && d.expiresAt.getTime() > now.getTime()
 
-export async function startDevicePairing(secretHash: string, deviceName: string | null, now = new Date()): Promise<{ code: string; codeExpiresAt: Date }> {
+export async function startDevicePairing(secretHash: string, deviceName: string | null, purpose: ArDevicePurpose = 'builder', now = new Date()): Promise<{ code: string; codeExpiresAt: Date }> {
   const codeExpiresAt = new Date(now.getTime() + AR_PAIRING.codeTtlMs)
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = newCode()
     try {
-      await db.insert(arDevices).values({ codeHash: sha256(code), secretHash, deviceName, status: 'pending', codeExpiresAt, createdAt: now })
+      await db.insert(arDevices).values({ codeHash: sha256(code), secretHash, deviceName, status: 'pending', purpose, codeExpiresAt, createdAt: now })
       return { code, codeExpiresAt }
     } catch (err) {
       // A live code collided with this one (unique code_hash): draw another.
@@ -57,10 +58,10 @@ async function byCode(code: string): Promise<DeviceRow | null> {
 }
 
 /** What the approval page shows for a code, or null when the code is unknown, used or expired. */
-export async function devicePairingForApproval(code: string, now = new Date()): Promise<{ deviceName: string | null; codeExpiresAt: Date } | null> {
+export async function devicePairingForApproval(code: string, now = new Date()): Promise<{ deviceName: string | null; codeExpiresAt: Date; purpose: ArDevicePurpose } | null> {
   const row = await byCode(code)
   if (!row || row.status !== 'pending' || row.codeExpiresAt <= now) return null
-  return { deviceName: row.deviceName, codeExpiresAt: row.codeExpiresAt }
+  return { deviceName: row.deviceName, codeExpiresAt: row.codeExpiresAt, purpose: row.purpose }
 }
 
 /**
@@ -84,7 +85,7 @@ const ttlOf = (kind: string | null) => (kind === 'shared' ? AR_PAIRING.sharedSes
  * The headset trades its code and secret for its device id. A wrong secret is refused and consumes nothing. Taking an
  * approved code is atomic: only one claim wins, and the code is spent.
  */
-export async function claimDevicePairing(code: string, secret: string, now = new Date()): Promise<ArPairClaimResponse | 'bad_secret' | 'expired'> {
+export async function claimDevicePairing(app: FastifyInstance, code: string, secret: string, now = new Date()): Promise<ArPairClaimResponse | 'bad_secret' | 'expired'> {
   const codeHash = sha256(code)
   const row = await byCode(code)
   if (!row) return 'expired'
@@ -96,6 +97,7 @@ export async function claimDevicePairing(code: string, secret: string, now = new
     return { status: 'refused' }
   }
   if (row.status !== 'approved') return 'expired'
+  if (row.purpose === 'visitor') return claimVisitorPairing(app, row, now)
   const [claimed] = await db
     .update(arDevices)
     .set({ status: 'claimed', codeHash: null, expiresAt: new Date(now.getTime() + ttlOf(row.kind)) })
@@ -105,13 +107,29 @@ export async function claimDevicePairing(code: string, secret: string, now = new
   return { status: 'approved', deviceId: claimed.id, kind: claimed.kind as ArDeviceKind, expiresAt: claimed.expiresAt.toISOString() }
 }
 
+/**
+ * A visitor headset trades its approved code for the approver's account session. The row is spent (revoked, no code),
+ * never `claimed`, so it is no headset: it can't mint a pass, list spaces or scan rooms. Only one claim wins.
+ */
+async function claimVisitorPairing(app: FastifyInstance, row: DeviceRow, now: Date): Promise<ArPairClaimResponse | 'expired'> {
+  const [spent] = await db
+    .update(arDevices)
+    .set({ status: 'revoked', codeHash: null })
+    .where(and(eq(arDevices.id, row.id), eq(arDevices.codeHash, row.codeHash!), eq(arDevices.status, 'approved'), gt(arDevices.codeExpiresAt, now)))
+    .returning({ userId: arDevices.userId })
+  if (!spent?.userId) return 'expired'
+  const user = await db.query.users.findFirst({ where: eq(users.id, spent.userId) })
+  if (!user || user.isTrial) return 'expired'
+  return { status: 'approved', purpose: 'visitor', session: issueAccountSession(app, user, 'unknown') }
+}
+
 /** The device behind an id and secret, if it is still live. An id that is not a uuid is no device. */
 async function liveDevice(deviceId: string, secret: string, now: Date): Promise<DeviceRow | 'bad_secret' | 'device_revoked'> {
   if (!isUuid(deviceId)) return 'device_revoked'
   const [row] = await db.select().from(arDevices).where(eq(arDevices.id, deviceId))
   if (!row) return 'device_revoked'
   if (!sameHash(row.secretHash, sha256(secret))) return 'bad_secret'
-  if (!activeAt(row, now) || !row.userId) return 'device_revoked'
+  if (row.purpose !== 'builder' || !activeAt(row, now) || !row.userId) return 'device_revoked'
   return row
 }
 

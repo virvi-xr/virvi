@@ -69,6 +69,8 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TABLE auth_handoff_codes ADD COLUMN IF NOT EXISTS scene_id UUID REFERENCES scenes(id) ON DELETE CASCADE\`;
         await sql\`ALTER TABLE auth_handoff_codes ADD COLUMN IF NOT EXISTS location_id UUID REFERENCES analytics_scenes(id) ON DELETE CASCADE\`;
         await sql\`ALTER TABLE auth_handoff_codes ADD COLUMN IF NOT EXISTS pass_expires_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE auth_handoff_codes ALTER COLUMN wallet DROP NOT NULL\`;
+        await sql\`ALTER TABLE auth_handoff_codes ADD COLUMN IF NOT EXISTS sign_in_method TEXT\`;
         console.log('[virvi-server] auth_handoff_codes table ensured');
       } catch(e) { console.log('[virvi-server] auth_handoff_codes:', e.message); }
 

@@ -127,7 +127,7 @@ describe('AR static pages', () => {
       expect(res.statusCode).toBe(200)
       expect(res.headers['content-type']).toMatch(/^application\/json/)
       expect(res.json()).toEqual({
-        applinks: { details: [{ appIDs: ['P22YGT64VU.io.virvi.ar'], components: [{ '/': '/s/*' }] }] },
+        applinks: { details: [{ appIDs: ['P22YGT64VU.io.virvi.app', 'P22YGT64VU.io.virvi.ar'], components: [{ '/': '/s/*' }] }] },
       })
     })
 

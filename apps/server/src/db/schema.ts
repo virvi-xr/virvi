@@ -1564,10 +1564,11 @@ export const walletChallenges = pgTable('wallet_challenges', {
 export const authHandoffCodes = pgTable('auth_handoff_codes', {
   codeHash: text('code_hash').primaryKey(), // sha256(code) hex; the code itself is never stored
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  wallet: text('wallet').notNull(), // lowercased verified wallet from the HUD's token
+  wallet: text('wallet'), // lowercased verified wallet from the HUD's token; null only on an 'app' code (an account needn't have a wallet)
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   usedAt: timestamp('used_at', { withTimezone: true }),
-  kind: text('kind').notNull().default('account'), // 'account' | 'scene' — what the exchange issues
+  kind: text('kind').notNull().default('account'), // 'account' | 'scene' | 'app' — what the exchange issues
+  signInMethod: text('sign_in_method').$type<SignInMethod>(), // 'app' codes: the asking session's sign-in method, kept by the issued session
   sceneId: uuid('scene_id').references(() => scenes.id, { onDelete: 'cascade' }),
   locationId: uuid('location_id').references(() => analyticsScenes.id, { onDelete: 'cascade' }),
   passExpiresAt: timestamp('pass_expires_at', { withTimezone: true }), // scene codes: the minting pass's expiry, kept by the exchanged pass

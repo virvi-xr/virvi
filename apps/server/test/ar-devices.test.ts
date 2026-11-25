@@ -60,7 +60,7 @@ describe('AR headset pairing and the AR pass', () => {
     const typed = `${code.slice(0, 3)}-${code.slice(3)}`.toLowerCase()
     const info = await app.inject({ method: 'GET', url: `/api/ar/pair/${typed}`, headers: as(owner) })
     expect(info.statusCode).toBe(200)
-    expect(info.json()).toEqual({ deviceName: 'Quest 3', codeExpiresAt })
+    expect(info.json()).toEqual({ deviceName: 'Quest 3', codeExpiresAt, purpose: 'builder' })
 
     expect((await approve(typed, owner, 'personal')).json()).toEqual({ result: 'approved' })
     const claimed = (await claim(code)).json()

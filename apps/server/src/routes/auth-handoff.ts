@@ -8,7 +8,7 @@ import { actorFromClaims } from '../auth/actor.js'
 import { authenticate } from '../middleware/auth.js'
 import { boundScene, isScenePass, isStudioPass } from '../auth/scene-from.js'
 import { linkWalletGrants } from '../auth/permissions.js'
-import { issueWalletSession } from '../auth/sessions.js'
+import { issueAccountSession, issueWalletSession } from '../auth/sessions.js'
 import { walletBlockedOn } from '../auth/wallet-blocks.js'
 import { issueScenePass } from '../auth/scene-pass.js'
 import { TokenBucketLimiter } from '../analytics/limiter.js'
@@ -68,6 +68,26 @@ export default async function authHandoffRoutes(app: FastifyInstance) {
     return reply.send({ code, expiresAt: expiresAt.toISOString() })
   })
 
+  // The Virvi app's sign-in: the website (signed in with any method, wallet or not) makes a 60 s code the iPhone app
+  // trades for an account session. Real accounts only: a trial or a pass is refused (no `trial`/`scenePass` opt-in).
+  app.post('/api/auth/app-handoff', { preHandler: authenticate }, async (request, reply) => {
+    const actor = actorFromClaims(request.user)
+    if (request.user.kind !== 'account' || !actor.userId || !actor.verified) {
+      return reply.status(401).send({ error: 'Signing in to the app needs a signed-in account' })
+    }
+    const limit = limiter.take(`app-handoff:${actor.userId}`, 1, CREATE_LIMIT.capacity, CREATE_LIMIT.refillPerSec)
+    if (!limit.ok) return reply.status(429).send({ error: 'rate_limited', retryAfter: Math.ceil(limit.retryAfterMs / 1000) })
+
+    const code = randomBytes(32).toString('base64url')
+    const expiresAt = new Date(Date.now() + CODE_TTL_MS)
+    await db.transaction(async (tx) => {
+      await tx.delete(authHandoffCodes).where(and(eq(authHandoffCodes.userId, actor.userId!), lt(authHandoffCodes.expiresAt, sql`now()`)))
+      // The app's session signs in the way this one did, and carries no wallet claim: never more than this session had.
+      await tx.insert(authHandoffCodes).values({ codeHash: hashCode(code), userId: actor.userId!, wallet: null, expiresAt, kind: 'app', signInMethod: request.user.am ?? 'unknown' })
+    })
+    return reply.send({ code, expiresAt: expiresAt.toISOString() })
+  })
+
   app.post<{ Body: { code?: unknown } }>('/api/auth/handoff/exchange', async (request, reply) => {
     const limit = limiter.take(`handoff-exchange:${request.ip}`, 1, EXCHANGE_LIMIT.capacity, EXCHANGE_LIMIT.refillPerSec)
     if (!limit.ok) return reply.status(429).send({ error: 'rate_limited', retryAfter: Math.ceil(limit.retryAfterMs / 1000) })
@@ -80,13 +100,20 @@ export default async function authHandoffRoutes(app: FastifyInstance) {
       .update(authHandoffCodes)
       .set({ usedAt: sql`now()` })
       .where(and(eq(authHandoffCodes.codeHash, hashCode(code)), isNull(authHandoffCodes.usedAt), gt(authHandoffCodes.expiresAt, new Date())))
-      .returning({ userId: authHandoffCodes.userId, wallet: authHandoffCodes.wallet, kind: authHandoffCodes.kind, sceneId: authHandoffCodes.sceneId, locationId: authHandoffCodes.locationId, passExpiresAt: authHandoffCodes.passExpiresAt })
+      .returning({ userId: authHandoffCodes.userId, wallet: authHandoffCodes.wallet, kind: authHandoffCodes.kind, signInMethod: authHandoffCodes.signInMethod, sceneId: authHandoffCodes.sceneId, locationId: authHandoffCodes.locationId, passExpiresAt: authHandoffCodes.passExpiresAt })
     if (!claimed) return reply.status(410).send(EXPIRED)
 
     const user = await db.query.users.findFirst({ where: eq(users.id, claimed.userId) })
     if (!user) return reply.status(410).send(EXPIRED)
     // A wallet blocked on this account since the code was made (LIV-11 reissue) gets no session
     if (claimed.wallet && (await walletBlockedOn(claimed.wallet, user.id))) return reply.status(403).send({ error: 'wallet_blocked' })
+    // An app code has no wallet: the session is the account's own, signed in the way the asking session was.
+    if (claimed.kind === 'app') {
+      if (user.isTrial) return reply.status(410).send(EXPIRED)
+      return reply.send(issueAccountSession(app, user, claimed.signInMethod ?? 'unknown'))
+    }
+    // Account and scene codes are always made with a wallet.
+    if (!claimed.wallet) return reply.status(410).send(EXPIRED)
     // A pass-minted code carries the same pass (same scene, same location) — never an account session.
     if (claimed.kind === 'scene') {
       if (!claimed.passExpiresAt || claimed.passExpiresAt.getTime() <= Date.now()) return reply.status(410).send(EXPIRED)
