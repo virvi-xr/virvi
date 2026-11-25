@@ -1,15 +1,26 @@
 import { describe, it, expect } from 'vitest'
-import { appSignInRedirect, appHandoffErrorMessage } from './app-sign-in'
+import { appSignInRedirect, appHandoffErrorMessage, APP_SIGNED_IN_MESSAGE } from './app-sign-in'
 import { safeNextPath } from './next-path'
 import { headsetPairView, pairPageHref, visitorApprovalCopy } from './pairing'
 import { signUpButtons } from './trial'
 
 describe('appSignInRedirect', () => {
-  it('hands the code to the Virvi app', () => {
-    expect(appSignInRedirect('abc')).toBe('virvi://signed-in?code=abc')
+  it('hands the code back over https, on the site the person signed in on', () => {
+    expect(appSignInRedirect('abc', 'https://virvi.io')).toBe('https://virvi.io/app-signed-in?code=abc')
+    expect(appSignInRedirect('abc', 'https://staging.virvi.io')).toBe('https://staging.virvi.io/app-signed-in?code=abc')
+    expect(appSignInRedirect('abc', 'http://localhost:3000')).toBe('http://localhost:3000/app-signed-in?code=abc')
   })
   it('URL-encodes the code', () => {
-    expect(appSignInRedirect('a b&c=d/e')).toBe('virvi://signed-in?code=a%20b%26c%3Dd%2Fe')
+    expect(appSignInRedirect('a b&c=d/e', 'https://virvi.io')).toBe('https://virvi.io/app-signed-in?code=a%20b%26c%3Dd%2Fe')
+  })
+  it('never uses the old virvi:// link', () => {
+    expect(appSignInRedirect('abc', 'https://virvi.io')).not.toMatch(/^virvi:/)
+  })
+})
+
+describe('the /app-signed-in page', () => {
+  it('says only to return to the app, never anything about the code', () => {
+    expect(APP_SIGNED_IN_MESSAGE).toBe('Return to the Virvi app.')
   })
 })
 

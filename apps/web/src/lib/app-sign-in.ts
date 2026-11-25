@@ -1,7 +1,13 @@
-/** The link that opens the Virvi app with the one-time sign-in code the website just made. */
-export function appSignInRedirect(code: string): string {
-  return `virvi://signed-in?code=${encodeURIComponent(code)}`
+/**
+ * The link that opens the Virvi app with the one-time sign-in code the website just made: an https link on this site
+ * (`origin`), which the app claims as a universal link. If the app doesn't open, the /app-signed-in page says to go back to it.
+ */
+export function appSignInRedirect(code: string, origin: string): string {
+  return `${origin}/app-signed-in?code=${encodeURIComponent(code)}`
 }
+
+/** What /app-signed-in says when the universal link didn't open the app. It never shows the code. */
+export const APP_SIGNED_IN_MESSAGE = 'Return to the Virvi app.'
 
 /** What to tell someone when the website could not make a sign-in code for the app. */
 export function appHandoffErrorMessage(err: unknown): string {

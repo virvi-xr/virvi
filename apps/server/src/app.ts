@@ -101,6 +101,8 @@ export const redactPairingCode = (url: string) =>
     .replace(/^(\/(?:api\/studio\/invite-links|studio\/invite)\/)[^/?#]+/, '$1:token')
     // ...and the sign-in page's `next` back to it, raw or encoded (the rest of that value goes with it)
     .replace(/([?&]next=(?:\/|%2F)studio(?:\/|%2F)invite(?:\/|%2F))[^&#]*/i, '$1:token')
+    // the app sign-in hand-off's one-time code, on the address the website returns it to
+    .replace(/^(\/app-signed-in\/?\?(?:[^#]*&)?code=)[^&#]*/, '$1:code')
 
 /** The response header carrying the request ID (Fastify's genReqId) */
 export const REQUEST_ID_HEADER = 'x-request-id'
@@ -417,11 +419,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     }])
   })
 
-  // Apple universal links: claims virvi.io/s/<code> for the iPhone app. Same placement as assetlinks.json.
+  // Apple universal links: claims virvi.io/s/<code> and the sign-in hand-off address (/app-signed-in, where the website
+  // returns the one-time code to the app) for the iPhone app. Same placement as assetlinks.json.
   app.get('/.well-known/apple-app-site-association', (_request, reply) => {
     const appIDs = config.appleAppIds
     return reply.type('application/json').send({
-      applinks: { details: appIDs.length === 0 ? [] : [{ appIDs, components: [{ '/': '/s/*' }] }] },
+      applinks: { details: appIDs.length === 0 ? [] : [{ appIDs, components: [{ '/': '/s/*' }, { '/': '/app-signed-in' }, { '/': '/app-signed-in/' }] }] },
     })
   })
 

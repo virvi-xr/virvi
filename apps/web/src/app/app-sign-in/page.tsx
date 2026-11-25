@@ -27,7 +27,7 @@ export default function AppSignInPage() {
     try {
       const { code } = await api.createAppHandoff()
       setPhase('sent')
-      window.location.href = appSignInRedirect(code)
+      window.location.href = appSignInRedirect(code, window.location.origin)
     } catch (err) {
       setError(appHandoffErrorMessage(err))
       setPhase('error')

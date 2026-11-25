@@ -117,17 +117,29 @@ describe('AR static pages', () => {
     expect(redactPairingCode('/signin/?next=%2Fstudio%2F')).toBe('/signin/?next=%2Fstudio%2F')
   })
 
+  it('keeps the one-time sign-in code of the app hand-off out of a log line', () => {
+    const code = 'A'.repeat(43)
+    expect(redactPairingCode(`/app-signed-in?code=${code}`)).toBe('/app-signed-in?code=:code')
+    expect(redactPairingCode(`/app-signed-in/?x=1&code=${code}&y=2`)).toBe('/app-signed-in/?x=1&code=:code&y=2')
+    expect(redactPairingCode('/app-signed-in')).toBe('/app-signed-in')
+  })
+
   describe('/.well-known/apple-app-site-association', () => {
     const prevIds = config.appleAppIds
     afterEach(() => { ;(config as any).appleAppIds = prevIds })
     const get = () => app.inject({ method: 'GET', url: '/.well-known/apple-app-site-association' })
 
-    it('claims /s/* for the iPhone app', async () => {
+    it('claims /s/* and the sign-in hand-off address for the iPhone app', async () => {
       const res = await get()
       expect(res.statusCode).toBe(200)
       expect(res.headers['content-type']).toMatch(/^application\/json/)
       expect(res.json()).toEqual({
-        applinks: { details: [{ appIDs: ['P22YGT64VU.io.virvi.app', 'P22YGT64VU.io.virvi.ar'], components: [{ '/': '/s/*' }] }] },
+        applinks: {
+          details: [{
+            appIDs: ['P22YGT64VU.io.virvi.app', 'P22YGT64VU.io.virvi.ar'],
+            components: [{ '/': '/s/*' }, { '/': '/app-signed-in' }, { '/': '/app-signed-in/' }],
+          }],
+        },
       })
     })
 
