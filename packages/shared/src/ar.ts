@@ -1,5 +1,6 @@
 import type { ShowingInstance } from './showings.js'
 import type { SerializedScene } from './hyperfy.js'
+import type { AppBeatCard } from './beats.js'
 import type { Vec3 } from './types/math.js'
 
 export type ArMarkerView = {
@@ -49,9 +50,9 @@ export type ArMarkerLookup = { spaceId: string; floorId: string; markerId: strin
 
 /**
  * What an ARC code opens in the Virvi app: an AR space's marker, or the ARC of an event BEAT. Task 8 adds an optional
- * `card` to the BEAT variant.
+ * `card` to the BEAT variant: the caller's card, sent only to a signed-in caller.
  */
-export type AppArc = { kind: 'space'; lookup: ArMarkerLookup } | { kind: 'beat'; beatId: string; name: string }
+export type AppArc = { kind: 'space'; lookup: ArMarkerLookup } | { kind: 'beat'; beatId: string; name: string; card?: AppBeatCard }
 
 /**
  * Headset pairing: the headset shows a code, a Virvi user approves it on the website as a personal headset (theirs,

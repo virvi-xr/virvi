@@ -1,14 +1,15 @@
 import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm'
 import { getAddress } from 'ethers'
 import {
-  BEAT_APP_CONSENT_VERSION, BEAT_CARD_LEAD_MS, BEAT_CLAIM_GRACE_MS, cleanDisplayName, type AppBeatCard, type BeatClaimStatus,
+  BEAT_APP_CONSENT_VERSION, BEAT_CARD_LEAD_MS, BEAT_CLAIM_GRACE_MS, cleanDisplayName, parseRingCode, BEAT_PIN_RADIUS, type BeatPin, type AppBeatCard, type BeatClaimStatus,
 } from '@virvixr/shared'
 import { db } from '../db/connection.js'
-import { arSpaces, beatClaims, beats, beatScenes, mediaAssets, scenes, users } from '../db/schema.js'
+import { arSpaces, beatArcs, beatClaims, beats, beatScenes, mediaAssets, scenes, users } from '../db/schema.js'
 import { liveScene } from '../scenes/live.js'
 import { checkInDelta } from '../presence/attendance.js'
 import { isWalletBlocked } from '../auth/wallet-blocks.js'
 import { BeatError } from './errors.js'
+import { locationCheck, type Fix } from './geo.js'
 import { arLiveSince } from './live.js'
 import { beatImageUrl } from './metadata.js'
 import { walletsOf } from './collection.js'
@@ -31,7 +32,7 @@ type ClaimRow = typeof beatClaims.$inferSelect
 
 /** Where tracking starts: in an AR space, or at an event BEAT's ARC (with the phone's location, never stored). */
 export type AppVia = { spaceId: string } | { arcCode: string; location?: AppLocation }
-export interface AppLocation { lat: number; lng: number; accuracyM: number }
+export type AppLocation = Fix
 /** Whether the caller may build in a scene: they see its unpublished spaces, as on the space's feed. */
 export type MayBuild = (sceneId: string) => Promise<boolean>
 
@@ -81,6 +82,35 @@ async function collectingWallets(userId: string): Promise<string[]> {
   return out
 }
 
+/**
+ * The seconds an event claim (source `app_event`) has: wall-clock time since the check-in, inside the BEAT's window, and
+ * never less than it already has. Any other claim keeps the time it has (minutes elsewhere are not credited for waiting).
+ */
+function eventSeconds(b: BeatRow, claim: ClaimRow, now: Date): number {
+  const had = claim.secondsPresent ?? 0
+  if (claim.source !== 'app_event' || !claim.consentedAt) return had
+  const from = Math.max(claim.consentedAt.getTime(), b.startsAt.getTime())
+  const to = Math.min(now.getTime(), b.endsAt.getTime())
+  return Math.max(had, to > from ? Math.floor((to - from) / 1000) : 0)
+}
+
+/** The BEAT's venue pin, when it has one (the radius defaults to 150 m). */
+function pinOf(b: BeatRow): BeatPin | null {
+  return b.pinLat === null || b.pinLng === null ? null : { lat: b.pinLat, lng: b.pinLng, radiusM: b.pinRadiusM ?? BEAT_PIN_RADIUS.defaultM }
+}
+
+const venueOf = (b: BeatRow) => b.locationVenue?.trim() || 'the venue'
+
+/** The pin check at check-in or claim: passes, or the refusal (outside 403, poor fix 422, no location 400). */
+function requireAtVenue(b: BeatRow, loc: Fix | undefined, outsideMessage: string): void {
+  switch (locationCheck(pinOf(b), loc)) {
+    case 'ok': return
+    case 'outside': throw new BeatError(403, 'outside', outsideMessage)
+    case 'poor': throw new BeatError(422, 'poor_fix', "Couldn't get your location accurately. Step outside or near a window and try again.")
+    case 'missing': throw new BeatError(400, 'location_needed', 'Your location is needed to check in at this event.')
+  }
+}
+
 async function toCard(b: BeatRow, claim: ClaimRow | null, wallets: string[]): Promise<AppBeatCard> {
   const media = b.imageUrl || !b.imageMediaId ? null : await db.query.mediaAssets.findFirst({ where: eq(mediaAssets.id, b.imageMediaId), columns: { publicUrl: true } })
   return {
@@ -93,13 +123,16 @@ async function toCard(b: BeatRow, claim: ClaimRow | null, wallets: string[]): Pr
     location: b.locationType === 'in_person' && b.locationVenue ? { type: b.locationType, venue: b.locationVenue } : { type: b.locationType },
     claim: claim ? {
       status: claim.status,
-      secondsPresent: claim.secondsPresent ?? 0,
+      secondsPresent: claim.status === 'present' ? eventSeconds(b, claim, new Date()) : claim.secondsPresent ?? 0,
       wallet: claim.wallet ? getAddress(claim.wallet) : null,
       checkedInAt: claim.consentedAt ? claim.consentedAt.toISOString() : null,
     } : null,
     wallets,
   }
 }
+
+/** The caller's card for a BEAT (what an event ARC's lookup returns to a signed-in caller). */
+export const appBeatCard = (beatId: string, userId: string) => cardFor(beatId, userId)
 
 async function cardFor(beatId: string, userId: string): Promise<AppBeatCard> {
   const b = await db.query.beats.findFirst({ where: eq(beats.id, beatId) })
@@ -130,6 +163,16 @@ export interface AppTrack {
   consentVersion: unknown
   via: AppVia
   mayBuild?: MayBuild
+  /** For an event BEAT with 0 minimum minutes, where tracking claims at once: the wallet chosen and the client's address, as at claim. */
+  wallet?: unknown
+  ip?: string | null
+}
+
+/** The code must be this BEAT's own ARC (any other code, or a BEAT without one, is a 400). */
+async function requireBeatArc(beatId: string, code: string): Promise<void> {
+  const ringId = parseRingCode(code)
+  const [arc] = ringId === null ? [] : await db.select({ id: beatArcs.id }).from(beatArcs).where(and(eq(beatArcs.beatId, beatId), eq(beatArcs.ringId, ringId)))
+  if (!arc) throw new BeatError(400, 'bad_request', "Scan this BEAT's ARC again.")
 }
 
 /**
@@ -139,15 +182,24 @@ export interface AppTrack {
  * this install's key if it had none. Idempotent.
  */
 export async function appTrack(beatId: string, t: AppTrack, now = new Date()): Promise<AppBeatCard> {
-  if (!('spaceId' in t.via)) throw new BeatError(400, 'bad_request', 'Scan this BEAT\'s ARC again.')
-  const sceneId = await spaceSceneFor(t.via.spaceId, t.mayBuild)
-  const b = await visibleBeat(beatId, sceneId)
+  let b: BeatRow
+  let source: 'app_space' | 'app_event'
+  if ('spaceId' in t.via) {
+    b = await visibleBeat(beatId, await spaceSceneFor(t.via.spaceId, t.mayBuild))
+    source = 'app_space'
+  } else {
+    b = await visibleBeat(beatId)
+    source = 'app_event'
+    await requireBeatArc(b.id, t.via.arcCode)
+  }
   if (t.consentVersion !== BEAT_APP_CONSENT_VERSION) throw new BeatError(400, 'bad_consent', 'Update the Virvi app to earn this BEAT.')
   const [u] = await db.select({ displayName: users.displayName, emailVerifiedAt: users.emailVerifiedAt }).from(users).where(eq(users.id, t.userId))
   if (!u) throw notFound()
   if (!u.emailVerifiedAt && (await collectingWallets(t.userId)).length === 0) throw new BeatError(403, 'verify_first', 'Verify your email at virvi.io to earn BEATs.')
   if (now.getTime() > b.endsAt.getTime()) throw new BeatError(409, 'too_late', 'This BEAT has ended.')
   if (now.getTime() < b.startsAt.getTime() - BEAT_CARD_LEAD_MS) throw new BeatError(409, 'too_early', "This BEAT hasn't opened yet.")
+  // Tracking at an event is the check-in: the phone has to be at the venue now (the location is used, not kept)
+  if (!('spaceId' in t.via)) requireAtVenue(b, t.via.location, `You need to be at ${venueOf(b)} to check in.`)
   const name = u.displayName?.trim() ? cleanDisplayName(u.displayName, '') : null
   try {
     await db.transaction(async (tx) => {
@@ -161,7 +213,7 @@ export async function appTrack(beatId: string, t: AppTrack, now = new Date()): P
         if (await keyTaken()) throw thisDevice()
         await tx.insert(beatClaims).values({
           beatId: b.id, userId: t.userId, wallet: null, displayName: name, consentVersion: BEAT_APP_CONSENT_VERSION, consentedAt: now, lastSeenAt: now,
-          createdAt: now, source: 'app_space', installKeyId: t.installKeyId,
+          createdAt: now, source, installKeyId: t.installKeyId,
         }).onConflictDoNothing()
         ;[mine] = await tx.select().from(beatClaims).where(and(eq(beatClaims.beatId, b.id), eq(beatClaims.userId, t.userId))).for('update')
         if (!mine) throw thisDevice()
@@ -174,6 +226,10 @@ export async function appTrack(beatId: string, t: AppTrack, now = new Date()): P
     })
   } catch (e) {
     throw uniqueRefusal(e)
+  }
+  // An event BEAT with no minimum minutes: the scan is the claim (once it has started; before, the claim waits for the start)
+  if (!('spaceId' in t.via) && b.minPresentSeconds === 0 && now.getTime() >= b.startsAt.getTime()) {
+    return appClaim(b.id, { userId: t.userId, installKeyId: t.installKeyId, wallet: t.wallet, location: t.via.location, ip: t.ip }, now)
   }
   return cardFor(b.id, t.userId)
 }
@@ -202,10 +258,11 @@ export async function appCheckIn(beatId: string, c: { userId: string; spaceId: s
 
 /** The time rules of a claim: after the start, before the grace runs out, with enough time present. */
 function checkClaimTime(b: BeatRow, claim: ClaimRow, now: Date): void {
+  // An event claim's time is the wall clock since its check-in (eventSeconds); any other claim has what it has
   // Tracking opens before the start, so with a minimum of 0 the time alone would allow it
   if (now.getTime() < b.startsAt.getTime()) throw new BeatError(409, 'not_started', "This event hasn't started yet.")
   if (now.getTime() > claimUntil(b).getTime()) throw new BeatError(409, 'too_late', 'The time to claim this BEAT is over.')
-  if ((claim.secondsPresent ?? 0) < b.minPresentSeconds) throw new BeatError(409, 'not_yet', "You haven't been here long enough yet.")
+  if (eventSeconds(b, claim, now) < b.minPresentSeconds) throw new BeatError(409, 'not_yet', "You haven't been here long enough yet.")
 }
 
 export interface AppClaim {
@@ -235,6 +292,7 @@ export async function appClaim(beatId: string, c: AppClaim, now = new Date()): P
   if (pre.status === 'present') {
     // Before asking which wallet: a claim that can't go yet says so first (checked again under the lock)
     checkClaimTime(seen, pre, now)
+    if (pre.source === 'app_event') requireAtVenue(seen, c.location, `Come back to ${venueOf(seen)} to claim this BEAT.`)
     if ((await takenCount(db, seen.id)) >= seen.supplyCap) throw allClaimed()
     if (c.wallet !== undefined && c.wallet !== null) {
       const mine = typeof c.wallet === 'string' ? (await walletsOf(c.userId)).find((w) => w.toLowerCase() === (c.wallet as string).toLowerCase()) : undefined
@@ -257,6 +315,7 @@ export async function appClaim(beatId: string, c: AppClaim, now = new Date()): P
       if (!claim) throw notTracking()
       if (claim.status !== 'present') return
       checkClaimTime(b, claim, now)
+      if (claim.source === 'app_event') requireAtVenue(b, c.location, `Come back to ${venueOf(b)} to claim this BEAT.`)
       if ((await takenCount(tx, b.id)) >= b.supplyCap) throw allClaimed()
       if (wallet) {
         const [other] = await tx.select({ id: beatClaims.id }).from(beatClaims).where(and(eq(beatClaims.beatId, b.id), eq(beatClaims.wallet, wallet), ne(beatClaims.id, claim.id)))
@@ -274,7 +333,7 @@ export async function appClaim(beatId: string, c: AppClaim, now = new Date()): P
       }
       // Stamped by the database's clock, as claimBeat and a host's Send are
       await tx.update(beatClaims).set({
-        status: wallet ? 'claimed' : 'waiting', wallet, claimedAt: sql`clock_timestamp()`, installKeyId: claim.installKeyId ?? c.installKeyId,
+        status: wallet ? 'claimed' : 'waiting', wallet, claimedAt: sql`clock_timestamp()`, secondsPresent: eventSeconds(b, claim, now), installKeyId: claim.installKeyId ?? c.installKeyId,
       }).where(and(eq(beatClaims.id, claim.id), eq(beatClaims.status, 'present')))
     })
   } catch (e) {

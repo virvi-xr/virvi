@@ -16,6 +16,7 @@ import { lookupArc } from '../ar/arcs.js'
 import { AR_ANALYTICS_PLATFORMS, recordArBatch } from '../ar/analytics.js'
 import { AR_REPORT_REASONS, createArReport } from '../ar/reports.js'
 import { arLiveSince, markArLive } from '../beats/live.js'
+import { appBeatCard } from '../beats/app.js'
 
 let holdMs: number = AR_FEED.holdMs
 
@@ -123,6 +124,10 @@ export default async function arFeedRoutes(app: FastifyInstance) {
     if (!(await signInIfPresent(request, reply))) return
     const arc = await lookupArc(request.params.code, (sceneId) => isBuilder(request, sceneId))
     if (!arc) return reply.status(404).send({ error: 'not_found' })
+    // A signed-in caller gets the BEAT's card with the ARC (their claim and wallets); anonymous callers get the bare answer
+    if (arc.kind === 'beat' && request.user?.kind === 'account') {
+      return reply.send({ ...arc, card: await appBeatCard(arc.beatId, request.user.id) })
+    }
     return reply.send(arc)
   })
 

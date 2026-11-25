@@ -6,7 +6,8 @@ import { getSceneAccess } from '../auth/permissions.js'
 import { mayBuild } from '../ar/access.js'
 import { issueChallenge, registerKey, requireAssertion } from '../app-attest/verify.js'
 import { BeatError } from './errors.js'
-import { appCheckIn, appClaim, appMyBeats, appSpaceBeat, appStopTracking, appTrack, type AppLocation, type AppVia, type MayBuild } from './app.js'
+import { parseFix } from './geo.js'
+import { appCheckIn, appClaim, appMyBeats, appSpaceBeat, appStopTracking, appTrack, type AppVia, type MayBuild } from './app.js'
 
 /**
  * The Virvi app's routes (`/api/app/...`): App Attest registration, and BEATs in AR spaces. Every route needs a signed-in
@@ -30,12 +31,8 @@ export default async function appBeatRoutes(app: FastifyInstance) {
     throw e
   }
   const builderOf = (request: FastifyRequest): MayBuild => async (sceneId) => mayBuild(await getSceneAccess(actorFromClaims(request.user), sceneId))
-  const location = (v: unknown): AppLocation | undefined => {
-    const l = v as Partial<AppLocation> | null | undefined
-    return l && [l.lat, l.lng, l.accuracyM].every((n) => typeof n === 'number' && Number.isFinite(n)) ? { lat: l.lat!, lng: l.lng!, accuracyM: l.accuracyM! } : undefined
-  }
   const via = (b: Record<string, unknown>): AppVia | null =>
-    typeof b.spaceId === 'string' ? { spaceId: b.spaceId } : typeof b.arcCode === 'string' ? { arcCode: b.arcCode, location: location(b.location) } : null
+    typeof b.spaceId === 'string' ? { spaceId: b.spaceId } : typeof b.arcCode === 'string' ? { arcCode: b.arcCode, location: parseFix(b.location) } : null
   type BeatReq = FastifyRequest<{ Params: { beatId: string } }>
 
   // ── App Attest ─────────────────────────────────────────────────────────────
@@ -66,7 +63,7 @@ export default async function appBeatRoutes(app: FastifyInstance) {
       const b = body(request)
       const where = via(b)
       if (!where) return reply.status(400).send({ error: 'bad_request', message: 'Say where you are tracking from.' })
-      return reply.send({ beat: await appTrack(request.params.beatId, { userId: request.user.id, installKeyId, consentVersion: b.consentVersion, via: where, mayBuild: builderOf(request) }) })
+      return reply.send({ beat: await appTrack(request.params.beatId, { userId: request.user.id, installKeyId, consentVersion: b.consentVersion, via: where, mayBuild: builderOf(request), wallet: b.wallet, ip: request.ip }) })
     } catch (e) {
       return fail(reply, e)
     }
@@ -87,7 +84,7 @@ export default async function appBeatRoutes(app: FastifyInstance) {
     try {
       const installKeyId = await requireAssertion(request, rawBody(request))
       const b = body(request)
-      return reply.send({ beat: await appClaim(request.params.beatId, { userId: request.user.id, installKeyId, wallet: b.wallet, location: location(b.location), ip: request.ip }) })
+      return reply.send({ beat: await appClaim(request.params.beatId, { userId: request.user.id, installKeyId, wallet: b.wallet, location: parseFix(b.location), ip: request.ip }) })
     } catch (e) {
       return fail(reply, e)
     }
