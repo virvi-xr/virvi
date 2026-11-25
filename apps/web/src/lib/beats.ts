@@ -419,7 +419,8 @@ export function cancelledNote(b: Pick<PublicBeat, 'test'>, wasPaid: boolean): st
 /** The counts against the cap, with the words the page uses (plain-ux M8). */
 export function beatCounts(b: PublicBeat) {
   const { claimed, minting, minted, failed } = b.counts
-  return { claimed, minting, minted, failed, used: claimed + minting + minted + failed, cap: b.supplyCap }
+  // A claim waiting for a wallet holds a BEAT of the supply too
+  return { claimed, minting, minted, failed, used: claimed + minting + minted + failed + (b.waitingCount ?? 0), cap: b.supplyCap }
 }
 export const COUNT_LABELS = { claimed: 'Claimed (waiting to send)', minting: 'Sending', minted: 'Delivered', failed: 'Failed', cap: 'Cap' } as const
 export const COUNTS_NOTE = "Failed claims are retried automatically. A wallet that can't accept BEATs stays failed."
@@ -469,8 +470,15 @@ export const hasClaimed = (c: Pick<BeatClaimant, 'status'>) => CLAIMED.includes(
 /** The list's heading (plain-ux I3): everyone tracking, and how many of them claimed. */
 export function claimantsHeading(list: BeatClaimant[]): string {
   const claimed = list.filter(hasClaimed).length
+  const waiting = list.filter((c) => c.status === 'waiting').length
   const attending = list.filter((c) => c.status === 'present').length
-  return `Attendees (${list.length}): ${claimed} claimed, ${attending} still attending`
+  return `Attendees (${list.length}): ${claimed} claimed, ${waiting > 0 ? `${waiting} waiting for a wallet, ` : ''}${attending} still attending`
+}
+
+/** The notice after the host removes a claim. A waiting claim has no wallet yet, so it names the visitor. */
+export function claimRemovedNote(c: Pick<BeatClaimant, 'status' | 'displayName'>): string {
+  if (c.status === 'waiting') return `Claim removed. ${c.displayName ?? 'This visitor'} won't get this BEAT, even if they link a wallet.`
+  return "Claim removed. That wallet won't get this BEAT."
 }
 
 /** What "Copy wallets that claimed" copies: the full wallet of every claim that took a BEAT, one per line. */
@@ -549,7 +557,8 @@ export function filterCollected(items: CollectedBeat[], f: CollectedFilter): Col
     if (b.status === 'waiting') { if (f.wallet !== 'all') return false }
     else if (f.wallet !== 'all' && b.wallet.toLowerCase() !== f.wallet.toLowerCase()) return false
     if (f.kind !== 'all' && b.kind !== f.kind) return false
-    if (f.earnedOnly && !b.earned) return false
+    // A waiting item was earned: it only lacks a wallet
+    if (f.earnedOnly && !b.earned && b.status !== 'waiting') return false
     const day = b.startsAt.slice(0, 10)
     if (f.from && day < f.from) return false
     if (f.to && day > f.to) return false

@@ -9,7 +9,7 @@ import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import {
   ACTION_LABELS, ART_FAILED, ART_PENDING, CLAIM_STATUS_LABELS, COUNT_LABELS, COUNTS_NOTE, PAYMENT_POLL_MS, PAYMENT_SLOW_MS, STATUS_HELP,
-  beatActions, beatsPayable, beatCounts, beatEditBody, beatFieldError, beatLocked, beatToInput, beatWindow, cancelledNote, claimUntil, confirmBeatAction,
+  beatActions, beatsPayable, beatCounts, beatEditBody, beatFieldError, beatLocked, beatToInput, beatWindow, cancelledNote, claimRemovedNote, claimUntil, confirmBeatAction,
   formatWhen, locationLine, paymentNote, pollPayment, reviewSummary, topupKey,
   type BeatAction, type BeatAvailability, type BeatClaimant, type BeatInput, type FieldError, type PublicBeat,
 } from '@/lib/beats'
@@ -172,7 +172,7 @@ function BeatDetail({ availability }: { availability: BeatAvailability }) {
     setBusy(true); setError(null); setNotice(null)
     try {
       await api.removeBeatClaim(beat.id, c.id)
-      setNotice('Claim removed. That wallet won\'t get this BEAT.')
+      setNotice(claimRemovedNote(c))
       await load()
     } catch (err) { fail(err) }
     setBusy(false)

@@ -8,7 +8,7 @@ import { walletLookupHref, beatsExplainerFor,
   BEAT_REFUND_NOTE, beatApiPath, fieldsOfPatch, pollPayment, sceneBeatsPath, shownFieldError, BEATS_NETWORK_UNAVAILABLE, beatsPayable,
   TRADEABLE_HINT, SUPPLY_HINT, PAID_SUPPLY_HINT, LOCATION_SCENE_ONLY, blankLocation, cancelledNote, claimantsHeading, locationBody, locationLine,
   reviewSummary, beatLocked, COUNT_LABELS, CLAIM_STATUS_LABELS, claimantHeld, canRemove,
-  filterCollected, waitingNote, shortWallet, walletPageHref, walletFromPath, type CollectedFilter,
+  filterCollected, waitingNote, shortWallet, walletPageHref, walletFromPath, type CollectedFilter, beatCounts, claimRemovedNote,
 } from './beats'
 
 const NOW = new Date('2026-11-14T12:00:00Z')
@@ -170,6 +170,14 @@ describe('server errors', () => {
   })
 })
 
+describe('N of M used', () => {
+  it('counts claims waiting for a wallet, since they hold a BEAT of the supply', () => {
+    const c = beatCounts(beat({ counts: { claimed: 1, minting: 1, minted: 2, failed: 1 }, waitingCount: 3, supplyCap: 20 }))
+    expect(c.used).toBe(8)
+    expect(c.cap).toBe(20)
+  })
+})
+
 describe('claimants', () => {
   const list: BeatClaimant[] = [
     { id: 'c1', wallet: '0x1234567890abcdef1234567890abcdef12345678', displayName: '<b>Ana</b>', status: 'minted', claimedAt: null, mintedAt: null, txUrl: 'https://polygonscan.com/tx/0xaa', reissued: false, reissueTxUrl: null },
@@ -179,6 +187,16 @@ describe('claimants', () => {
   it('plain-ux I3: copies only the wallets that claimed, one per line, and the heading counts both', () => {
     expect(claimantWallets(list)).toBe('0x1234567890abcdef1234567890abcdef12345678\n0xabcdefabcdefabcdefabcdefabcdefabcdefabcd')
     expect(claimantsHeading(list)).toBe('Attendees (3): 2 claimed, 1 still attending')
+  })
+  it('the heading counts waiting claims as their own part, so the numbers add up', () => {
+    const w: BeatClaimant = { ...list[2], id: 'c4', wallet: null, status: 'waiting' }
+    expect(claimantsHeading([...list, w])).toBe('Attendees (4): 2 claimed, 1 waiting for a wallet, 1 still attending')
+    expect(claimantsHeading([w, w])).toBe('Attendees (2): 0 claimed, 2 waiting for a wallet, 0 still attending')
+  })
+  it('the notice after removing a waiting claim names the visitor, not a wallet', () => {
+    expect(claimRemovedNote({ status: 'waiting', displayName: 'Cy' })).toBe("Claim removed. Cy won't get this BEAT, even if they link a wallet.")
+    expect(claimRemovedNote({ status: 'waiting', displayName: null })).toBe("Claim removed. This visitor won't get this BEAT, even if they link a wallet.")
+    expect(claimRemovedNote({ status: 'claimed', displayName: 'Cy' })).toBe("Claim removed. That wallet won't get this BEAT.")
   })
   it('M8: plain words for the counts and statuses', () => {
     expect(COUNT_LABELS).toEqual({ claimed: 'Claimed (waiting to send)', minting: 'Sending', minted: 'Delivered', failed: 'Failed', cap: 'Cap' })
@@ -409,6 +427,11 @@ describe('collected BEATs (LIV-185)', () => {
   })
   it('filters by wallet', () => { expect(ids({ wallet: W2 })).toEqual(['2']) })
   it('filters by earned only', () => { expect(ids({ earnedOnly: true })).toEqual(['1', '3']) })
+  it('earned only keeps items waiting for a wallet, which were earned', () => {
+    const w = mk({ tokenId: '', wallet: '', earned: false, status: 'waiting' })
+    expect(filterCollected([...items, w], { ...none, earnedOnly: true })).toContain(w)
+    expect(filterCollected(items, { ...none, earnedOnly: true }).map((b) => b.tokenId)).toEqual(['1', '3'])
+  })
   it('filters by kind; custom returns none today', () => {
     expect(ids({ kind: 'basic' })).toEqual(['1', '2', '3'])
     expect(ids({ kind: 'custom' })).toEqual([])
