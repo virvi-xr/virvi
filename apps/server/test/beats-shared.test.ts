@@ -13,7 +13,7 @@ const P = { baseCents: 500, includedMints: 100, extraMintCents: 2 }
 describe('BEAT app consent and pin', () => {
   it('pins the app consent text, its version and the pin radius', () => {
     expect(BEAT_APP_CONSENT_VERSION).toBe(1)
-    expect(beatAppConsentText('Launch')).toBe("To track your attendance for the Launch BEAT, Virvi stores your account, how long you're here and, when you claim, the wallet you choose. Virvi checks your location only when you check in and when you claim, and doesn't keep it. The hosts of this event will see your name and time. If you claim, your wallet, this BEAT and the time it was sent are recorded on Polygon, a public blockchain: anyone can see that record, and nobody can delete it. You can stop tracking at any time before you claim, which deletes what was stored.")
+    expect(beatAppConsentText('Launch')).toBe("To track your attendance for the Launch BEAT, Virvi stores your account, how long you're here and, when you claim, the wallet you choose. Virvi checks your location only when you check in and when you claim, and doesn't keep it. The hosts of this event will see your name, your time and, if you claim, the wallet you choose. If you claim, your wallet, this BEAT and the time it was sent are recorded on Polygon, a public blockchain: anyone can see that record, and nobody can delete it. You can stop tracking at any time before you claim, which deletes what was stored.")
     expect(BEAT_PIN_RADIUS).toEqual({ defaultM: 150, minM: 50, maxM: 1000 })
   })
 })
