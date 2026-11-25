@@ -12,7 +12,7 @@ describe('dcl runtime', () => {
     // The HUD registers with a virtual canvas (scales on high-DPI screens) and textures its launcher from the icon
     expect(src).toContain('virtualWidth')
     expect(src).toContain('images/virvi/hud-v.png')
-    expect(DCL_RUNTIME_VERSION).toBe(19)
+    expect(DCL_RUNTIME_VERSION).toBe(20)
   })
 
   it('names Virvi items for analytics (v4)', async () => {
@@ -131,7 +131,7 @@ describe('dcl runtime', () => {
   })
 
   it('carries the visitor privacy notice: nothing sent before a decision, the card, and Privacy (v19, @virvixr/dcl 2.20.0)', async () => {
-    const src = Buffer.from((await runtimeFiles()).get('bin/index.js')!).toString('utf8')
+    const src = Buffer.from((await runtimeFiles(19)).get('bin/index.js')!).toString('utf8')
     expect(src).toContain('/api/analytics/consent')
     expect(src).toContain('under a pseudonym')
     expect(src).toContain('virvi.io/privacy/')
@@ -141,8 +141,20 @@ describe('dcl runtime', () => {
     expect(src).toContain('Agree and continue')
   })
 
-  it('keeps v3 to v18 for deploys still waiting to be signed', async () => {
-    for (const v of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]) expect((await runtimeFiles(v)).has('bin/index.js')).toBe(true)
+  it('carries BEAT auto-claim: consent v3 with its sentence, the tracking line, On its way (v20, @virvixr/dcl 2.21.0, LIV-180)', async () => {
+    const src = Buffer.from((await runtimeFiles()).get('bin/index.js')!).toString('utf8')
+    expect(src).toContain("Agreeing also claims this BEAT to your wallet once you've been here long enough.")
+    expect(src).toContain("It's claimed for you once you've been here long enough.")
+    expect(src).toContain('Your BEAT is on its way.')
+    // It reports DCL_HUD_VERSION, which stays 2.20.0 until 2.21.0 is on npm
+    expect(src).toContain('2.20.0')
+    // Still the privacy notice and the giveaway card
+    expect(src).toContain('/api/analytics/consent')
+    expect(src).toContain('Agree and continue')
+  })
+
+  it('keeps v3 to v19 for deploys still waiting to be signed', async () => {
+    for (const v of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]) expect((await runtimeFiles(v)).has('bin/index.js')).toBe(true)
   })
 
   it('speaks the Virvi protocol only', async () => {
