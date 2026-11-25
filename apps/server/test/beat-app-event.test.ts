@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { and, eq } from 'drizzle-orm'
 import { BEAT_APP_CONSENT_VERSION, ringCodeOf } from '@virvixr/shared'
 import { config } from '../src/config.js'
@@ -320,6 +320,16 @@ describe('in-person BEATs with the event ARC', () => {
     const res = await trackReq(p, b, code, north(10))
     expect(res.statusCode).toBe(400)
     expect(await rowOf(b.id, p.user.id)).toBeUndefined()
+  })
+
+  it('a wrapped unique violation while tracking is the refusal it means (this phone already has it)', async () => {
+    const { b, code } = await seed()
+    const p = await phone()
+    const wrapped = Object.assign(new Error('Failed query'), { cause: { code: '23505', constraint_name: 'beat_claims_beat_install_key_uq' } })
+    const spy = vi.spyOn(db, 'transaction').mockImplementationOnce(async () => { throw wrapped })
+    const res = await trackReq(p, b, code, north(10))
+    spy.mockRestore()
+    expect([res.statusCode, res.json().error]).toEqual([409, 'this_device'])
   })
 
   it('service: appTrack refuses an ARC code that is not the BEAT\'s', async () => {

@@ -9,7 +9,7 @@ import { arSpaces, beatArcs, beatClaims, beats, beatScenes, mediaAssets, scenes,
 import { liveScene } from '../scenes/live.js'
 import { checkInDelta } from '../presence/attendance.js'
 import { isWalletBlocked } from '../auth/wallet-blocks.js'
-import { BeatError } from './errors.js'
+import { BeatError, uniqueViolation } from './errors.js'
 import { locationCheck, type Fix } from './geo.js'
 import { arLiveSince } from './live.js'
 import { beatImageUrl } from './metadata.js'
@@ -54,10 +54,9 @@ const beatsBlocked = () => new BeatError(403, 'beats_blocked', "This wallet can'
 
 /** A unique index the write ran into, as the refusal it means (any other error is thrown as it is). */
 function uniqueRefusal(e: unknown): unknown {
-  const err = e as { code?: string; constraint_name?: string }
-  if (err.code !== '23505') return e
-  if (err.constraint_name === 'beat_claims_beat_install_key_uq') return thisDevice()
-  if (err.constraint_name === 'beat_claims_beat_wallet_uq') return walletHasIt()
+  const constraint = uniqueViolation(e)
+  if (constraint === 'beat_claims_beat_install_key_uq') return thisDevice()
+  if (constraint === 'beat_claims_beat_wallet_uq') return walletHasIt()
   return e
 }
 

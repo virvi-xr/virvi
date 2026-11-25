@@ -9,7 +9,7 @@ import { db } from '../db/connection.js'
 import { beatClaims, beatNetworkClaims, beats, beatScenes, mediaAssets } from '../db/schema.js'
 import { checkInDelta } from '../presence/attendance.js'
 import { ipKey } from '../errors/limits.js'
-import { BeatError } from './errors.js'
+import { BeatError, uniqueViolation } from './errors.js'
 import { beatRetired } from './contract.js'
 import { beatLiveSince } from './live.js'
 import { beatImageUrl } from './metadata.js'
@@ -82,7 +82,7 @@ async function fillAppClaimWallet(q: Pick<Tx, 'select' | 'update'>, claim: Claim
   try {
     await q.update(beatClaims).set({ wallet }).where(and(eq(beatClaims.id, claim.id), isNull(beatClaims.wallet)))
   } catch (e) {
-    if ((e as { code?: string }).code === '23505') throw walletHasIt()
+    if (uniqueViolation(e) !== null) throw walletHasIt()
     throw e
   }
 }

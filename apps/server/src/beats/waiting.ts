@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, lte, ne, or, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { beatClaims, beats, userAuthMethods } from '../db/schema.js'
 import { isWalletBlocked } from '../auth/wallet-blocks.js'
+import { uniqueViolation } from './errors.js'
 
 /**
  * Claims waiting for a wallet. A visitor who earned a BEAT in the Virvi app before linking a wallet holds a `waiting`
@@ -49,7 +50,7 @@ export async function fulfilWaitingClaims(userId: string, wallet: string, now: D
         if (done.length) sent++
         continue
       } catch (e) {
-        if ((e as { code?: string }).code !== '23505') throw e
+        if (uniqueViolation(e) === null) throw e
       }
     }
     // The wallet holds this BEAT already: the claim stays waiting, and says why

@@ -8,6 +8,7 @@ import { beatClaims, beatPayments, beats, userAuthMethods, walletBlocks } from '
 import { setBeatChainClientForTests } from '../src/beats/chain.js'
 import { resetBeatJobState, runBeatTick } from '../src/beats/job.js'
 import { fulfilWaitingClaims } from '../src/beats/waiting.js'
+import { uniqueViolation } from '../src/beats/errors.js'
 import { scrubBeats, deleteMyBeatData } from '../src/beats/retention.js'
 import { appClaim } from '../src/beats/app.js'
 import { collectionFor } from '../src/beats/collection.js'
@@ -136,6 +137,26 @@ describe('claims waiting for a wallet (Task 9)', () => {
     const rows = [await rowOf(a.claim.id), await rowOf(c.claim.id)]
     expect(rows.map((r) => r.status).sort()).toEqual(['claimed', 'waiting'])
     expect(rows.find((r) => r.status === 'waiting')!.failReason).toBe('wallet_has_it')
+  })
+
+  it('reads a unique violation whether the driver error comes bare or wrapped in cause', () => {
+    expect(uniqueViolation({ code: '23505', constraint_name: 'beat_claims_beat_wallet_uq' })).toBe('beat_claims_beat_wallet_uq')
+    expect(uniqueViolation(Object.assign(new Error('Failed query'), { cause: { code: '23505', constraint_name: 'beat_claims_beat_install_key_uq' } }))).toBe('beat_claims_beat_install_key_uq')
+    expect(uniqueViolation({ cause: { code: '23505' } })).toBe('')
+    expect(uniqueViolation({ code: '23503' })).toBeNull()
+    expect(uniqueViolation(new Error('db down'))).toBeNull()
+    expect(uniqueViolation(null)).toBeNull()
+  })
+
+  it('a wrapped unique violation at the send keeps the claim waiting as wallet_has_it', async () => {
+    const b = await seed()
+    const { user, claim } = await waiter(b.id)
+    const wrapped = Object.assign(new Error('Failed query'), { cause: { code: '23505', constraint_name: 'beat_claims_beat_wallet_uq' } })
+    const spy = vi.spyOn(db, 'update').mockImplementationOnce(() => { throw wrapped })
+    const res = await fulfilWaitingClaims(user.id, wallet())
+    spy.mockRestore()
+    expect(res).toEqual({ sent: 0, kept: 1 })
+    expect([(await rowOf(claim.id)).status, (await rowOf(claim.id)).failReason]).toEqual(['waiting', 'wallet_has_it'])
   })
 
   it('two wallets linked at once never double-send: the first to land wins', async () => {
