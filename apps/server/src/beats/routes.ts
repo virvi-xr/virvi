@@ -233,7 +233,7 @@ export default async function beatRoutes(app: FastifyInstance) {
     const c = reissueCaller(request, reply)
     if (!c) return reply
     const wallets = await walletsOf(c.userId)
-    return reply.send({ wallets, beats: await collectionFor(wallets, { includeClaimTimes: true }) })
+    return reply.send({ wallets, beats: await collectionFor(wallets, { includeClaimTimes: true, waitingFor: c.userId }) })
   })
 
   app.get<{ Params: { sceneId: string } }>('/api/scenes/:sceneId/beats', sceneScoped, async (request, reply) => {

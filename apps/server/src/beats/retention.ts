@@ -8,11 +8,12 @@ import { deleteMyReissueRequests, scrubReissueRequests } from './reissue.js'
 /**
  * BEAT privacy and retention (LIV-11). Nothing here logs wallets or display names.
  *
- * - deleteMyBeatData: a visitor's own data. Present, claimed and failed claims are deleted. A claim that is minting
+ * - deleteMyBeatData: a visitor's own data. Present, waiting, claimed and failed claims are deleted. A claim that is minting
  *   (a transaction is in flight) is flagged, and the minting job settles it when its batch does (deleted if it didn't
  *   mint, unlinked if it did). A minted claim keeps its row and its wallet (public on chain) but loses the link to the
  *   account and the display name.
- * - scrubBeats: the daily 30-day sweep.
+ * - scrubBeats: the daily 30-day sweep. A claim waiting for a wallet is never scrubbed: it holds a copy for a visitor
+ *   who may link a wallet any time. (It isn't on chain, so a visitor deleting their data deletes it.)
  */
 
 const DAY_MS = 86_400_000
@@ -33,7 +34,7 @@ export async function deleteMyBeatData(userId: string, _now: Date, exec?: Exec):
     await tx.select({ id: beatClaims.id }).from(beatClaims).where(eq(beatClaims.userId, userId)).for('update')
     const mine = eq(beatClaims.userId, userId)
     const deleted = await tx.delete(beatClaims)
-      .where(and(mine, inArray(beatClaims.status, ['present', 'claimed', 'failed'])))
+      .where(and(mine, inArray(beatClaims.status, ['present', 'waiting', 'claimed', 'failed'])))
       .returning({ id: beatClaims.id })
     // A claim a host removed stays as a wallet-only tombstone, so the wallet can't track and claim that BEAT again (I-2)
     const tombstones = await tx.update(beatClaims).set(UNLINKED_CLAIM)

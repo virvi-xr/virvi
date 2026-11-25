@@ -713,8 +713,8 @@ const notHeld = (now: Date) => sql`not (${beats.holdMints}
   and ${beats.endsAt} > ${new Date(now.getTime() - BEAT_CLAIM_GRACE_MS).toISOString()}::timestamptz
   and (${beats.mintsReleasedAt} is null or ${beatClaims.claimedAt} > ${beats.mintsReleasedAt}))`
 
-/** The claims that keep a BEAT from being closed: pending ones, and failed ones an admin's retry could still mint. */
-const holdsClose = sql`exists (select 1 from beat_claims c where c.beat_id = ${beats.id} and (c.status in ('claimed', 'minting')
+/** The claims that keep a BEAT from being closed: pending ones, ones waiting for a wallet (they never lapse), and failed ones an admin's retry could still mint. */
+const holdsClose = sql`exists (select 1 from beat_claims c where c.beat_id = ${beats.id} and (c.status in ('claimed', 'minting', 'waiting')
   or (c.status = 'failed' and coalesce(c.fail_reason, '') not in (${sql.join(BEAT_FINAL_FAIL_REASONS.map((x) => sql`${x}`), sql`, `)}))))`
 
 /**

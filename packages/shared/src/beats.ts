@@ -148,6 +148,8 @@ export interface PublicBeat {
   status: BeatStatus
   sceneIds: string[]
   counts: { claimed: number; minting: number; minted: number; failed: number }
+  /** Claims saved for visitors who have no wallet yet ("Waiting for a wallet"); each holds a copy of the supply. */
+  waitingCount: number
   frozen: boolean
   test: boolean
   /** Host review: claims wait for the host's Send (POST /api/beats/:id/release) or until `mintsHeldUntil`. */
@@ -299,6 +301,13 @@ export interface CollectedBeat {
   mintTxUrl: string | null
   /** Only when earned and the claim isn't unlinked; never on the public endpoint. */
   claimedAt: string | null
+  /**
+   * Only on an item for a claim saved until the account links a wallet (the signed-in collection only; never on the
+   * public wallet page). It holds no token yet: `wallet` is '' and `quantity` 0.
+   */
+  status?: 'waiting'
+  /** On a waiting item: the linked wallet already holds this BEAT, so the claim stays saved. */
+  reason?: 'wallet_has_it'
 }
 
 /** The signed-in collection: the account's linked wallets and the BEATs they hold. */

@@ -24,7 +24,7 @@ function beat(over: Partial<PublicBeat> = {}): PublicBeat {
     startsAt: new Date(NOW.getTime() + HOUR).toISOString(), endsAt: new Date(NOW.getTime() + 3 * HOUR).toISOString(),
     minPresentSeconds: 300, supplyCap: 100, tradeable: false, status: 'draft', sceneIds: ['s1'],
     counts: { claimed: 0, minting: 0, minted: 0, failed: 0 }, frozen: false, test: false,
-    holdMints: false, mintsReleasedAt: null, mintsHeldUntil: null, scheduledEndsAt: null, heldClaims: 0, artStatus: 'pending', retired: false,
+    holdMints: false, mintsReleasedAt: null, mintsHeldUntil: null, scheduledEndsAt: null, heldClaims: 0, waitingCount: 0, artStatus: 'pending', retired: false,
     location: { type: 'scene', label: 'A', platform: null, url: null, venue: null, city: null, country: null, address: null, mapUrl: null }, ...over,
   }
 }

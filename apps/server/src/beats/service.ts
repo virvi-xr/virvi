@@ -121,6 +121,7 @@ async function toPublic(rows: BeatRow[]): Promise<PublicBeat[]> {
   return rows.map((r) => {
     const counts = { claimed: 0, minting: 0, minted: 0, failed: 0 }
     for (const c of countRows) if (c.beatId === r.id && c.status in counts) counts[c.status as keyof typeof counts] = c.n
+    const waitingCount = countRows.find((c) => c.beatId === r.id && c.status === 'waiting')?.n ?? 0
     return {
       id: r.id,
       chain: r.chain,
@@ -136,6 +137,7 @@ async function toPublic(rows: BeatRow[]): Promise<PublicBeat[]> {
       status: r.status,
       sceneIds: sceneRows.filter((s) => s.beatId === r.id).map((s) => s.sceneId).sort(),
       counts,
+      waitingCount,
       frozen: r.frozenAt !== null,
       test: isAmoy(r.chain),
       holdMints: r.holdMints,
@@ -222,7 +224,8 @@ export async function listSceneBeats(c: BeatCaller, sceneId: string): Promise<Pu
 export interface Claimant {
   /** The claim's id, for removing it while mints are held (DELETE /api/beats/:id/claims/:claimId). */
   id: string
-  wallet: string
+  /** Null for a claim still waiting for the visitor to link a wallet. */
+  wallet: string | null
   displayName: string | null
   status: string
   claimedAt: string | null
@@ -244,7 +247,7 @@ export async function listClaimants(c: BeatCaller, beatId: string): Promise<Clai
     .orderBy(desc(beatClaims.createdAt))
   return claims.map((k) => ({
     id: k.id,
-    wallet: k.wallet ?? '', // an app claim waiting for a wallet has none yet
+    wallet: k.wallet,
     displayName: k.displayName,
     status: k.status,
     claimedAt: k.claimedAt?.toISOString() ?? null,
@@ -701,7 +704,7 @@ export async function releaseBeatMints(c: BeatCaller, beatId: string): Promise<P
 
 /**
  * The host takes a held claim out before it is sent: it becomes `removed` (never minted, can't be claimed again by that
- * wallet) and frees its supply. Only a `claimed` claim still waiting for a Send, under the BEAT's lock, by the
+ * wallet) and frees its supply. A claim waiting for a wallet can be removed any time. Otherwise only a `claimed` claim still waiting for a Send, under the BEAT's lock, by the
  * database's clock. 404 for a claim not on this BEAT; 409 `not_held` for one already sent (or hold off or over),
  * `not_removable` for one in any other state, or that the job took meanwhile.
  */
@@ -715,6 +718,13 @@ export async function removeBeatClaim(c: BeatCaller, beatId: string, claimId: st
     const t = await dbNow(tx)
     const [claim] = await tx.select().from(beatClaims).where(and(eq(beatClaims.id, claimId), eq(beatClaims.beatId, beatId), eq(beatClaims.deleteRequested, false)))
     if (!claim) throw new BeatError(404, 'not_found', 'Claim not found.')
+    // A claim waiting for a wallet is never sent by a review, so it can go whenever (its copy is freed)
+    if (claim.status === 'waiting') {
+      const gone = await tx.update(beatClaims).set({ status: 'removed' })
+        .where(and(eq(beatClaims.id, claimId), eq(beatClaims.status, 'waiting'))).returning({ id: beatClaims.id })
+      if (!gone.length) throw new BeatError(409, 'not_removable', 'Only a claim that is waiting to be sent can be removed.')
+      return
+    }
     if (!claimHeld(row, claim.claimedAt, t)) throw new BeatError(409, 'not_held', "This claim is already being sent, so it can't be removed.")
     const notRemovable = () => new BeatError(409, 'not_removable', 'Only a claim that is waiting to be sent can be removed.')
     if (claim.status !== 'claimed') throw notRemovable()

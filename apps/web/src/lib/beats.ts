@@ -24,7 +24,8 @@ export type BeatCheckoutResult = { url: string } | { paid: true }
 export interface BeatClaimant {
   /** The claim's id, for removing it while claims are held for review. */
   id: string
-  wallet: string
+  /** Null for a claim still waiting for the visitor to link a wallet. */
+  wallet: string | null
   displayName: string | null
   status: BeatClaimStatus | string
   claimedAt: string | null
@@ -443,7 +444,7 @@ export function claimantHeld(c: Pick<BeatClaimant, 'status' | 'claimedAt'>, b: P
 export function claimantRow(c: BeatClaimant, b?: Pick<PublicBeat, 'mintsHeldUntil' | 'mintsReleasedAt'>) {
   const held = !!b && claimantHeld(c, b)
   return {
-    short: shortWallet(c.wallet), wallet: c.wallet, name: c.displayName,
+    short: c.wallet ? shortWallet(c.wallet) : '—', wallet: c.wallet ?? '', name: c.displayName,
     status: held ? HELD_LABEL : CLAIM_STATUS_LABELS[c.status as BeatClaimStatus] ?? c.status, txUrl: c.txUrl,
     held, reissued: c.reissued, reissueTxUrl: c.reissueTxUrl,
   }
@@ -461,7 +462,7 @@ export function claimantsHeading(list: BeatClaimant[]): string {
 }
 
 /** What "Copy wallets that claimed" copies: the full wallet of every claim that took a BEAT, one per line. */
-export const claimantWallets = (list: BeatClaimant[]) => list.filter(hasClaimed).map((c) => c.wallet).join('\n')
+export const claimantWallets = (list: BeatClaimant[]) => list.filter(hasClaimed).flatMap((c) => (c.wallet ? [c.wallet] : [])).join('\n')
 
 // ── Back from Stripe ─────────────────────────────────────────────────────────
 
@@ -531,7 +532,9 @@ export function datesBackwards(from: string | null, to: string | null): boolean 
 }
 
 export function filterCollected(items: CollectedBeat[], f: CollectedFilter): CollectedBeat[] {
+  // Claims waiting for a wallet aren't holdings (their own list comes with the website's waiting counts)
   return items.filter((b) => {
+    if (b.status === 'waiting') return false
     if (f.wallet !== 'all' && b.wallet.toLowerCase() !== f.wallet.toLowerCase()) return false
     if (f.kind !== 'all' && b.kind !== f.kind) return false
     if (f.earnedOnly && !b.earned) return false

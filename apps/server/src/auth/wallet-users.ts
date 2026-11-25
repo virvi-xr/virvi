@@ -3,6 +3,7 @@ import { db } from '../db/connection.js'
 import { accessGrants, assetLibraryItems, beatClaims, mediaAssets, raffleEntries, sceneRoles, scenes, userAuthMethods, users, type LinkedBy } from '../db/schema.js'
 import { moveStudioData } from '../studio/merge.js'
 import { UNLINKED_CLAIM } from '../beats/retention.js'
+import { fulfilAfterLink } from '../beats/waiting.js'
 import { claimWalletInvites } from '../studio/invites.js'
 import { initialRoleForNewUser } from './roles.js'
 import { WalletBlockedError, walletSignInBlocked } from './wallet-blocks.js'
@@ -85,6 +86,14 @@ async function absorbVisitor(shellId: string, userId: string, methodId: string, 
  * linking session's sign-in (reissue provenance, LIV-11), recorded with the time.
  */
 export async function linkVerifiedWallet(userId: string, wallet: string, linkedBy: LinkedBy = { method: 'unknown', how: 'link' }): Promise<'linked' | 'already' | 'conflict'> {
+  const result = await attachVerifiedWallet(userId, wallet, linkedBy)
+  // The BEATs the account earned in the Virvi app before it had a wallet are sent to it now, once the link is done
+  // (outside its writes); a failure there is logged, never the link's
+  if (result === 'linked') await fulfilAfterLink(userId, wallet)
+  return result
+}
+
+async function attachVerifiedWallet(userId: string, wallet: string, linkedBy: LinkedBy): Promise<'linked' | 'already' | 'conflict'> {
   const w = wallet.toLowerCase()
   const existing = await findWalletMethod(w)
   if (existing && existing.userId === userId && isVerified(existing)) return 'already'

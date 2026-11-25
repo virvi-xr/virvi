@@ -13,9 +13,11 @@ import { beatImageUrl, beatPlace } from './metadata.js'
  * `replaced_by` is set was reissued away from that wallet, so the old wallet no longer counts it. Every contract in
  * `beats.contract_address` is Virvi's shared contract today, so every BEAT is `basic`.
  */
-export async function collectionFor(wallets: string[], opts: { includeClaimTimes: boolean }): Promise<CollectedBeat[]> {
+export async function collectionFor(wallets: string[], opts: { includeClaimTimes: boolean; waitingFor?: string }): Promise<CollectedBeat[]> {
   const lower = [...new Set(wallets.map((w) => w.toLowerCase()))]
-  if (lower.length === 0) return []
+  // The signed-in page also lists the account's claims saved for a wallet it hasn't linked (or can't use yet)
+  const waiting = opts.waitingFor ? await waitingFor(opts.waitingFor, opts.includeClaimTimes) : []
+  if (lower.length === 0) return waiting
   const chain = config.beats.chain
   const rows = await db.select({
     holding: beatHoldings,
@@ -38,7 +40,7 @@ export async function collectionFor(wallets: string[], opts: { includeClaimTimes
     .where(and(eq(beatHoldings.chain, chain), inArray(beatHoldings.wallet, lower), isNull(beatHoldings.replacedBy)))
     .orderBy(desc(beats.startsAt), beats.tokenId, beatHoldings.wallet)
 
-  return rows.map(({ holding: h, beat: b, mediaUrl, claim }): CollectedBeat => {
+  const held = rows.map(({ holding: h, beat: b, mediaUrl, claim }): CollectedBeat => {
     const earned = !!claim?.id
     const contract = getAddress(h.contract)
     const tokenId = h.tokenId.toString()
@@ -58,6 +60,29 @@ export async function collectionFor(wallets: string[], opts: { includeClaimTimes
       claimedAt: opts.includeClaimTimes && earned && claim.claimedAt ? claim.claimedAt.toISOString() : null,
     }
   })
+  return [...waiting, ...held]
+}
+
+/** The account's claims waiting for a wallet, newest first, as items with no token yet. */
+async function waitingFor(userId: string, includeClaimTimes: boolean): Promise<CollectedBeat[]> {
+  const rows = await db.select({ claim: beatClaims, beat: beats, mediaUrl: mediaAssets.publicUrl })
+    .from(beatClaims).innerJoin(beats, eq(beats.id, beatClaims.beatId)).leftJoin(mediaAssets, eq(mediaAssets.id, beats.imageMediaId))
+    .where(and(eq(beatClaims.userId, userId), eq(beatClaims.status, 'waiting'), eq(beatClaims.deleteRequested, false)))
+    .orderBy(desc(beats.startsAt), beatClaims.id)
+  return rows.map(({ claim, beat: b, mediaUrl }): CollectedBeat => ({
+    tokenId: b.tokenId === null ? '' : String(b.tokenId), contract: b.contractAddress ?? '', chain: b.chain, kind: 'basic',
+    wallet: '', quantity: 0, earned: false,
+    name: b.name,
+    imageUrl: beatImageUrl(b.imageUrl, mediaUrl ?? null),
+    place: beatPlace(b),
+    startsAt: b.startsAt.toISOString(),
+    endsAt: (b.scheduledEndsAt ?? b.endsAt).toISOString(),
+    tradeable: b.tradeable,
+    tokenUrl: '', mintTxUrl: null,
+    claimedAt: includeClaimTimes && claim.claimedAt ? claim.claimedAt.toISOString() : null,
+    status: 'waiting',
+    ...(claim.failReason === 'wallet_has_it' ? { reason: 'wallet_has_it' as const } : {}),
+  }))
 }
 
 /** The account's linked wallets (checksummed). */
