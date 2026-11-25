@@ -71,6 +71,8 @@ export const PUBLIC_EXACT = [
 export const PUBLIC_PREFIX = [
   'GET /api/auth/google', // OAuth redirect + callback
   'GET /api/auth/discord', // OAuth redirect + callback
+  'GET /api/auth/apple', // OAuth redirect (Sign in with Apple)
+  'POST /api/auth/apple/callback', // Apple posts the result back as a form
   'GET /api/upload/', // companion upload: the code is the auth
   'POST /api/upload/', // companion upload: the code is the auth
   'GET /hook/', // platform hooks: per-hook secret in the URL
