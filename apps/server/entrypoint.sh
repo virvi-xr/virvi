@@ -569,6 +569,8 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS beat_claims_beat_install_key_uq ON beat_claims (beat_id, install_key_id) WHERE install_key_id is not null\`;
         await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS event_checked_in_at TIMESTAMPTZ\`;
         await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS seconds_at_event_scan INTEGER\`;
+        await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS app_consent_version INTEGER\`;
+        await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS app_consented_at TIMESTAMPTZ\`;
         await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'beat_claims_wallet_or_status_chk' AND conrelid = 'beat_claims'::regclass) THEN ALTER TABLE beat_claims ADD CONSTRAINT beat_claims_wallet_or_status_chk CHECK (wallet is not null or status in ('present', 'waiting', 'removed')); END IF; END \$\$\`;
         await sql\`CREATE TABLE IF NOT EXISTS beat_arcs (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), beat_id UUID NOT NULL CONSTRAINT beat_arcs_beat_id_unique UNIQUE CONSTRAINT beat_arcs_beat_id_beats_id_fk REFERENCES beats(id) ON DELETE CASCADE, ring_id BIGINT NOT NULL CONSTRAINT beat_arcs_ring_id_unique UNIQUE, code TEXT NOT NULL CONSTRAINT beat_arcs_code_unique UNIQUE, kind TEXT NOT NULL DEFAULT 'printed', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
         console.log('[virvi-server] BEAT tables ensured');

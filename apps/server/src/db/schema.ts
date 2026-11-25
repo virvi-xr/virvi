@@ -2976,6 +2976,10 @@ export const beatClaims = pgTable('beat_claims', {
   // then. From the scan its time also counts by the wall clock, as an event claim's does (beats/app.ts eventSeconds)
   eventCheckedInAt: timestamp('event_checked_in_at', { withTimezone: true }),
   secondsAtEventScan: integer('seconds_at_event_scan'),
+  // The Virvi app's consent (BEAT_APP_CONSENT_VERSION), kept apart from the in-world one above, whose versions are
+  // another text's: set by the app's Track, on a claim started anywhere
+  appConsentVersion: integer('app_consent_version'),
+  appConsentedAt: timestamp('app_consented_at', { withTimezone: true }),
   deleteRequested: boolean('delete_requested').notNull().default(false),
   batchId: uuid('batch_id').references(() => beatMintBatches.id, { onDelete: 'set null' }),
   mintTx: text('mint_tx'),

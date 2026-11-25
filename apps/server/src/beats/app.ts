@@ -123,6 +123,10 @@ function requireAtVenue(b: BeatRow, loc: Fix | undefined, outsideMessage: string
   }
 }
 
+/** When the claim checked in: the app's consent for a claim started in the app, else the in-world consent. */
+const checkedInAtOf = (claim: ClaimRow): Date | null =>
+  (claim.source.startsWith('app_') ? claim.appConsentedAt ?? claim.consentedAt : claim.consentedAt) ?? null
+
 async function toCard(b: BeatRow, claim: ClaimRow | null, wallets: string[]): Promise<AppBeatCard> {
   const media = b.imageUrl || !b.imageMediaId ? null : await db.query.mediaAssets.findFirst({ where: eq(mediaAssets.id, b.imageMediaId), columns: { publicUrl: true } })
   return {
@@ -137,7 +141,7 @@ async function toCard(b: BeatRow, claim: ClaimRow | null, wallets: string[]): Pr
       status: claim.status,
       secondsPresent: claim.status === 'present' ? eventSeconds(b, claim, new Date()) : claim.secondsPresent ?? 0,
       wallet: claim.wallet ? getAddress(claim.wallet) : null,
-      checkedInAt: claim.consentedAt ? claim.consentedAt.toISOString() : null,
+      checkedInAt: checkedInAtOf(claim)?.toISOString() ?? null,
     } : null,
     wallets,
   }
@@ -226,12 +230,17 @@ export async function appTrack(beatId: string, t: AppTrack, now = new Date()): P
         if (await keyTaken()) throw thisDevice()
         await tx.insert(beatClaims).values({
           beatId: b.id, userId: t.userId, wallet: null, displayName: name, consentVersion: BEAT_APP_CONSENT_VERSION, consentedAt: now, lastSeenAt: now,
-          createdAt: now, source, installKeyId: t.installKeyId,
+          createdAt: now, source, installKeyId: t.installKeyId, appConsentVersion: BEAT_APP_CONSENT_VERSION, appConsentedAt: now,
         }).onConflictDoNothing()
         ;[mine] = await tx.select().from(beatClaims).where(and(eq(beatClaims.beatId, b.id), eq(beatClaims.userId, t.userId))).for('update')
         if (!mine) throw thisDevice()
       }
       if (mine.deleteRequested) throw new BeatError(409, 'not_available', "You stopped tracking this BEAT, so you can't start again.")
+      // The app's consent, on a claim started anywhere: its time is the first agreement to this version (a later Track
+      // of the same version keeps it, so the card's check-in time stays put)
+      if (mine.appConsentVersion !== BEAT_APP_CONSENT_VERSION || !mine.appConsentedAt) {
+        await tx.update(beatClaims).set({ appConsentVersion: BEAT_APP_CONSENT_VERSION, appConsentedAt: now }).where(eq(beatClaims.id, mine.id))
+      }
       if (!mine.installKeyId) {
         if (await keyTaken(mine.id)) throw thisDevice()
         await tx.update(beatClaims).set({ installKeyId: t.installKeyId }).where(eq(beatClaims.id, mine.id))

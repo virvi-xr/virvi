@@ -244,6 +244,27 @@ describe('in-person BEATs with the event ARC', () => {
     expect(later.claim.secondsPresent).toBe(900)
   })
 
+  it('records the app consent apart from the in-world one, on a new claim and on a reused one', async () => {
+    const { b, code } = await seed()
+    const p = await phone()
+    const res = await trackReq(p, b, code, north(10))
+    const row = await rowOf(b.id, p.user.id)
+    expect(row.appConsentVersion).toBe(BEAT_APP_CONSENT_VERSION)
+    expect(row.appConsentedAt).not.toBeNull()
+    expect(res.json().beat.claim.checkedInAt).toBe(row.appConsentedAt!.toISOString())
+    // A claim started in Decentraland keeps its in-world consent, gains the app's, and its card keeps the in-world time
+    const q = await phone()
+    const inWorld = at(-40 * M)
+    await db.insert(beatClaims).values({ beatId: b.id, userId: q.user.id, wallet: q.user.wallet!, consentVersion: 1, consentedAt: inWorld, createdAt: inWorld, source: 'decentraland', secondsPresent: 60 })
+    const reused = await trackReq(q, b, code, north(10))
+    expect(reused.statusCode, reused.body).toBe(200)
+    const r = await rowOf(b.id, q.user.id)
+    expect([r.consentVersion, r.consentedAt!.getTime()]).toEqual([1, inWorld.getTime()])
+    expect(r.appConsentVersion).toBe(BEAT_APP_CONSENT_VERSION)
+    expect(Math.abs(r.appConsentedAt!.getTime() - Date.now())).toBeLessThan(10_000)
+    expect(reused.json().beat.claim.checkedInAt).toBe(inWorld.toISOString())
+  })
+
   it('is idempotent and never stores the location', async () => {
     const { b, code } = await seed()
     const p = await phone()

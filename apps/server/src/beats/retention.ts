@@ -24,7 +24,7 @@ const DAY_MS = 86_400_000
  */
 export const UNLINKED_CLAIM = {
   userId: null, displayName: null, secondsPresent: null, lastSeenAt: null, consentedAt: null, claimedAt: null, replacedWallet: null,
-  eventCheckedInAt: null, secondsAtEventScan: null,
+  eventCheckedInAt: null, secondsAtEventScan: null, appConsentedAt: null,
 } as const
 
 /** One transaction (or the caller's, so account deletion can include it). Only this user's claims are touched. */
