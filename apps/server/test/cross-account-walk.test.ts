@@ -183,6 +183,12 @@ async function fixtures() {
     chain: 'polygon', ownerUserId: b.id, name: 'B beat', description: '', imageMediaId: media.id, startsAt: new Date(Date.now() + 48 * H), endsAt: new Date(Date.now() + 50 * H),
   }).returning()
   await db.insert(beatScenes).values({ beatId: beat.id, sceneId: scene.id })
+  // B's in-person, paid BEAT: the only kind with an ARC (the other BEAT is a draft on the scene)
+  const [arcBeat] = await db.insert(beats).values({
+    chain: 'polygon', ownerUserId: b.id, name: 'B venue beat', description: '', imageMediaId: media.id, status: 'paid', locationType: 'in_person',
+    locationVenue: 'B venue', locationCity: 'B city', locationCountry: 'B land', startsAt: new Date(Date.now() + 48 * H), endsAt: new Date(Date.now() + 50 * H),
+  }).returning()
+  await db.insert(beatScenes).values({ beatId: arcBeat.id, sceneId: scene.id })
   await db.insert(beatClaims).values({ beatId: beat.id, userId: collaborator.id, wallet: randomWallet(), displayName: 'B claimant', consentVersion: 1 })
   // B's reissue request (approved, so a batch could be prepared), with one prepared BEAT
   const bOld = randomWallet()
@@ -226,7 +232,7 @@ async function fixtures() {
   const [aShow] = await db.insert(assistantShows).values({ userId: a.id, title: 'A show', items: [{ id: crypto.randomUUID(), kind: 'raffle', label: 'Raffle', ref: {} }] }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
-    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, pastPackage, notification, raffle, raffleSnapshot, raffleDraw, beat, reissueRequest, reissueFile, aScene, aEvent, deletedScene, removal,
+    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, pastPackage, notification, raffle, raffleSnapshot, raffleDraw, beat, arcBeat, reissueRequest, reissueFile, aScene, aEvent, deletedScene, removal,
     conversation, planId, doneAction, show, aShow,
   }
 }
@@ -273,8 +279,8 @@ const CASES: Case[] = [
   { route: 'GET /api/beats/:beatId', url: (f) => `/api/beats/${f.beat.id}` },
   { route: 'PATCH /api/beats/:beatId', url: (f) => `/api/beats/${f.beat.id}`, body: () => ({ name: 'pwned' }) },
   { route: 'GET /api/beats/:beatId/claimants', url: (f) => `/api/beats/${f.beat.id}/claimants` },
-  { route: 'GET /api/beats/:beatId/arc', url: (f) => `/api/beats/${f.beat.id}/arc` },
-  { route: 'GET /api/beats/:beatId/arc/files', url: (f) => `/api/beats/${f.beat.id}/arc/files` },
+  { route: 'GET /api/beats/:beatId/arc', url: (f) => `/api/beats/${f.arcBeat.id}/arc` },
+  { route: 'GET /api/beats/:beatId/arc/files', url: (f) => `/api/beats/${f.arcBeat.id}/arc/files` },
   { route: 'POST /api/beats/:beatId/cancel', url: (f) => `/api/beats/${f.beat.id}/cancel` },
   { route: 'POST /api/beats/:beatId/end-early', url: (f) => `/api/beats/${f.beat.id}/end-early` },
   { route: 'GET /api/beats/:beatId/quote', url: (f) => `/api/beats/${f.beat.id}/quote?cap=150` },
