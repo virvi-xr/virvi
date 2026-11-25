@@ -103,7 +103,10 @@ private fun parseVisitorClaim(o: JsonObject): PairClaim? {
 /** What `POST /api/auth/refresh` came to: new tokens, a refusal of the refresh token, or nothing learned (offline, a server error). */
 sealed interface RefreshResult {
   /** [refreshToken] is null when the server kept the old one. */
-  data class Tokens(val accessToken: String, val refreshToken: String?) : RefreshResult
+  data class Tokens(val accessToken: String, val refreshToken: String?) : RefreshResult {
+    /** Never prints the tokens. */
+    override fun toString() = "Tokens(…)"
+  }
   data object Refused : RefreshResult
   data object Unavailable : RefreshResult
 }

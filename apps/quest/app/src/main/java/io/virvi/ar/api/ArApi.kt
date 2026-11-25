@@ -20,7 +20,10 @@ sealed interface ApiResult<out T> {
 
 /** What a call to the app's routes (`ArApi.appCall`) came to: the server's status and body, or no answer at all. */
 sealed interface AppResponse {
-  data class Response(val status: Int, val body: String) : AppResponse
+  data class Response(val status: Int, val body: String) : AppResponse {
+    /** Never prints the body, which can hold tokens. */
+    override fun toString() = "Response(status=$status)"
+  }
   data object Offline : AppResponse
 }
 
