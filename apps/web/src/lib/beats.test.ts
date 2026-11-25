@@ -8,7 +8,7 @@ import { walletLookupHref, beatsExplainerFor,
   BEAT_REFUND_NOTE, beatApiPath, fieldsOfPatch, pollPayment, sceneBeatsPath, shownFieldError, BEATS_NETWORK_UNAVAILABLE, beatsPayable,
   TRADEABLE_HINT, SUPPLY_HINT, PAID_SUPPLY_HINT, LOCATION_SCENE_ONLY, blankLocation, cancelledNote, claimantsHeading, locationBody, locationLine,
   reviewSummary, beatLocked, COUNT_LABELS, CLAIM_STATUS_LABELS, claimantHeld, canRemove,
-  filterCollected, waitingNote, shortWallet, walletPageHref, walletFromPath, type CollectedFilter, beatCounts, claimRemovedNote,
+  filterCollected, waitingNote, shortWallet, walletPageHref, walletFromPath, type CollectedFilter, beatCounts, claimRemovedNote, arcDownloadError,
 } from './beats'
 
 const NOW = new Date('2026-11-14T12:00:00Z')
@@ -163,6 +163,12 @@ describe('server errors', () => {
     expect(beatFieldError(err('bad_location')).field).toBe('location')
     expect(beatFieldError(err('below_minimum'))).toEqual({ field: 'pay', message: 'Card payments start at $0.50. Add more BEATs, or pay with credit.' })
     for (const code of ['not_held', 'not_removable', 'not_live', 'not_configured']) expect(beatFieldError(err(code)).message).not.toBe('Something went wrong. Try again.')
+  })
+  it('the ARC download shows the server\'s own message for a code it does not know', () => {
+    expect(arcDownloadError(err('no_arc', 'This BEAT has no ARC yet.'))).toBe('This BEAT has no ARC yet.')
+    expect(arcDownloadError(err('no_arc'))).toBe('Something went wrong. Try again.')
+    expect(arcDownloadError(err('not_found', 'ignored'))).toBe('ignored')
+    expect(arcDownloadError(new TypeError('Failed to fetch'))).toMatch(/couldn't reach/i)
   })
   it('says something went wrong for an unknown code', () => {
     expect(beatFieldError(err('weird', 'Internal detail'))).toEqual({ field: 'form', message: 'Something went wrong. Try again.' })

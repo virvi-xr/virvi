@@ -479,7 +479,8 @@ function useRealApi() {
       apiFetch<{ pin: { lat: number; lng: number } | null }>('/api/beats/geocode', { method: 'POST', body: JSON.stringify(parts) }),
     /** The in-person BEAT's printable ARC (PDF). `style`: normal (black on white) or inverted. */
     downloadBeatArc: async (beatId: string, style: 'normal' | 'inverted'): Promise<{ blob: Blob; filename: string }> => {
-      const res = await fetch(`${API_URL}${beatApiPath(beatId, 'arc/files')}?style=${style}`, { headers: requestHeaders(token, {}) })
+      // As apiFetch sends: an access token that ran out is renewed and the download sent once more
+      const res = await sendRecovering((b) => fetch(`${API_URL}${beatApiPath(beatId, 'arc/files')}?style=${style}`, { headers: requestHeaders(b, {}) }), token, { swapToStoredAccount, renew })
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
         dropDeadSession(res.status, err)

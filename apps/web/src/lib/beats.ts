@@ -329,6 +329,14 @@ export function beatFieldError(err: unknown): FieldError {
   return { field: known.field, message: e?.body?.message?.trim() || known.message }
 }
 
+/** The Download ARC error line: a known code as usual, any other code with the server's own message when it sent one. */
+export function arcDownloadError(err: unknown): string {
+  const e = err as { body?: { error?: string; message?: string } } | null
+  const field = beatFieldError(err)
+  if (!ERRORS[e?.body?.error ?? (err as Error | null)?.message ?? ''] && !isNetworkError(err)) return e?.body?.message?.trim() || field.message
+  return field.message
+}
+
 export const NETWORK_ERROR = "Couldn't reach Virvi. Check your connection and try again."
 /** A request that never got an answer (fetch rejects with a TypeError). */
 function isNetworkError(err: unknown): boolean {

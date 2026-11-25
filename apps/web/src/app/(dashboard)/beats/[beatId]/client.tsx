@@ -9,7 +9,7 @@ import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import {
   ACTION_LABELS, ART_FAILED, ART_PENDING, CLAIM_STATUS_LABELS, COUNT_LABELS, COUNTS_NOTE, PAYMENT_POLL_MS, PAYMENT_SLOW_MS, STATUS_HELP,
-  beatActions, beatsPayable, beatCounts, beatEditBody, beatFieldError, beatLocked, beatToInput, beatWindow, cancelledNote, claimRemovedNote, claimUntil, confirmBeatAction,
+  beatActions, beatsPayable, beatCounts, beatEditBody, beatFieldError, beatLocked, beatToInput, beatWindow, arcDownloadError, cancelledNote, claimRemovedNote, claimUntil, confirmBeatAction,
   formatWhen, locationLine, paymentNote, pollPayment, reviewSummary, topupKey,
   type BeatAction, type BeatAvailability, type BeatClaimant, type BeatInput, type FieldError, type PublicBeat,
 } from '@/lib/beats'
@@ -303,7 +303,7 @@ function ArcDownload({ beatId, venue }: { beatId: string; venue: string }) {
     try {
       const { blob, filename } = await api.downloadBeatArc(beatId, style)
       saveBlob(blob, filename)
-    } catch (err) { setError(beatFieldError(err).message) }
+    } catch (err) { setError(arcDownloadError(err)) }
     setBusy(false)
   }
   return (
