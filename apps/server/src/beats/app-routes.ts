@@ -87,7 +87,7 @@ export default async function appBeatRoutes(app: FastifyInstance) {
     try {
       const installKeyId = await requireAssertion(request, rawBody(request))
       const b = body(request)
-      return reply.send({ beat: await appClaim(request.params.beatId, { userId: request.user.id, installKeyId, wallet: b.wallet, location: location(b.location) }) })
+      return reply.send({ beat: await appClaim(request.params.beatId, { userId: request.user.id, installKeyId, wallet: b.wallet, location: location(b.location), ip: request.ip }) })
     } catch (e) {
       return fail(reply, e)
     }

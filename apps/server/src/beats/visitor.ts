@@ -57,7 +57,7 @@ export function beatNetworkHash(salt: string, ip: string): string {
 }
 
 /** Fix round I-5: a wallet Virvi saw for the first time recently costs its network one of BEAT_NEW_WALLETS_PER_IP_HOUR. */
-async function checkNewWallet(ip: string | null | undefined, wallet: string, now: Date): Promise<void> {
+export async function checkNewWallet(ip: string | null | undefined, wallet: string, now: Date): Promise<void> {
   if (!ip) return
   if ((await isNewWallet(wallet, now)) && !takeNewWallet(ip, wallet, now.getTime())) throw tooManyNewWallets()
 }
@@ -261,6 +261,29 @@ export async function checkInBeat(sceneId: string, beatId: string, userId: strin
 }
 
 /**
+ * The per-network claim cap (BEAT_CLAIMS_PER_IP), under the BEAT row's lock: refuses when the network has claimed this
+ * BEAT that many times, else counts this claim. Counted per network in beat_network_claims, apart from the claims (fix
+ * round I-2): a delete of a claim's data or a host's removal never hands the network a claim back. The salt is the
+ * BEAT's own, made on first use. No address (none known), no count.
+ */
+export async function chargeClaimNetwork(tx: Tx, b: BeatRow, ip: string | null | undefined): Promise<void> {
+  if (!ip) return
+  let salt = b.networkSalt
+  if (!salt) {
+    salt = randomBytes(32).toString('hex')
+    await tx.update(beats).set({ networkSalt: salt }).where(eq(beats.id, b.id))
+  }
+  const netHash = beatNetworkHash(salt, ip)
+  const [n] = await tx.select({ claims: beatNetworkClaims.claims }).from(beatNetworkClaims)
+    .where(and(eq(beatNetworkClaims.beatId, b.id), eq(beatNetworkClaims.netHash, netHash))).for('update')
+  if ((n?.claims ?? 0) >= config.beats.claimsPerIp) {
+    throw new BeatError(429, 'too_many_from_network', 'This BEAT has already been claimed too many times from your network.')
+  }
+  await tx.insert(beatNetworkClaims).values({ beatId: b.id, netHash, claims: 1 })
+    .onConflictDoUpdate({ target: [beatNetworkClaims.beatId, beatNetworkClaims.netHash], set: { claims: sql`${beatNetworkClaims.claims} + 1` } })
+}
+
+/**
  * Claim: a present claim with enough time, from the start until the grace runs out, while the supply lasts and the
  * claimer's network has claimed fewer than BEAT_CLAIMS_PER_IP of this BEAT. Under the BEAT row's lock, so concurrent
  * claims count the supply and the network one at a time. The platform's wallet check (platform-checks.ts) runs first.
@@ -273,13 +296,12 @@ export async function claimBeat(
   const seen = await beatOnScene(sceneId, beatId)
   const pre = await myClaimRow(db, seen.id, userId)
   if (pre?.status === 'present') {
-    // An app-started claim claimed here goes to the pass's wallet (checked below like any other)
+    // An app-started claim claimed here goes to the pass's wallet (checked like any other; set under the lock below).
+    // No wallet at all (an app-started claim, and a pass without a verified wallet): 403 no_wallet
     const wallet = pre.wallet ?? c.wallet?.toLowerCase() ?? null
     if (!wallet) throw noWallet()
     if (!(await platformCheck(c.platform ?? 'decentraland', wallet, now))) throw profileRequired()
-    await checkNewWallet(c.ip, wallet, now)
     if (await isWalletBlocked(wallet)) throw beatsBlocked()
-    if (!pre.wallet) await fillAppClaimWallet(db, pre, wallet)
   }
   await db.transaction(async (tx) => {
     const [b] = await tx.select().from(beats).where(eq(beats.id, seen.id)).for('update')
@@ -287,28 +309,19 @@ export async function claimBeat(
     const claim = await myClaimRow(tx, b.id, userId, true)
     if (!claim) throw notTracking()
     if (claim.status !== 'present') return
+    const wallet = claim.wallet ?? c.wallet?.toLowerCase() ?? null
+    if (!wallet) throw noWallet()
     // Tracking opens before the start, so with a minimum of 0 the time alone would allow it
     if (now.getTime() < b.startsAt.getTime()) throw new BeatError(409, 'not_started', "This event hasn't started yet.")
     if (now.getTime() > claimUntil(b).getTime()) throw new BeatError(409, 'too_late', 'The time to claim this BEAT is over.')
     if ((claim.secondsPresent ?? 0) < b.minPresentSeconds) throw new BeatError(409, 'not_yet', "You haven't been here long enough yet.")
     if ((await takenCount(tx, b.id)) >= b.supplyCap) throw new BeatError(409, 'all_claimed', 'All of these BEATs have been claimed.')
-    if (c.ip) {
-      // Counted per network in beat_network_claims, apart from the claims (fix round I-2): a delete of a claim's data or
-      // a host's removal never hands the network a claim back. The salt is the BEAT's own, made on first use
-      let salt = b.networkSalt
-      if (!salt) {
-        salt = randomBytes(32).toString('hex')
-        await tx.update(beats).set({ networkSalt: salt }).where(eq(beats.id, b.id))
-      }
-      const netHash = beatNetworkHash(salt, c.ip)
-      const [n] = await tx.select({ claims: beatNetworkClaims.claims }).from(beatNetworkClaims)
-        .where(and(eq(beatNetworkClaims.beatId, b.id), eq(beatNetworkClaims.netHash, netHash))).for('update')
-      if ((n?.claims ?? 0) >= config.beats.claimsPerIp) {
-        throw new BeatError(429, 'too_many_from_network', 'This BEAT has already been claimed too many times from your network.')
-      }
-      await tx.insert(beatNetworkClaims).values({ beatId: b.id, netHash, claims: 1 })
-        .onConflictDoUpdate({ target: [beatNetworkClaims.beatId, beatNetworkClaims.netHash], set: { claims: sql`${beatNetworkClaims.claims} + 1` } })
-    }
+    // The per-network cap and the new-wallet limit count only a claim that passed the checks above. An app-started
+    // claim takes the pass's wallet here too, so a refusal leaves it as it was. The new-wallet limit is kept in memory,
+    // not in this transaction, so it goes last: nothing after it can refuse
+    await chargeClaimNetwork(tx, b, c.ip)
+    if (!claim.wallet) await fillAppClaimWallet(tx, claim, wallet)
+    await checkNewWallet(c.ip, wallet, now)
     // Stamped by the database's clock, as a host's Send is (fix round N-1)
     await tx.update(beatClaims).set({ status: 'claimed', claimedAt: sql`clock_timestamp()` }).where(and(eq(beatClaims.id, claim.id), eq(beatClaims.status, 'present')))
   })

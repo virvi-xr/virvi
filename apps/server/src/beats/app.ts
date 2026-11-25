@@ -12,7 +12,7 @@ import { BeatError } from './errors.js'
 import { arLiveSince } from './live.js'
 import { beatImageUrl } from './metadata.js'
 import { walletsOf } from './collection.js'
-import { VISIBLE, claimUntil, hidden, inWindowSeconds, myClaimRow, sceneBeats, takenCount } from './visitor.js'
+import { VISIBLE, chargeClaimNetwork, checkNewWallet, claimUntil, hidden, inWindowSeconds, myClaimRow, sceneBeats, takenCount } from './visitor.js'
 
 /**
  * BEATs in the Virvi app (iPhone, and a signed-in Quest): the card for an AR space, tracking, check-ins, claiming with a
@@ -214,6 +214,8 @@ export interface AppClaim {
   /** The wallet chosen on the phone; needed only when the account has several. */
   wallet?: unknown
   location?: AppLocation
+  /** The client's address (request.ip): only for a claim started in Decentraland, which keeps its network limits. */
+  ip?: string | null
 }
 
 /**
@@ -221,8 +223,9 @@ export interface AppClaim {
  * (counted under the BEAT row's lock, as claimBeat counts it). The wallet: the one given (it must be the account's),
  * else the claim's own (one started in Decentraland), else the account's only wallet that can collect BEATs; several
  * → 409 `choose_wallet` with them; none → the claim waits for one (`waiting`, holding its copy). A blocked wallet, or
- * one another claim of this BEAT holds, is refused. No per-network limits. A claim already further along is returned
- * as it is.
+ * one another claim of this BEAT holds, is refused. A claim started in the app has no per-network limits; one started
+ * in Decentraland keeps them (BEAT_CLAIMS_PER_IP and the new-wallet limit, as claimBeat). A claim already further along
+ * is returned as it is.
  */
 export async function appClaim(beatId: string, c: AppClaim, now = new Date()): Promise<AppBeatCard> {
   const seen = await visibleBeat(beatId)
@@ -262,6 +265,12 @@ export async function appClaim(beatId: string, c: AppClaim, now = new Date()): P
       if (!claim.installKeyId) {
         const [other] = await tx.select({ id: beatClaims.id }).from(beatClaims).where(and(eq(beatClaims.beatId, b.id), eq(beatClaims.installKeyId, c.installKeyId)))
         if (other) throw thisDevice()
+      }
+      // A claim started in Decentraland keeps the in-world network limits wherever it is claimed (only app-started claims
+      // skip them): the per-network cap here, and the new-wallet limit last, since it is kept in memory, not in this transaction
+      if (!claim.source.startsWith('app_')) {
+        await chargeClaimNetwork(tx, b, c.ip)
+        if (wallet) await checkNewWallet(c.ip, wallet, now)
       }
       // Stamped by the database's clock, as claimBeat and a host's Send are
       await tx.update(beatClaims).set({

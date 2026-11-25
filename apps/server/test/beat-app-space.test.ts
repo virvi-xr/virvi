@@ -11,6 +11,7 @@ import { checkInBeat, takenCount } from '../src/beats/visitor.js'
 import { appCheckIn } from '../src/beats/app.js'
 import { setBeatPlatformCheckForTests } from '../src/beats/platform-checks.js'
 import { setArFeedHoldMs } from '../src/routes/ar-feed.js'
+import { resetNewWallets } from '../src/beats/new-wallet-limit.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
 import { makeAttestation, makeDevice, makeTestCa, type TestCa, type TestDevice } from './helpers/app-attest.js'
@@ -39,6 +40,7 @@ describe('BEATs in AR spaces with the Virvi app', () => {
     ;(config as any).appAttest = { ...config.appAttest, rootCa: ca.rootPem, appId: APP_ID, env: 'production' }
     setBeatPlatformCheckForTests('decentraland', async () => true)
     setArFeedHoldMs(0)
+    resetNewWallets()
     app = await testApp()
     host = await createUser({ wallet: randomWallet() })
     sceneId = (await createScene(host, 'Hall')).scene.id
@@ -286,6 +288,63 @@ describe('BEATs in AR spaces with the Virvi app', () => {
     expect(failures).toEqual([])
     expect(await takenCount(db, b.id)).toBe(30)
   }, 180_000)
+
+  /** In-world, from the scene: track with the pass's wallet, or claim, from `ip`. */
+  const inWorld = (p: Phone, b: { id: string }, what: 'track' | 'claim', ip: string, wallet = p.user.wallet!) =>
+    app.inject({
+      method: 'POST', url: `/api/scenes/${sceneId}/beat/${b.id}/${what}`, remoteAddress: ip,
+      headers: { authorization: `Bearer ${issueScenePass(app, p.user as any, wallet, { sceneId, locationId: null }).accessToken}` },
+      payload: what === 'track' ? { consentVersion: BEAT_CONSENT_VERSION } : {},
+    })
+
+  it('a claim started in Decentraland keeps the per-network cap when claimed in the app; one started in the app does not', async () => {
+    ;(config as any).beats = { ...config.beats, claimsPerIp: 1, newWalletsPerIpHour: 1000 }
+    const ip = '198.51.100.20'
+    const b = await seed()
+    const first = await phone({ ip })
+    expect((await inWorld(first, b, 'track', ip)).statusCode).toBe(200)
+    await db.update(beatClaims).set({ secondsPresent: 300 }).where(eq(beatClaims.userId, first.user.id))
+    expect((await inWorld(first, b, 'claim', ip)).statusCode).toBe(200)
+
+    // Tracked in-world on the same network, claimed through the app: the in-world refusal, and nothing changes
+    const viaApp = await phone({ ip })
+    expect((await inWorld(viaApp, b, 'track', ip)).statusCode).toBe(200)
+    await db.update(beatClaims).set({ secondsPresent: 300 }).where(eq(beatClaims.userId, viaApp.user.id))
+    const refused = await claim(viaApp, b)
+    const inWorldOnly = await phone({ ip })
+    expect((await inWorld(inWorldOnly, b, 'track', ip)).statusCode).toBe(200)
+    await db.update(beatClaims).set({ secondsPresent: 300 }).where(eq(beatClaims.userId, inWorldOnly.user.id))
+    const refusedInWorld = await inWorld(inWorldOnly, b, 'claim', ip)
+    expect([refused.statusCode, refused.json().error]).toEqual([429, 'too_many_from_network'])
+    expect([refused.statusCode, refused.json()]).toEqual([refusedInWorld.statusCode, refusedInWorld.json()])
+    expect(await rowOf(b.id, viaApp.user.id)).toMatchObject({ status: 'present', installKeyId: null })
+
+    // Started in the app, on the same network: no cap
+    const appOnly = await phone({ ip })
+    expect((await track(appOnly, b)).statusCode).toBe(200)
+    await db.update(beatClaims).set({ secondsPresent: 300 }).where(eq(beatClaims.userId, appOnly.user.id))
+    const ok = await claim(appOnly, b)
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect(ok.json().beat.claim.status).toBe('claimed')
+  })
+
+  it('an app-started claim refused in-world (too early) keeps no wallet and costs its network no new wallet', async () => {
+    ;(config as any).beats = { ...config.beats, newWalletsPerIpHour: 1 }
+    const ip = '198.51.100.30'
+    const b = await seed()
+    const p = await phone({ wallets: 0, ip })
+    await track(p, b)
+    const passWallet = randomWallet().toLowerCase()
+    const early = await inWorld(p, b, 'claim', ip, passWallet)
+    expect(early.json().error).toBe('not_yet')
+    expect(await rowOf(b.id, p.user.id)).toMatchObject({ wallet: null, status: 'present' })
+    // The network's one new wallet is still free: another visitor's new wallet claims in-world from it
+    const other = await phone({ ip })
+    expect((await inWorld(other, b, 'track', ip)).statusCode).toBe(200)
+    await db.update(beatClaims).set({ secondsPresent: 300 }).where(eq(beatClaims.userId, other.user.id))
+    const ok = await inWorld(other, b, 'claim', ip)
+    expect(ok.statusCode, ok.body).toBe(200)
+  })
 
   it('stop deletes a present claim; once claimed it stays', async () => {
     const b = await seed()
