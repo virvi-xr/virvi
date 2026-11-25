@@ -89,6 +89,13 @@ describe('which Decentraland HUD release a scene runs (LIV-33)', () => {
     expect(compareHudVersions('2.13.0', '2.13.0')).toBe(0)
     expect(compareHudVersions(null, '0.0.1')).toBeLessThan(0)
     const dcl = JSON.parse(readFileSync(new URL('../../../packages/dcl/package.json', import.meta.url), 'utf8'))
-    expect(DCL_HUD_VERSION).toBe(dcl.version) // raise both together at each release
+    // Raise both together at each release, but only once the release is on npm: Scene Import and the redeploy prompt
+    // point at DCL_HUD_VERSION, so it may trail the package by one minor release while that release awaits publishing
+    const [hudMajor, hudMinor] = DCL_HUD_VERSION.split('.').map(Number)
+    const [pkgMajor, pkgMinor] = String(dcl.version).split('.').map(Number)
+    expect(hudMajor).toBe(pkgMajor)
+    expect(pkgMinor - hudMinor).toBeGreaterThanOrEqual(0)
+    expect(pkgMinor - hudMinor).toBeLessThanOrEqual(1)
+    if (pkgMinor === hudMinor) expect(DCL_HUD_VERSION).toBe(dcl.version)
   })
 })
