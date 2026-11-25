@@ -40,8 +40,8 @@ export default function PrivacyPage() {
         <ul className="list-disc pl-5">
           <li>
             <strong>In scenes:</strong> the first time you enter a Virvi scene, a small notice asks whether Virvi may record how you use it.
-            Until you choose, nothing is sent. If you decline, nothing is recorded for the rest of your visit, including your wallet and name in
-            a scene that has wallet visibility on. Raffles, BEATs and giveaways still work, under their own agreements. One choice covers every
+            Until you choose, nothing is sent. If you decline, nothing is recorded for the rest of your visit, including which ads you saw and
+            your wallet and name in a scene that has wallet visibility on. Ads still show; they just aren&apos;t counted for you. Raffles, BEATs and giveaways still work, under their own agreements. One choice covers every
             Virvi scene, and you&apos;re asked again only when the notice changes. To change your mind, press Privacy at the bottom right of
             the screen. Scenes that haven&apos;t been updated since the notice was added don&apos;t show it; Virvi still records nothing from
             them for a visitor who has declined.

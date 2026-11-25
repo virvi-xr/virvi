@@ -86,6 +86,11 @@ export class Collector {
     })
   }
 
+  /** The visitor's decision on the analytics notice; ad views follow it too. */
+  get consent(): ConsentGate {
+    return this.opts.consent
+  }
+
   get sessionId(): string | null {
     return this._sessionId
   }

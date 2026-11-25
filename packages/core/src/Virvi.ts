@@ -738,8 +738,20 @@ export class Virvi {
     this.track(id, metadata)
   }
 
+  /** Analytics (and so the visitor notice) are starting: hold ad views until attachAnalytics, or noAnalytics. */
+  holdAdViews(): void {
+    this.ads.tracker.hold()
+  }
+
+  /** Analytics didn't start, so there is no notice to wait on: ad views count as before (the server still drops a decliner's). */
+  noAnalytics(): void {
+    this.ads.tracker.setConsent(null)
+  }
+
   attachAnalytics(collector: import('./analytics/collector.js').Collector): void {
     this.analytics = collector
+    // Ad views follow the same visitor decision (GDPR notice)
+    this.ads.tracker.setConsent(collector.consent)
   }
 
   track(name: string, props?: Record<string, unknown>): void {

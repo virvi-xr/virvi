@@ -113,8 +113,11 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
   const virvi = new Virvi(adapter)
   if (config?.analytics !== false) {
     // Analytics start once per scene runtime; every createVirvi call (retries included) attaches the shared collector.
+    // Ad views wait for the visitor's decision on the analytics notice; with no collector there is no notice to wait on
+    virvi.holdAdViews()
     void startVirviAnalytics({ env: config?.env, apiUrl: config?.apiUrl, adapter }).then((c) => {
       if (c) virvi.attachAnalytics(c)
+      else virvi.noAnalytics()
     })
   }
   const enableHud = config?.enableHud !== false

@@ -4,6 +4,8 @@ import { db } from '../src/db/connection.js'
 import { ads, adCreatives, adPlacements, adEvents, locationSetups } from '../src/db/schema.js'
 import { recordAdEvents } from '../src/ads/events.js'
 import { adViewerKey } from '../src/ads/viewer.js'
+import { consentSubject, recordConsent } from '../src/analytics/consent.js'
+import { ANALYTICS_CONSENT_VERSION } from '@virvixr/shared'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, createElement, tokenFor } from './helpers/factories.js'
 import { createAnalyticsScene } from './helpers/analytics.js'
@@ -123,6 +125,23 @@ describe('/api/ads/serve and /api/ads/events', () => {
     // LIV-167: the wallet is kept only as a keyed hash, never in the clear
     expect(rows[0]).toMatchObject({ viewerKey: adViewerKey(rows[0].sceneId, first.wallet), verified: true })
     expect(rows[0].viewerKey).not.toContain(first.wallet.toLowerCase().slice(2))
+  })
+
+  it("a visitor who declined the analytics notice has no ad views counted; accepting counts them again", async () => {
+    const { preset } = await boundScene()
+    const a = await createElement(preset.id, { type: 'ad_space', properties: { shape: '1:1', formats: 'both' } })
+    const onA = await mkAd('partner')
+    await db.insert(adPlacements).values({ adId: onA.ad.id, elementId: a.id })
+    const { wallet } = await signedSceneHeaders({ method: 'POST', path: '/api/ads/events', body: '{}' })
+    const subject = consentSubject(wallet, wallet)
+    await recordConsent({ subject, decision: 'decline', version: ANALYTICS_CONSENT_VERSION, sceneId: null, platform: 'decentraland' })
+    const batch = { v: 1, sessionId: 'd-1', events: [{ adId: onA.ad.id, elementId: a.id, level: 'screen', t: 1 }] }
+    const declined = await signed('/api/ads/events', batch)
+    expect([declined.res.statusCode, declined.res.json()]).toEqual([200, { accepted: 0 }])
+    expect(await db.select().from(adEvents)).toHaveLength(0)
+    await recordConsent({ subject, decision: 'accept', version: ANALYTICS_CONSENT_VERSION, sceneId: null, platform: 'decentraland', now: new Date(Date.now() + 1000) })
+    const accepted = await signed('/api/ads/events', { ...batch, sessionId: 'd-2' })
+    expect(accepted.res.json()).toEqual({ accepted: 1 })
   })
 
   it('a signed request with no bound scene is 404 scene_not_found', async () => {
