@@ -14,6 +14,10 @@ final class MyBeatsModel {
         var name: String
         /// The card's line for where this BEAT stands, nil when it has none.
         var status: String?
+        /// The BEAT as the server gave it, for its card.
+        var card: AppBeatCard
+        /// In progress or ready to claim: tapping the row opens its card.
+        var opens: Bool
     }
 
     enum Phase: Equatable {
@@ -26,10 +30,18 @@ final class MyBeatsModel {
     private(set) var phase: Phase = .idle
     @ObservationIgnored private let api: AppBeatApi
     @ObservationIgnored private let wallClock: () -> Int64
+    /// Set by the app: opens a BEAT's card on the camera view.
+    @ObservationIgnored var openCard: (AppBeatCard) -> Void = { _ in }
 
     init(api: AppBeatApi, wallClock: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }) {
         self.api = api
         self.wallClock = wallClock
+    }
+
+    /// A row was tapped: a BEAT in progress or ready to claim opens its card ("Claim your BEAT" once it can be claimed).
+    func open(_ row: Row) {
+        guard row.opens else { return }
+        openCard(row.card)
     }
 
     func load() async {
@@ -39,7 +51,12 @@ final class MyBeatsModel {
             phase = .loaded(cards.map { c in
                 var card = BeatCard()
                 card.apply(c, signedIn: true, nowMs: wallClock())
-                return Row(id: c.beatId, name: c.name, status: card.text)
+                let opens: Bool
+                switch card.state {
+                case .counting, .claimable: opens = true
+                default: opens = false
+                }
+                return Row(id: c.beatId, name: c.name, status: card.text, card: c, opens: opens)
             })
         case .error(let e): phase = .failed(e.message)
         }
@@ -49,6 +66,8 @@ final class MyBeatsModel {
 struct MyBeatsView: View {
     let model: MyBeatsModel
     let close: () -> Void
+    /// A row's card was opened: the sheets make way for the camera view.
+    var opened: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -60,9 +79,14 @@ struct MyBeatsView: View {
                 if rows.isEmpty { Text(MyBeatsModel.EMPTY).foregroundStyle(.secondary) }
                 else {
                     List(rows) { row in
-                        VStack(alignment: .leading, spacing: 2) {
+                        let line = VStack(alignment: .leading, spacing: 2) {
                             Text(row.name).font(.headline)
                             if let s = row.status { Text(s).font(.subheadline).foregroundStyle(.secondary) }
+                        }
+                        if row.opens {
+                            Button { model.open(row); opened() } label: { line }.buttonStyle(.plain)
+                        } else {
+                            line
                         }
                     }
                     .listStyle(.plain)

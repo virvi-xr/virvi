@@ -2,6 +2,7 @@ import ARKit
 import Network
 import RealityKit
 import SwiftUI
+import UserNotifications
 import VirviARKit
 
 /// The space code a universal link opens, or nil for any other URL: only `https://virvi.io/s/<code>` counts, with the
@@ -22,7 +23,10 @@ final class AppModel {
     let signIn: SignInModel
     let session: AppSession
     let myBeats: MyBeatsModel
+    let beats: BeatModel
     private let network = NWPathMonitor()
+    /// Kept for the app's life: the notification centre holds its delegate weakly.
+    private let notifications: ClaimNotificationRouter
 
     init() {
         let arView = ARView(frame: .zero, cameraMode: ARWorldTrackingConfiguration.isSupported ? .ar : .nonAR,
@@ -37,9 +41,14 @@ final class AppModel {
         let beatApi = AppBeatApi(baseUrl: AppConfig.baseUrl, transport: URLSessionTransport(), session: session, attest: attester,
                                  appVersion: version)
         let beats = BeatModel(api: beatApi, session: session, location: VenueLocation(), notifier: SystemClaimNotifier())
+        self.beats = beats
         beats.signIn = { [signIn] in signIn.signIn() }
         signIn.onChange = { [weak beats] in beats?.accountChanged() }
         myBeats = MyBeatsModel(api: beatApi)
+        myBeats.openCard = { [weak beats] card in beats?.openBeat(card) }
+        // Set before launch finishes, so a tap on a reminder that launches the app reaches it
+        notifications = ClaimNotificationRouter { [weak beats] id in Task { await beats?.openBeat(id: id) } }
+        UNUserNotificationCenter.current().delegate = notifications
         controller = VisitorController(api: api, view: RealitySceneView(arView: arView), outline: RingOutline(arView: arView),
                                        beats: beats)
         driver = ArSessionDriver(arView: arView, controller: controller)
@@ -70,7 +79,10 @@ struct VirviARApp: App {
         // `initial`: the phase may already be active when the scene appears. Starting twice is harmless.
         .onChange(of: phase, initial: true) { _, p in
             switch p {
-            case .active: model.driver.start()
+            case .active:
+                model.driver.start()
+                // An in-person claim may have finished counting while the app was away
+                model.beats.appBecameActive()
             case .background:
                 model.driver.pause()
                 model.controller.flushAnalytics()

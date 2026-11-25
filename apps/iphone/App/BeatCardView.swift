@@ -35,7 +35,7 @@ struct BeatCardView: View {
                 if model.locationDenied { settingsButton }
                 if case .counting = model.card.state { wide(BeatModel.STOP_TRACKING) { model.stopTracking() } }
             }
-            if case .arc? = model.origin { wide(VisitorCopy.CLOSE) { model.closeEvent() } }
+            if model.origin?.isEvent == true { wide(VisitorCopy.CLOSE) { model.closeEvent() } }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)

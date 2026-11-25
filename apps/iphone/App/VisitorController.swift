@@ -559,7 +559,12 @@ final class VisitorController {
         if case .shown = st { set(\.sceneShown, true) } else { set(\.sceneShown, false) }
         set(\.menuButtonShown, VirviARKit.menuButtonShown(st, spaceChosen: flow.spaceChosen))
         set(\.reportSpaceId, flow.reportSpaceId)
-        if case .shown(let space, _) = st { beats?.spaceShown(space.id) } else { beats?.spaceShown(nil) }
+        // Locking the same space again (tracking lost for a moment) keeps its BEAT card; anything else lets it go
+        switch st {
+        case .shown(let space, _): beats?.spaceChanged(space.id, shown: true)
+        case .locking(let space): beats?.spaceChanged(space.id, shown: false)
+        default: beats?.spaceChanged(nil, shown: false)
+        }
     }
 
     /// Assigns only a change, so SwiftUI isn't woken every camera frame for nothing.

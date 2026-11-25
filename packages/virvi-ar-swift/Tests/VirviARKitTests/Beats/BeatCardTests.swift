@@ -2,10 +2,11 @@
 import XCTest
 
 final class BeatCardTests: XCTestCase {
-    private func card(claim: AppBeatClaim? = nil, minMinutes: Int = 5, venue: String? = "The Loft", wallets: [String] = []) -> AppBeatCard {
+    private func card(claim: AppBeatClaim? = nil, minMinutes: Int = 5, venue: String? = "The Loft", wallets: [String] = [],
+                      pinned: Bool = false) -> AppBeatCard {
         AppBeatCard(beatId: "b1", name: "Opening Night", imageUrl: "https://x/i.png", minMinutes: minMinutes,
                     startsAt: "2026-11-24T10:00:00.000Z", endsAt: "2026-11-24T20:00:00.000Z",
-                    locationType: "in_person", venue: venue, claim: claim, wallets: wallets)
+                    locationType: "in_person", venue: venue, pinned: pinned, claim: claim, wallets: wallets)
     }
 
     private func claim(_ status: String, seconds: Int = 0, wallet: String? = nil) -> AppBeatClaim {
@@ -147,5 +148,44 @@ final class BeatCardTests: XCTestCase {
         let parsed = parseAppBeatCard(json)
         XCTAssertEqual(parsed, card(claim: claim("present", seconds: 180), wallets: ["0xA"]))
         XCTAssertNil(parseAppBeatCard(["beatId": "b1"]))
+    }
+
+    func testParsesWhetherTheBeatHasAPinAndNoPinIsNoCheck() {
+        var json: [String: Any] = [
+            "beatId": "b1", "name": "Opening Night", "imageUrl": "", "minMinutes": 5,
+            "startsAt": "2026-11-24T10:00:00.000Z", "endsAt": "2026-11-24T20:00:00.000Z",
+            "location": ["type": "in_person", "venue": "The Loft"], "claim": NSNull(), "wallets": [String](),
+        ]
+        XCTAssertEqual(parseAppBeatCard(json)?.pinned, false, "absent is no pin")
+        json["pinned"] = true
+        XCTAssertEqual(parseAppBeatCard(json)?.pinned, true)
+        json["pinned"] = false
+        XCTAssertEqual(parseAppBeatCard(json)?.pinned, false)
+    }
+
+    // MARK: when a claim can be made
+
+    func testTheTimeLeftIsTheMinimumLessTheLiveSecondsPresent() {
+        XCTAssertEqual(beatSecondsLeft(card(claim: claim("present", seconds: 120))), 180)
+        XCTAssertEqual(beatSecondsLeft(card(claim: claim("present", seconds: 300))), 0)
+        XCTAssertEqual(beatSecondsLeft(card(claim: claim("present", seconds: 400))), 0)
+        XCTAssertNil(beatSecondsLeft(card()), "no claim, nothing is counting")
+        XCTAssertNil(beatSecondsLeft(card(claim: claim("waiting", seconds: 300))))
+    }
+
+    func testAnEventClaimIsDueWhenTheTimeLeftHasPassedCountedFromNowOrTheStart() {
+        // Inside the window: from now, whatever the claim's own check-in time says (it may be another place's)
+        XCTAssertEqual(beatClaimDueMs(card(claim: claim("present", seconds: 120)), nowMs: now), now + 180_000)
+        // Before the start nothing counts yet: from the start
+        let start: Int64 = 1_795_514_400_000 // 2026-11-24T10:00Z
+        XCTAssertEqual(beatClaimDueMs(card(claim: claim("present", seconds: 0)), nowMs: start - 60_000), start + 300_000)
+        XCTAssertEqual(beatClaimDueMs(card(claim: claim("present", seconds: 300)), nowMs: now), now, "due now: claimable")
+        XCTAssertNil(beatClaimDueMs(card(), nowMs: now))
+        XCTAssertNil(beatClaimDueMs(card(claim: claim("claimed", seconds: 300)), nowMs: now))
+    }
+
+    func testTheConsentTextIsTheSharedOneWordForWord() {
+        XCTAssertEqual(beatAppConsentText("Opening Night"),
+                       "To track your attendance for the Opening Night BEAT, Virvi stores your account, how long you're here and, when you claim, the wallet you choose. Virvi checks your location only when you check in and when you claim, and doesn't keep it. The hosts of this event will see your name, your time and, if you claim, the wallet you choose. If you claim, your wallet, this BEAT and the time it was sent are recorded on Polygon, a public blockchain: anyone can see that record, and nobody can delete it. You can stop tracking at any time before you claim, which deletes what was stored.")
     }
 }

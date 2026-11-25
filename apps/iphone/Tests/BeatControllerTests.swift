@@ -55,12 +55,6 @@ final class FakeNotifier: ClaimNotifier {
     func cancel(beatId: String) { cancelled.append(beatId) }
 }
 
-final class MemoryConsent: BeatConsentStore {
-    var accounts: Set<String> = []
-    func accepted(account: String) -> Bool { accounts.contains(account) }
-    func accept(account: String) { accounts.insert(account) }
-}
-
 /// A sleep the test releases by hand: the check-in timer's 30 s.
 final class FakeSleeper: @unchecked Sendable {
     private let lock = NSLock()
@@ -102,26 +96,28 @@ final class BeatControllerTests: XCTestCase {
     private var attester: RecordingAttester!
     private var location: FakeLocation!
     private var notifier: FakeNotifier!
-    private var consent: MemoryConsent!
     private var sleeper: FakeSleeper!
     private var session: AppSession!
     private var beats: BeatModel!
     private var controller: VisitorController!
     private var nowMs: Int64 = 1_000
     private var wallMs: Int64 = 1_700_000_000_000
+    /// The BEAT's start in the cards below (2026-11-24T10:00Z).
+    private let startsMs: Int64 = 1_795_514_400_000
 
     /// What each BEAT route answers, changed per test.
     private let spaceCard = Box<[String: Any]?>(nil)
     private let trackAnswer = Box<(Int, [String: Any])>((200, [:]))
     private let claimAnswers = Box<[(Int, [String: Any])]>([])
+    private let mineCards = Box<[[String: Any]]>([])
 
     private func cardJson(claim: [String: Any]? = nil, minMinutes: Int = 5, type: String = "in_person", venue: String? = "The Loft",
-                          wallets: [String] = []) -> [String: Any] {
+                          wallets: [String] = [], pinned: Bool? = nil) -> [String: Any] {
         var location: [String: Any] = ["type": type]
         if let venue { location["venue"] = venue }
         return ["beatId": "b1", "name": "Opening Night", "imageUrl": "", "minMinutes": minMinutes,
                 "startsAt": "2026-11-24T10:00:00.000Z", "endsAt": "2099-11-24T20:00:00.000Z",
-                "location": location, "claim": claim ?? NSNull(), "wallets": wallets]
+                "location": location, "pinned": pinned ?? (type == "in_person"), "claim": claim ?? NSNull(), "wallets": wallets]
     }
 
     private func claim(_ status: String, seconds: Int = 0) -> [String: Any] {
@@ -145,7 +141,8 @@ final class BeatControllerTests: XCTestCase {
             if req.url!.query?.contains("since=1") == true { try await Task.sleep(nanoseconds: 3_600 * 1_000_000_000) }
             return (200, VisitorControllerTests.feedBody())
         }
-        let spaceCard = self.spaceCard, trackAnswer = self.trackAnswer, claimAnswers = self.claimAnswers
+        let spaceCard = self.spaceCard, trackAnswer = self.trackAnswer, claimAnswers = self.claimAnswers, mineCards = self.mineCards
+        transport.on("/api/app/beats/mine") { _ in (200, ["beats": mineCards.value]) }
         transport.on("/api/app/spaces/s1/beat") { _ in (200, ["beat": spaceCard.value ?? NSNull()]) }
         transport.on("/api/app/beats/b1/track") { req in
             req.httpMethod == "DELETE" ? (204, nil) : (trackAnswer.value.0, trackAnswer.value.1)
@@ -161,13 +158,13 @@ final class BeatControllerTests: XCTestCase {
         attester = RecordingAttester()
         location = FakeLocation()
         notifier = FakeNotifier()
-        consent = MemoryConsent()
         sleeper = FakeSleeper()
         session = AppSession(baseUrl: base, transport: transport,
                              store: MemorySessionStore(AppTokens(accessToken: fakeAccessToken(id: "u1"), refreshToken: "r", userName: "Ana")))
         let beatApi = AppBeatApi(baseUrl: base, transport: transport, session: session, attest: attester)
         let sleeper = self.sleeper!
-        beats = BeatModel(api: beatApi, session: session, location: location, notifier: notifier, consent: consent,
+        self.beatApi = beatApi
+        beats = BeatModel(api: beatApi, session: session, location: location, notifier: notifier,
                           wallClock: { [unowned self] in self.wallMs }, sleep: { await sleeper.sleep($0) })
         let api = ArApi(baseUrl: base, transport: transport, appVersion: "test", session: session)
         controller = VisitorController(api: api, view: view, outline: FakeOutline(), analytics: VisitAnalytics(send: { _, _ in .sent }),
@@ -175,6 +172,7 @@ final class BeatControllerTests: XCTestCase {
     }
 
     private var eventCardBox: Box<[String: Any]?>!
+    private var beatApi: AppBeatApi!
 
     override func tearDown() async throws {
         controller.stop()
@@ -219,6 +217,13 @@ final class BeatControllerTests: XCTestCase {
 
     private func requests(_ suffix: String) -> [URLRequest] { transport.requests.filter { $0.url!.path.hasSuffix(suffix) } }
 
+    /// Track my attendance, and agree to the consent text it shows first (every time).
+    private func trackAgreeing() async {
+        beats.primaryAction()
+        await until("the consent text") { beats.consentText != nil }
+        beats.acceptConsent()
+    }
+
     /// One tick of the check-in timer: waits for it to be asleep, lets it go, and waits for the check-in to land.
     private func tick(expectingCheckIns n: Int) async {
         await until("the timer to sleep") { sleeper.waiting == 1 }
@@ -238,10 +243,17 @@ final class BeatControllerTests: XCTestCase {
         await tick(expectingCheckIns: 1)
 
         controller.sessionInterrupted()
-        // The stopped timer's sleep ends and it neither checks in nor sleeps again
+        // Locking the same space again: the timer keeps going but doesn't check in
+        await until("the timer to sleep") { sleeper.waiting == 1 }
+        sleeper.release()
+        await until("the timer to sleep again") { sleeper.waiting == 1 }
+        XCTAssertEqual(transport.count("/checkin"), 1, "a hidden space doesn't check in")
+
+        // Leaving the space stops it: its sleep ends and it neither checks in nor sleeps again
+        controller.lookAgain()
         sleeper.release()
         try await Task.sleep(nanoseconds: 200_000_000)
-        XCTAssertEqual(transport.count("/checkin"), 1, "a hidden space doesn't check in")
+        XCTAssertEqual(transport.count("/checkin"), 1)
         XCTAssertEqual(sleeper.waiting, 0)
     }
 
@@ -269,7 +281,7 @@ final class BeatControllerTests: XCTestCase {
         await until("the reminder") { notifier.scheduled.count == 1 }
         XCTAssertEqual(notifier.scheduled[0].beatId, "b1")
         XCTAssertEqual(notifier.scheduled[0].name, "Opening Night")
-        XCTAssertEqual(notifier.scheduled[0].atMs, 1_700_000_100_000 + 5 * 60_000)
+        XCTAssertEqual(notifier.scheduled[0].atMs, 1_700_000_100_000 + 4 * 60_000, "the minutes still left: 5 less the 1 already counted")
         wallMs += 30_000
         await tick(expectingCheckIns: 2)
         XCTAssertEqual(notifier.permissionRequests, 1)
@@ -299,11 +311,10 @@ final class BeatControllerTests: XCTestCase {
 
     func testPreciseLocationOffSendsToSettings() async throws {
         eventCardBox.value = cardJson()
-        consent.accept(account: "u1")
         location.outcome = .reduced
         try await seeRing(RingCodec.parseCode(eventCode)!, frames: 15)
         await until("the card") { beats.card.state != .hidden }
-        beats.primaryAction()
+        await trackAgreeing()
         await until("the refusal") { beats.card.state == .failed(message: BeatModel.NEEDS_PRECISE) }
         XCTAssertTrue(beats.locationDenied)
         XCTAssertEqual(transport.count("/track"), 0)
@@ -334,7 +345,7 @@ final class BeatControllerTests: XCTestCase {
         XCTAssertNil(requests("/api/app/arcs/\(eventCode)").first?.value(forHTTPHeaderField: "Authorization"))
     }
 
-    func testTrackingAnEventShowsTheConsentFirstOnceThenSendsItsVersionAndTheFixAndSchedulesFromNow() async throws {
+    func testTrackingAnEventShowsTheConsentEveryTimeThenSendsItsVersionAndTheFixAndSchedulesFromTheStart() async throws {
         eventCardBox.value = cardJson()
         trackAnswer.value = (200, ["beat": cardJson(claim: claim("present", seconds: 0))])
         try await seeRing(RingCodec.parseCode(eventCode)!, frames: 15)
@@ -353,27 +364,27 @@ final class BeatControllerTests: XCTestCase {
         XCTAssertEqual(sent["arcCode"] as? String, eventCode)
         XCTAssertEqual((sent["location"] as? [String: Any])?["accuracyM"] as? Double, 12)
         await until("the reminder") { notifier.scheduled.count == 1 }
-        XCTAssertEqual(notifier.scheduled[0].atMs, 1_700_000_500_000 + 5 * 60_000, "wall-clock from the track")
+        XCTAssertEqual(notifier.scheduled[0].atMs, startsMs + 5 * 60_000, "tracked before the start: the minutes count from the start")
         XCTAssertEqual(notifier.permissionRequests, 1)
         XCTAssertEqual(beats.card.state, .counting(name: "Opening Night", minutesLeft: 5))
 
-        // Stopping and tracking again: the account has accepted, the text isn't shown again
+        // Stopping and tracking again: the consent text is shown again, as in-world
         beats.stopTracking()
         await until("stopped") { beats.card.state == .track(name: "Opening Night", minutes: 5) }
         XCTAssertEqual(notifier.cancelled, ["b1"])
         beats.primaryAction()
-        await until("the second track") { transport.count("/track") == 3 } // POST, DELETE, POST
-        XCTAssertNil(beats.consentText)
-        XCTAssertEqual(consent.accounts, ["u1"])
+        await until("the consent text again") { beats.consentText != nil }
+        XCTAssertEqual(transport.count("/track"), 2, "POST, DELETE: nothing more before the visitor agrees")
+        beats.acceptConsent()
+        await until("the second track") { transport.count("/track") == 3 }
     }
 
-    func testNoLocationIsAskedForABeatWithoutAVenue() async throws {
+    func testNoLocationIsAskedForAnOnlineBeat() async throws {
         eventCardBox.value = cardJson(type: "online", venue: nil)
         trackAnswer.value = (200, ["beat": cardJson(claim: claim("present"), type: "online", venue: nil)])
-        consent.accept(account: "u1")
         try await seeRing(RingCodec.parseCode(eventCode)!, frames: 15)
         await until("the card") { beats.card.state != .hidden }
-        beats.primaryAction()
+        await trackAgreeing()
         await until("the track") { transport.count("/track") == 1 }
         XCTAssertEqual(location.asked, 0)
         XCTAssertNil(body(requests("/track")[0])["location"])
@@ -381,11 +392,10 @@ final class BeatControllerTests: XCTestCase {
 
     func testDeniedLocationSaysToAllowItInSettingsAndSendsNothing() async throws {
         eventCardBox.value = cardJson()
-        consent.accept(account: "u1")
         location.outcome = .denied
         try await seeRing(RingCodec.parseCode(eventCode)!, frames: 15)
         await until("the card") { beats.card.state != .hidden }
-        beats.primaryAction()
+        await trackAgreeing()
         await until("the refusal") { beats.card.state == .failed(message: BeatModel.NO_LOCATION) }
         XCTAssertTrue(beats.locationDenied)
         XCTAssertEqual(transport.count("/track"), 0, "no request without a fix")
@@ -394,11 +404,10 @@ final class BeatControllerTests: XCTestCase {
 
     func testNoFixInTimeSaysSoAndSendsNothing() async throws {
         eventCardBox.value = cardJson()
-        consent.accept(account: "u1")
         location.outcome = .unavailable
         try await seeRing(RingCodec.parseCode(eventCode)!, frames: 15)
         await until("the card") { beats.card.state != .hidden }
-        beats.primaryAction()
+        await trackAgreeing()
         await until("the refusal") { beats.card.state == .poorFix }
         XCTAssertEqual(beats.card.text, VisitorCopy.BEAT_POOR_FIX)
         XCTAssertEqual(transport.count("/track"), 0)
@@ -452,7 +461,7 @@ final class BeatControllerTests: XCTestCase {
     func testAPhoneThatCantAttestShowsItsOwnWordsOnTheCard() async throws {
         struct Unsupported: Attester { func assertion(for body: Data) async throws -> String { throw AttestUnsupported() } }
         let api = AppBeatApi(baseUrl: base, transport: transport, session: session, attest: Unsupported())
-        let model = BeatModel(api: api, session: session, location: location, notifier: notifier, consent: consent)
+        let model = BeatModel(api: api, session: session, location: location, notifier: notifier)
         let card = parseAppBeatCard(cardJson(claim: claim("present", seconds: 600)))
         model.openEvent(code: eventCode, name: "Opening Night", card: card)
         model.primaryAction()
@@ -460,10 +469,124 @@ final class BeatControllerTests: XCTestCase {
         XCTAssertEqual(transport.count("/claim"), 0)
     }
 
-    func testAccountIdIsReadFromTheTokensIdClaim() {
-        XCTAssertEqual(accountId(fromAccessToken: fakeAccessToken(id: "u-42")), "u-42")
-        XCTAssertNil(accountId(fromAccessToken: "tok"))
-        XCTAssertNil(accountId(fromAccessToken: nil))
+    // MARK: one scan only: claiming in person when the time is up
+
+    func testACountingEventCardOffersTheClaimWhenItsTimeIsUpWithoutAnotherScan() async throws {
+        wallMs = startsMs + 3_600_000
+        // Two of five minutes already earned (in Decentraland, say): three are left
+        eventCardBox.value = cardJson(claim: claim("present", seconds: 120))
+        try await seeRing(RingCodec.parseCode(eventCode)!, frames: 15)
+        await until("the card") { beats.card.state == .counting(name: "Opening Night", minutesLeft: 3) }
+        await until("the wait for the time left") { sleeper.durations.contains(180) }
+
+        wallMs += 180_000
+        mineCards.value = [cardJson(claim: claim("present", seconds: 300))]
+        sleeper.release()
+        await until("the claim button") { beats.card.state == .claimable(name: "Opening Night") }
+        XCTAssertEqual(beats.card.buttonTitle, "Claim your BEAT")
+        XCTAssertEqual(transport.count("/api/app/arcs/\(eventCode)"), 1, "never scanned again")
+
+        claimAnswers.value = [(200, ["beat": cardJson(claim: claim("claimed", seconds: 300))])]
+        beats.primaryAction()
+        await until("sent") { beats.card.state == .sent(name: "Opening Night") }
+        XCTAssertNotNil(body(requests("/claim")[0])["location"], "a pinned BEAT is checked at the venue")
+    }
+
+    func testComingBackToTheAppAsksForAnEventCardAgain() async throws {
+        wallMs = startsMs + 3_600_000
+        eventCardBox.value = cardJson(claim: claim("present", seconds: 120))
+        try await seeRing(RingCodec.parseCode(eventCode)!, frames: 15)
+        await until("the card") { beats.card.state == .counting(name: "Opening Night", minutesLeft: 3) }
+        mineCards.value = [cardJson(claim: claim("present", seconds: 310))]
+        beats.appBecameActive()
+        await until("the claim button") { beats.card.state == .claimable(name: "Opening Night") }
+        XCTAssertEqual(transport.count("/api/app/arcs/\(eventCode)"), 1)
+    }
+
+    func testAMyBeatsRowInProgressOrClaimableOpensItsCardAndClaimsWithTheIdAndAFix() async throws {
+        var sent = cardJson(claim: claim("claimed", seconds: 300))
+        sent["beatId"] = "b2"
+        mineCards.value = [cardJson(claim: claim("present", seconds: 300)), sent]
+        let myBeats = MyBeatsModel(api: beatApi, wallClock: { [unowned self] in self.wallMs })
+        myBeats.openCard = { [unowned self] in self.beats.openBeat($0) }
+        await myBeats.load()
+        guard case .loaded(let rows) = myBeats.phase else { return XCTFail("\(myBeats.phase)") }
+        XCTAssertEqual(rows.map(\.opens), [true, false], "only a BEAT in progress or ready to claim opens")
+        myBeats.open(rows[1])
+        XCTAssertFalse(beats.visible)
+
+        myBeats.open(rows[0])
+        XCTAssertEqual(beats.card.state, .claimable(name: "Opening Night"))
+        XCTAssertEqual(beats.origin, .beat("b1"))
+        claimAnswers.value = [(200, ["beat": cardJson(claim: claim("claimed", seconds: 300))])]
+        beats.primaryAction()
+        await until("sent") { beats.card.state == .sent(name: "Opening Night") }
+        XCTAssertEqual(location.asked, 1)
+        XCTAssertEqual(requests("/claim").first?.url?.path, "/api/app/beats/b1/claim")
+        XCTAssertTrue(transport.requests.allSatisfy { !$0.url!.path.contains("/api/app/arcs/") }, "no scan at all")
+        beats.closeEvent()
+        XCTAssertFalse(beats.visible)
+    }
+
+    func testATappedReminderOpensItsBeatsCard() async {
+        mineCards.value = [cardJson(claim: claim("present", seconds: 300))]
+        await beats.openBeat(id: "b1")
+        XCTAssertEqual(beats.card.state, .claimable(name: "Opening Night"))
+        XCTAssertEqual(beatId(fromNotification: ["beatId": "b1"]), "b1")
+        XCTAssertNil(beatId(fromNotification: [:]))
+        XCTAssertNil(beatId(fromNotification: ["beatId": ""]))
+    }
+
+    // MARK: a BEAT with no pin
+
+    func testAnInPersonBeatWithNoPinTracksAndClaimsWithoutAskingForTheLocation() async throws {
+        eventCardBox.value = cardJson(pinned: false)
+        trackAnswer.value = (200, ["beat": cardJson(claim: claim("present", seconds: 300), pinned: false)])
+        claimAnswers.value = [(200, ["beat": cardJson(claim: claim("claimed", seconds: 300), pinned: false)])]
+        try await seeRing(RingCodec.parseCode(eventCode)!, frames: 15)
+        await until("the card") { beats.card.state != .hidden }
+        await trackAgreeing()
+        await until("the claim button") { beats.card.state == .claimable(name: "Opening Night") }
+        beats.primaryAction()
+        await until("sent") { beats.card.state == .sent(name: "Opening Night") }
+        XCTAssertEqual(location.asked, 0, "no pin, no location prompt")
+        XCTAssertNil(body(requests("/track")[0])["location"])
+        XCTAssertNil(body(requests("/claim")[0])["location"])
+    }
+
+    // MARK: a moment's loss of tracking
+
+    func testLosingTheRingForAMomentKeepsTheCardAndItsTimer() async throws {
+        spaceCard.value = cardJson(claim: claim("present", seconds: 60), type: "scene")
+        try await showSpace()
+        await until("the card") { beats.card.state == .counting(name: "Opening Night", minutesLeft: 4) }
+        await tick(expectingCheckIns: 1)
+        await until("the reminder") { notifier.scheduled.count == 1 }
+
+        controller.trackingChanged(normal: false)
+        guard case .locking = controller.state else { return XCTFail("\(controller.state)") }
+        XCTAssertEqual(beats.card.state, .counting(name: "Opening Night", minutesLeft: 4), "the card stays")
+        XCTAssertEqual(notifier.cancelled, ["b1"], "no time counts while the space isn't in view: its reminder waits")
+        // The timer keeps its count, but checks in only while the space is in view
+        await until("the timer to sleep") { sleeper.waiting == 1 }
+        sleeper.release()
+        await until("the timer to sleep again") { sleeper.waiting == 1 }
+        XCTAssertEqual(transport.count("/checkin"), 1)
+
+        controller.trackingChanged(normal: true)
+        try await showSpace()
+        XCTAssertEqual(beats.card.state, .counting(name: "Opening Night", minutesLeft: 4))
+        XCTAssertEqual(requests("/api/app/spaces/s1/beat").count, 1, "the same card, not asked for again")
+        await tick(expectingCheckIns: 2)
+        await until("the reminder set again") { notifier.scheduled.count == 2 }
+    }
+
+    func testLookingAgainClearsTheSpacesCard() async throws {
+        spaceCard.value = cardJson(claim: claim("present", seconds: 60), type: "scene")
+        try await showSpace()
+        await until("the card") { beats.card.state != .hidden }
+        controller.lookAgain()
+        XCTAssertEqual(beats.card.state, .hidden)
     }
 }
 

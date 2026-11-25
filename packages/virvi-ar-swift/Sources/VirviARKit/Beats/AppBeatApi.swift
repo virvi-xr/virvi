@@ -139,6 +139,14 @@ public final class AppBeatApi: Sendable {
         }
     }
 
+    /// One of the account's BEATs as `mine()` gives it (there is no single-BEAT route); `.ok(nil)` when it isn't there.
+    public func beat(_ beatId: String) async -> AppBeatResult<AppBeatCard?> {
+        switch await mine() {
+        case .ok(let cards): return .ok(cards.first { $0.beatId == beatId })
+        case .error(let e): return .error(e)
+        }
+    }
+
     // MARK: transport
 
     private enum Method: String { case get = "GET", post = "POST", delete = "DELETE" }
@@ -188,9 +196,15 @@ public final class AppBeatApi: Sendable {
                 }
                 return try await self.transport.send(r)
             }
-            let answer: (Data, HTTPURLResponse)?
+            var answer: (Data, HTTPURLResponse)?
             if anonymousOk, !session.signedIn { answer = try await send(nil) }
-            else { answer = try await session.authorized { try await send($0) } }
+            else {
+                answer = try await session.authorized { try await send($0) }
+                // As the feed (`ArApi.send`): when it is the sign-in the server won't take (401 even after the one
+                // refresh, 403, 503), a read that works signed out is asked again without it
+                if anonymousOk, let a = answer, [401, 403, 503].contains(a.1.statusCode) { answer = try await send(nil) }
+                else if anonymousOk, answer == nil { answer = try await send(nil) }
+            }
             guard let (data, response) = answer else {
                 return .error(AppBeatError(status: 0, code: "signed_out", message: VisitorCopy.BEAT_SIGN_IN))
             }

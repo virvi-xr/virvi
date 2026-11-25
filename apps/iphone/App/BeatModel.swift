@@ -25,6 +25,7 @@ final class SystemClaimNotifier: ClaimNotifier {
         content.title = "Virvi"
         content.body = "Claim your \(name) BEAT"
         content.sound = .default
+        content.userInfo = [Self.beatIdKey: beatId]
         let seconds = max(1, Double(atMs - Int64(Date().timeIntervalSince1970 * 1000)) / 1000)
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: seconds, repeats: false)
         center.add(UNNotificationRequest(identifier: Self.id(beatId), content: content, trigger: trigger))
@@ -34,44 +35,56 @@ final class SystemClaimNotifier: ClaimNotifier {
         center.removePendingNotificationRequests(withIdentifiers: [Self.id(beatId)])
     }
 
+    static let beatIdKey = "beatId"
     private static func id(_ beatId: String) -> String { "beat-claim-\(beatId)" }
 }
 
-/// Whether this account has accepted the app's consent text, kept on the phone (the server also records the version at each track).
-protocol BeatConsentStore {
-    func accepted(account: String) -> Bool
-    func accept(account: String)
-}
-
-struct UserDefaultsBeatConsentStore: BeatConsentStore {
-    var defaults: UserDefaults = .standard
-
-    private func key(_ account: String) -> String { "io.virvi.app.beat-consent.\(account)" }
-    func accepted(account: String) -> Bool { defaults.integer(forKey: key(account)) == BEAT_APP_CONSENT_VERSION }
-    func accept(account: String) { defaults.set(BEAT_APP_CONSENT_VERSION, forKey: key(account)) }
-}
-
-/// The account's id from its access token (the `id` claim), only to key what the phone remembers per account; the token
-/// is not verified here. Nil for anything that isn't a token with one.
-func accountId(fromAccessToken token: String?) -> String? {
-    guard let token else { return nil }
-    let parts = token.split(separator: ".")
-    guard parts.count == 3 else { return nil }
-    var b64 = parts[1].replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-    while b64.count % 4 != 0 { b64 += "=" }
-    guard let data = Data(base64Encoded: b64), let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-          let id = o["id"] as? String, !id.isEmpty else { return nil }
+/// The BEAT a "claim your BEAT" reminder is for, from its `userInfo`; nil for any other notification.
+func beatId(fromNotification userInfo: [AnyHashable: Any]) -> String? {
+    guard let id = userInfo[SystemClaimNotifier.beatIdKey] as? String, !id.isEmpty else { return nil }
     return id
 }
 
-/// Where the BEAT on the card came from: the AR space that is shown, or an event ARC that was scanned.
+/// Shows the reminder while the app is open too, and opens its BEAT's card when it is tapped.
+final class ClaimNotificationRouter: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
+    private let open: @MainActor (String) -> Void
+
+    init(open: @escaping @MainActor (String) -> Void) { self.open = open }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list, .sound])
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        let id = beatId(fromNotification: response.notification.request.content.userInfo)
+        let open = open
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { if let id { open(id) } }
+            completionHandler()
+        }
+    }
+}
+
+/// Where the BEAT on the card came from: the AR space that is shown, an event ARC that was scanned, or the visitor's own
+/// list (My BEATs, or the reminder).
 enum BeatOrigin: Equatable {
     case space(String)
     case arc(code: String)
+    case beat(String)
+
+    /// The card isn't tied to a space being in view: it stays until it is closed.
+    var isEvent: Bool {
+        if case .space = self { return false }
+        return true
+    }
 }
 
 /// The BEAT card's behaviour: which BEAT it shows, tracking, check-ins while a space is shown, claiming (with the
-/// wallet choice and the location check), and the reminder. `BeatCard` (the package) decides what it says. Main thread only.
+/// wallet choice and the location check), the reminder, and asking for the card again when an in-person claim's time is
+/// up (one scan only: the visitor never scans again to claim). `BeatCard` (the package) decides what it says. Main
+/// thread only.
 @MainActor
 @Observable
 final class BeatModel {
@@ -100,12 +113,18 @@ final class BeatModel {
     @ObservationIgnored private let session: AppSession
     @ObservationIgnored private let location: LocationProvider
     @ObservationIgnored private let notifier: ClaimNotifier
-    @ObservationIgnored private let consent: BeatConsentStore
     @ObservationIgnored private let wallClock: () -> Int64
     @ObservationIgnored private let sleep: @Sendable (Double) async -> Void
     @ObservationIgnored private var checkIns: Task<Void, Never>?
+    /// The card is asked for again when an in-person claim's time is up.
+    @ObservationIgnored private var refetch: Task<Void, Never>?
+    /// The space whose card this is, while it is shown or locking again after a moment's loss of tracking.
     @ObservationIgnored private var shownSpaceId: String?
-    @ObservationIgnored private var reminded: Set<String> = []
+    /// Whether that space is in view now (not locking again).
+    @ObservationIgnored private var spaceInView = false
+    /// The BEAT whose space reminder is set for this showing of the space.
+    @ObservationIgnored private var spaceReminder: String?
+    @ObservationIgnored private var askedPermission = false
     /// What the visitor last tried on this card, for "Try again".
     @ObservationIgnored private var lastAction: Action?
     private enum Action { case track, claim(wallet: String?) }
@@ -115,14 +134,12 @@ final class BeatModel {
     @ObservationIgnored private var generation = 0
 
     init(api: AppBeatApi, session: AppSession, location: LocationProvider, notifier: ClaimNotifier,
-         consent: BeatConsentStore = UserDefaultsBeatConsentStore(),
          wallClock: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) },
          sleep: @escaping @Sendable (Double) async -> Void = { try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) }) {
         self.api = api
         self.session = session
         self.location = location
         self.notifier = notifier
-        self.consent = consent
         self.wallClock = wallClock
         self.sleep = sleep
     }
@@ -134,27 +151,40 @@ final class BeatModel {
     var visible: Bool { card.state != .hidden || signInName != nil }
 
     func stop() {
-        checkIns?.cancel()
-        checkIns = nil
+        stopCheckIns()
+        stopRefetch()
     }
 
     // MARK: - What the card is for
 
-    /// The space now shown changes (nil: none is). A shown space with a BEAT shows its card, and checks in every 30 s.
-    func spaceShown(_ spaceId: String?) {
-        guard spaceId != shownSpaceId else { return }
-        shownSpaceId = spaceId
+    /// The space chosen now (nil: none is), and whether it is in view (`shown`) or locking again. A shown space with a
+    /// BEAT shows its card and checks in every 30 s. Losing the ring for a moment (the same space locking again) keeps
+    /// the card and its timer; only another space, Look again or leaving the space clears them.
+    func spaceChanged(_ spaceId: String?, shown: Bool) {
+        if let spaceId, spaceId == shownSpaceId {
+            guard shown != spaceInView else { return }
+            spaceInView = shown
+            // Time in a space counts only while it is in view: its reminder waits for the next check-in in view
+            if !shown { cancelSpaceReminder() }
+            return
+        }
+        // A space not yet shown has no card yet
+        let next = shown ? spaceId : nil
+        guard next != shownSpaceId else { return }
+        cancelSpaceReminder()
+        shownSpaceId = next
+        spaceInView = next != nil
         lastAction = nil
-        checkIns?.cancel()
-        checkIns = nil
+        stopCheckIns()
         generation += 1
         // A space's card goes with the space; an event's stays until it is closed
         if case .space = origin { clearCard() }
-        guard let spaceId else { return }
-        origin = .space(spaceId)
+        guard let next else { return }
+        stopRefetch()
+        origin = .space(next)
         let gen = generation
         Task {
-            let r = await api.spaceBeat(spaceId)
+            let r = await api.spaceBeat(next)
             guard gen == generation else { return }
             if case .ok(let found) = r { show(found) } else { clearCard() }
         }
@@ -162,13 +192,8 @@ final class BeatModel {
 
     /// An event's ARC was scanned: its card (the caller's own claim with it), or, signed out, its name and the way to sign in.
     func openEvent(code: String, name: String, card: AppBeatCard?) {
-        generation += 1
-        checkIns?.cancel()
-        checkIns = nil
-        origin = .arc(code: code)
-        lastAction = nil
-        locationDenied = false
-        if let card { signInName = nil; show(card) }
+        replaceFromOutside(.arc(code: code))
+        if let card { show(card) }
         else {
             self.card = BeatCard()
             current = nil
@@ -176,11 +201,41 @@ final class BeatModel {
         }
     }
 
-    /// Closes the card of an event.
+    /// Opens one of the visitor's own BEATs (a My BEATs row): its card, with "Claim your BEAT" once it can be claimed.
+    func openBeat(_ found: AppBeatCard) {
+        replaceFromOutside(.beat(found.beatId))
+        show(found)
+    }
+
+    /// Opens a BEAT by its id (a tapped reminder): asks for the visitor's card first.
+    func openBeat(id: String) async {
+        let gen = generation
+        guard case .ok(let found?) = await api.beat(id), gen == generation else { return }
+        openBeat(found)
+    }
+
+    private func replaceFromOutside(_ next: BeatOrigin) {
+        generation += 1
+        stopCheckIns()
+        stopRefetch()
+        cancelSpaceReminder()
+        origin = next
+        lastAction = nil
+        locationDenied = false
+        signInName = nil
+    }
+
+    /// Closes the card of an event (or of one of the visitor's BEATs).
     func closeEvent() {
-        guard case .arc = origin else { return }
+        guard origin?.isEvent == true else { return }
         generation += 1
         clearCard()
+    }
+
+    /// The app is back in the foreground: an in-person claim may have finished counting while it was away.
+    func appBecameActive() {
+        guard origin?.isEvent == true, current?.claim?.status == "present" else { return }
+        refetchNow()
     }
 
     /// The visitor has signed in or out: the card is asked for again as the new account.
@@ -188,14 +243,19 @@ final class BeatModel {
         switch origin {
         case .space?:
             guard let id = shownSpaceId else { return }
+            let inView = spaceInView
             shownSpaceId = nil
-            spaceShown(id)
+            spaceChanged(id, shown: true)
+            if !inView { spaceChanged(id, shown: false) }
         case .arc(let code)?:
             let gen = generation
             Task {
                 guard case .ok(.beat(_, let name, let card)) = await api.arc(code), gen == generation else { return }
                 openEvent(code: code, name: name, card: card)
             }
+        case .beat(let id)?:
+            guard session.signedIn else { generation += 1; return clearCard() }
+            Task { await openBeat(id: id) }
         case nil: break
         }
     }
@@ -206,6 +266,7 @@ final class BeatModel {
         locationDenied = false
         card.apply(found, signedIn: session.signedIn, nowMs: wallClock())
         syncCheckIns()
+        syncRefetch()
     }
 
     private func clearCard() {
@@ -214,8 +275,8 @@ final class BeatModel {
         locationDenied = false
         card = BeatCard()
         origin = nil
-        checkIns?.cancel()
-        checkIns = nil
+        stopCheckIns()
+        stopRefetch()
     }
 
     // MARK: - Tracking
@@ -247,37 +308,24 @@ final class BeatModel {
         }
     }
 
+    /// Every Track shows the consent text first, as in-world does.
     private func track() {
         guard let current, session.signedIn else { return }
         lastAction = .track
-        Task {
-            if !(await hasConsented()) {
-                consentText = beatAppConsentText(current.name)
-                tracksAfterConsent = true
-                return
-            }
-            await startTracking(current)
-        }
+        consentText = beatAppConsentText(current.name)
+        tracksAfterConsent = true
     }
 
     func acceptConsent() {
         consentText = nil
         guard tracksAfterConsent, let current else { return }
         tracksAfterConsent = false
-        Task {
-            if let account = accountId(fromAccessToken: await session.bearer()) { consent.accept(account: account) }
-            await startTracking(current)
-        }
+        Task { await startTracking(current) }
     }
 
     func declineConsent() {
         consentText = nil
         tracksAfterConsent = false
-    }
-
-    private func hasConsented() async -> Bool {
-        guard let account = accountId(fromAccessToken: await session.bearer()) else { return false }
-        return consent.accepted(account: account)
     }
 
     private func startTracking(_ beat: AppBeatCard) async {
@@ -288,26 +336,31 @@ final class BeatModel {
         switch r {
         case .ok(let updated):
             show(updated)
-            // In person, tracking is the check-in: the minutes count from now, so the reminder does too
-            if case .arc = via { await remind(updated, atMs: wallClock()) }
+            // In person, tracking is the check-in: the minutes count from now (or the start), so the reminder does too
+            if case .arc = via { await remindEvent(updated) }
         case .error(let e): card.apply(error: e)
         }
     }
 
-    /// Where tracking starts from, with the location an in-person event needs; nil when the card now says why not.
+    /// Where tracking starts from, with the location a pinned event needs; nil when the card now says why not.
     private func trackVia(_ beat: AppBeatCard) async -> BeatVia? {
         switch origin {
         case .space(let id)?: return .space(id)
         case .arc(let code)?:
             guard let fix = await locationIfNeeded(beat) else { return nil }
             return .arc(code: code, location: fix.location)
-        case nil: return nil
+        case .beat?, nil: return nil
         }
     }
 
-    /// The fix an event at a venue needs (a `Fix` with no location when none is needed), nil when it couldn't be had (the card says why).
+    /// The fix a BEAT with a venue pin needs away from a space (a `Fix` with no location when none is needed: no pin,
+    /// or the card of a space), nil when it couldn't be had (the card says why).
     private func locationIfNeeded(_ beat: AppBeatCard) async -> Fix? {
-        guard case .arc? = origin, beat.locationType == "in_person" else { return Fix(location: nil) }
+        guard beat.pinned, origin?.isEvent == true else { return Fix(location: nil) }
+        return await locationFix()
+    }
+
+    private func locationFix() async -> Fix? {
         locationDenied = false
         switch await location.fix() {
         case .fix(let l): return Fix(location: l)
@@ -333,7 +386,7 @@ final class BeatModel {
             switch r {
             case .ok:
                 notifier.cancel(beatId: current.beatId)
-                reminded.remove(current.beatId)
+                if spaceReminder == current.beatId { spaceReminder = nil }
                 var fresh = current
                 fresh.claim = nil
                 show(fresh)
@@ -344,7 +397,8 @@ final class BeatModel {
 
     // MARK: - Claiming
 
-    /// Claims the BEAT; `wallet` is the one the visitor chose when the account has several.
+    /// Claims the BEAT; `wallet` is the one the visitor chose when the account has several. Only the BEAT's id and,
+    /// with a pin, a location fix are needed: never another scan.
     func claim(wallet: String?) {
         guard let current else { return }
         lastAction = .claim(wallet: wallet)
@@ -352,7 +406,12 @@ final class BeatModel {
         let gen = generation
         Task {
             guard let fix = await locationIfNeeded(current) else { return }
-            let r = await api.claim(current.beatId, wallet: wallet, location: fix.location)
+            var r = await api.claim(current.beatId, wallet: wallet, location: fix.location)
+            // A space's claim that also has an event check-in is checked at the venue, as the server says
+            if case .error(let e) = r, e.code == "location_needed", fix.location == nil, current.pinned {
+                guard gen == generation, let again = await locationFix() else { return }
+                r = await api.claim(current.beatId, wallet: wallet, location: again.location)
+            }
             guard gen == generation else { return }
             switch r {
             case .ok(let updated):
@@ -363,15 +422,44 @@ final class BeatModel {
         }
     }
 
+    // MARK: - Asking again when the time is up
+
+    /// An in-person card that is counting is asked for again when its time is up (`beatClaimDueMs`), so it offers
+    /// "Claim your BEAT" without another scan.
+    private func syncRefetch() {
+        stopRefetch()
+        guard origin?.isEvent == true, case .counting = card.state, let beat = current else { return }
+        let now = wallClock()
+        guard let due = beatClaimDueMs(beat, nowMs: now) else { return }
+        let seconds = max(1, Double(due - now) / 1000)
+        let sleep = sleep
+        refetch = Task { [weak self] in
+            await sleep(seconds)
+            if Task.isCancelled { return }
+            self?.refetchNow()
+        }
+    }
+
+    private func refetchNow() {
+        guard let id = current?.beatId else { return }
+        let gen = generation
+        Task {
+            guard case .ok(let found?) = await api.beat(id), gen == generation else { return }
+            show(found)
+        }
+    }
+
+    private func stopRefetch() {
+        refetch?.cancel()
+        refetch = nil
+    }
+
     // MARK: - Check-ins and the reminder
 
-    /// The check-in timer runs only while the shown space's BEAT is being counted.
+    /// The check-in timer runs only while the chosen space's BEAT is being counted. It keeps running while the space
+    /// locks again after a moment's loss of tracking, and checks in only while the space is in view.
     private func syncCheckIns() {
-        guard case .space(let id)? = origin, id == shownSpaceId, case .counting = card.state else {
-            checkIns?.cancel()
-            checkIns = nil
-            return
-        }
+        guard case .space(let id)? = origin, id == shownSpaceId, case .counting = card.state else { return stopCheckIns() }
         if checkIns != nil { return }
         let sleep = sleep
         checkIns = Task { [weak self] in
@@ -383,29 +471,53 @@ final class BeatModel {
         }
     }
 
+    private func stopCheckIns() {
+        checkIns?.cancel()
+        checkIns = nil
+    }
+
     private func checkIn() async {
-        guard case .space(let id)? = origin, id == shownSpaceId, let beat = current else { return }
+        guard case .space(let id)? = origin, id == shownSpaceId, spaceInView, let beat = current else { return }
         let gen = generation
         let r = await api.checkIn(beat.beatId, spaceId: id)
         guard gen == generation else { return }
         switch r {
         case .ok(let updated):
             show(updated)
-            await remind(updated, atMs: wallClock())
+            if spaceInView { await remindSpace(updated) }
         case .error(let e):
             // A phone that dropped offline for a moment just checks in at the next tick; any other failure is shown and ends the loop
             guard e.code != "offline" else { return }
             card.apply(error: e)
-            checkIns?.cancel()
-            checkIns = nil
+            stopCheckIns()
         }
     }
 
-    /// At a BEAT's first check-in: asks to send notifications and sets the reminder for `atMs` plus the minimum minutes.
-    private func remind(_ beat: AppBeatCard, atMs: Int64) async {
-        guard beat.minMinutes > 0, !reminded.contains(beat.beatId) else { return }
-        reminded.insert(beat.beatId)
+    /// At the first check-in of each showing of a space: the reminder for the minutes still left, if the visitor stays.
+    private func remindSpace(_ beat: AppBeatCard) async {
+        guard spaceReminder != beat.beatId, beat.minMinutes > 0, let left = beatSecondsLeft(beat), left > 0 else { return }
+        spaceReminder = beat.beatId
+        await askPermission()
+        notifier.schedule(beatId: beat.beatId, name: beat.name, atMs: wallClock() + Int64(left) * 1000)
+    }
+
+    private func cancelSpaceReminder() {
+        guard let id = spaceReminder else { return }
+        spaceReminder = nil
+        notifier.cancel(beatId: id)
+    }
+
+    /// An in-person check-in: the reminder for when the time is up, counted from now or the BEAT's start.
+    private func remindEvent(_ beat: AppBeatCard) async {
+        let now = wallClock()
+        guard beat.minMinutes > 0, let due = beatClaimDueMs(beat, nowMs: now), due > now else { return }
+        await askPermission()
+        notifier.schedule(beatId: beat.beatId, name: beat.name, atMs: due)
+    }
+
+    private func askPermission() async {
+        if askedPermission { return }
+        askedPermission = true
         await notifier.requestPermission()
-        notifier.schedule(beatId: beat.beatId, name: beat.name, atMs: atMs + Int64(beat.minMinutes) * 60_000)
     }
 }

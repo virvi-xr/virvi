@@ -216,4 +216,60 @@ final class AppBeatApiTests: XCTestCase {
         XCTAssertEqual(r, .ok(.beat(beatId: "b1", name: "Opening Night", card: nil)))
         XCTAssertNil(t.requests[0].value(forHTTPHeaderField: "Authorization"))
     }
+
+    // MARK: a sign-in the server won't take
+
+    func testASignedInLookupTheServerRefusesTheSignInForIsAskedAgainWithoutIt() async {
+        for status in [401, 403, 503] {
+            let t = FakeTransport()
+            t.on("/api/auth/refresh") { _ in (500, nil) } // couldn't refresh: the session is kept
+            let answer: FakeTransport.Handler = { req in
+                req.value(forHTTPHeaderField: "Authorization") == nil
+                    ? (200, ["kind": "beat", "beatId": "b1", "name": "Opening Night"]) : (status, ["error": "auth_unavailable"])
+            }
+            t.on("/api/app/arcs/AB12", answer)
+            t.on("/api/app/spaces/s1/beat") { req in
+                req.value(forHTTPHeaderField: "Authorization") == nil ? (200, ["beat": self.cardJson]) : (status, ["error": "x"])
+            }
+            let (api, _) = make(t)
+            let r = await api.arc("AB12")
+            XCTAssertEqual(r, .ok(.beat(beatId: "b1", name: "Opening Night", card: nil)), "\(status)")
+            XCTAssertNil(t.requests.last { $0.url!.path.hasSuffix("/arcs/AB12") }?.value(forHTTPHeaderField: "Authorization"))
+            guard case .ok(let card?) = await api.spaceBeat("s1") else { return XCTFail("\(status)") }
+            XCTAssertEqual(card.beatId, "b1")
+        }
+    }
+
+    func testOtherRefusalsOfASignedInLookupAreNotRetried() async {
+        let t = FakeTransport()
+        t.on("/api/app/arcs/AB12") { _ in (404, ["error": "not_found"]) }
+        let (api, _) = make(t)
+        guard case .error(let e) = await api.arc("AB12") else { return XCTFail() }
+        XCTAssertEqual(e.status, 404)
+        XCTAssertEqual(t.count("/arcs/AB12"), 1)
+    }
+
+    func testAWriteIsNeverSentAnonymously() async {
+        let t = FakeTransport()
+        t.on("/api/auth/refresh") { _ in (500, nil) }
+        t.on("/claim") { _ in (503, ["error": "auth_unavailable"]) }
+        let (api, _) = make(t)
+        guard case .error(let e) = await api.claim("b1", wallet: nil, location: nil) else { return XCTFail() }
+        XCTAssertEqual(e.status, 503)
+        XCTAssertTrue(t.requests.filter { $0.url!.path.hasSuffix("/claim") }.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") != nil })
+    }
+
+    // MARK: one BEAT
+
+    func testOneBeatIsReadFromMyBeats() async {
+        let t = FakeTransport()
+        var other = cardJson
+        other["beatId"] = "b2"
+        t.on("/api/app/beats/mine") { _ in (200, ["beats": [other, self.cardJson]]) }
+        let (api, _) = make(t)
+        guard case .ok(let found?) = await api.beat("b1") else { return XCTFail() }
+        XCTAssertEqual(found.beatId, "b1")
+        let missing = await api.beat("b9")
+        XCTAssertEqual(missing, .ok(nil))
+    }
 }

@@ -27,11 +27,13 @@ public struct AppBeatCard: Equatable, Sendable {
     public var endsAt: String
     public var locationType: String
     public var venue: String?
+    /// The BEAT has a venue pin: checking in from an event ARC and claiming need the phone's location. No pin, no check.
+    public var pinned: Bool
     public var claim: AppBeatClaim?
     public var wallets: [String]
 
     public init(beatId: String, name: String, imageUrl: String, minMinutes: Int, startsAt: String, endsAt: String,
-                locationType: String, venue: String? = nil, claim: AppBeatClaim? = nil, wallets: [String] = []) {
+                locationType: String, venue: String? = nil, pinned: Bool = false, claim: AppBeatClaim? = nil, wallets: [String] = []) {
         self.beatId = beatId
         self.name = name
         self.imageUrl = imageUrl
@@ -40,6 +42,7 @@ public struct AppBeatCard: Equatable, Sendable {
         self.endsAt = endsAt
         self.locationType = locationType
         self.venue = venue
+        self.pinned = pinned
         self.claim = claim
         self.wallets = wallets
     }
@@ -81,8 +84,32 @@ public func parseAppBeatCard(_ json: Any?) -> AppBeatCard? {
     }
     return AppBeatCard(beatId: id, name: name, imageUrl: jsonString(o, "imageUrl") ?? "", minMinutes: minMinutes,
                        startsAt: jsonString(o, "startsAt") ?? "", endsAt: jsonString(o, "endsAt") ?? "",
-                       locationType: type, venue: jsonString(location, "venue"), claim: claim,
+                       locationType: type, venue: jsonString(location, "venue"), pinned: (o["pinned"] as? Bool) ?? false, claim: claim,
                        wallets: (o["wallets"] as? [String]) ?? [])
+}
+
+/// The seconds a tracked BEAT still needs: the minimum less the server's live `secondsPresent` (never below 0); nil when
+/// nothing is counting (no claim, or one that is no longer `present`).
+public func beatSecondsLeft(_ card: AppBeatCard) -> Int? {
+    guard let claim = card.claim, claim.status == "present" else { return nil }
+    return max(0, card.minMinutes * 60 - claim.secondsPresent)
+}
+
+/// When an in-person claim can be made (UTC ms): the time left counted from `nowMs` (the card's fetch), or from the
+/// BEAT's start when it hasn't started, since nothing counts before then. The claim's own check-in time isn't used: a
+/// claim started elsewhere keeps that place's. Nil when nothing is counting.
+public func beatClaimDueMs(_ card: AppBeatCard, nowMs: Int64) -> Int64? {
+    guard let left = beatSecondsLeft(card) else { return nil }
+    let from = max(nowMs, beatTimeMs(card.startsAt) ?? nowMs)
+    return left == 0 ? nowMs : from + Int64(left) * 1000
+}
+
+/// An ISO time from the server, in UTC ms.
+func beatTimeMs(_ s: String) -> Int64? {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let d = f.date(from: s) ?? ISO8601DateFormatter().date(from: s)
+    return d.map { Int64($0.timeIntervalSince1970 * 1000) }
 }
 
 public enum BeatCardState: Equatable, Sendable {
@@ -109,20 +136,13 @@ public struct BeatCard: Sendable {
 
     public init() {}
 
-    private static func endMs(_ s: String) -> Int64? {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let d = f.date(from: s) ?? ISO8601DateFormatter().date(from: s)
-        return d.map { Int64($0.timeIntervalSince1970 * 1000) }
-    }
-
     public mutating func apply(_ card: AppBeatCard?, signedIn: Bool, nowMs: Int64) {
         self.card = card
         guard let card else { return state = .hidden }
         guard signedIn else { return state = .signInToEarn(name: card.name, minutes: card.minMinutes) }
         guard let claim = card.claim else {
             // No one can start tracking a BEAT that has ended
-            if let end = Self.endMs(card.endsAt), nowMs > end { return state = .hidden }
+            if let end = beatTimeMs(card.endsAt), nowMs > end { return state = .hidden }
             return state = .track(name: card.name, minutes: card.minMinutes)
         }
         switch claim.status {
