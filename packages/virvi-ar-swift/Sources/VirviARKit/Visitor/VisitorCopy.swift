@@ -39,6 +39,25 @@ public enum VisitorCopy {
     public static let COULDNT_OPEN = "Couldn't open this space. Try again in a moment."
     public static let BAD_DATA = "Something's wrong with this space's data."
 
+    // BEATs in the app (the plan's Global Constraints, word for word)
+    public static let BEAT_TRACK = "Track my attendance"
+    public static let BEAT_SIGN_IN = "Sign in to earn this BEAT"
+    public static let BEAT_CLAIM = "Claim your BEAT"
+    public static let BEAT_WAITING = "Saved for you. Link a wallet at virvi.io and it'll be sent."
+    public static let BEAT_POOR_FIX = "Couldn't get your location accurately. Step outside or near a window and try again."
+    public static let BEAT_TRY_AGAIN = "Something went wrong. Try again in a moment."
+    public static let THE_VENUE = "the venue"
+    public static let MENU_SIGN_IN = "Sign in"
+    public static let MENU_SIGN_OUT = "Sign out"
+    public static let MENU_SIGN_HEADSET_IN = "Sign a headset in"
+
+    public static func beatAttend(minutes: Int, name: String) -> String {
+        "Attend for \(minutes) minutes to earn the \(name) BEAT."
+    }
+    public static func beatSent(name: String) -> String { "Your \(name) BEAT is in your wallet" }
+    public static func beatOutsideClaim(venue: String) -> String { "Come back to \(venue) to claim this BEAT." }
+    public static func beatOutsideCheckIn(venue: String) -> String { "You need to be at \(venue) to check in." }
+
     public static let NO_CAMERA = "Virvi AR needs camera access to find ARCs. Allow it in Settings → Apps → Virvi AR."
     public static let NO_WALL = "Can't see the wall behind this ARC. Look around the room so the phone can map it."
 }
@@ -50,4 +69,12 @@ public func reportNote(_ result: ReportResult) -> String {
     case .rateLimited: return VisitorCopy.REPORT_RATE_LIMITED
     case .failed: return VisitorCopy.REPORT_FAILED
     }
+}
+
+/// The consent text's version, stored with each app claim: `BEAT_APP_CONSENT_VERSION` in packages/shared/src/beats.ts.
+public let BEAT_APP_CONSENT_VERSION = 1
+
+/// What the visitor agrees to before tracking a BEAT: `beatAppConsentText(name)` in packages/shared/src/beats.ts, word for word.
+public func beatAppConsentText(_ name: String) -> String {
+    "To track your attendance for the \(name) BEAT, Virvi stores your account, how long you're here and, when you claim, the wallet you choose. Virvi checks your location only when you check in and when you claim, and doesn't keep it. The hosts of this event will see your name and time. If you claim, your wallet, this BEAT and the time it was sent are recorded on Polygon, a public blockchain: anyone can see that record, and nobody can delete it. You can stop tracking at any time before you claim, which deletes what was stored."
 }

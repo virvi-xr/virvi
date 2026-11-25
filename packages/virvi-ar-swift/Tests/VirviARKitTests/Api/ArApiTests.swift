@@ -181,4 +181,52 @@ final class ArApiTests: XCTestCase {
         for s in [400, 404, 413] { XCTAssertEqual(analyticsResultFor(status: s), .drop) }
         for s in [408, 429, 500, 503] { XCTAssertEqual(analyticsResultFor(status: s), .retry) }
     }
+
+    // MARK: signed-in feed
+
+    private func signedInApi(_ t: FakeTransport, signedIn: Bool = true) -> ArApi {
+        let store = MemoryStore(signedIn ? AppTokens(accessToken: "tok", refreshToken: "r1", userName: nil) : nil)
+        return ArApi(baseUrl: base, transport: t, appVersion: "7", session: AppSession(baseUrl: base, transport: t, store: store))
+    }
+
+    func testFeedCarriesTheBearerOnlyWhenSignedIn() async {
+        let t = FakeTransport()
+        t.on("/feed") { _ in (200, self.feedBody) }
+        _ = await signedInApi(t).feed(spaceId: "s", since: nil)
+        XCTAssertEqual(t.requests[0].value(forHTTPHeaderField: "Authorization"), "Bearer tok")
+
+        let t2 = FakeTransport()
+        t2.on("/feed") { _ in (200, self.feedBody) }
+        _ = await signedInApi(t2, signedIn: false).feed(spaceId: "s", since: nil)
+        XCTAssertNil(t2.requests[0].value(forHTTPHeaderField: "Authorization"))
+        _ = await api(t2).feed(spaceId: "s", since: nil)
+        XCTAssertNil(t2.requests[1].value(forHTTPHeaderField: "Authorization"))
+    }
+
+    func testOtherRequestsStayAnonymousEvenSignedIn() async {
+        let t = FakeTransport()
+        t.on("/by-code/AB") { _ in (200, self.lookupBody) }
+        _ = await signedInApi(t).lookup(code: "AB")
+        XCTAssertNil(t.requests[0].value(forHTTPHeaderField: "Authorization"))
+    }
+
+    func testFeedRefreshesOnceOn401ThenKeepsGoing() async {
+        let t = FakeTransport()
+        t.on("/api/auth/refresh") { _ in (200, ["accessToken": "new"]) }
+        t.on("/feed") { req in req.value(forHTTPHeaderField: "Authorization") == "Bearer new" ? (200, self.feedBody) : (401, nil) }
+        let r = await signedInApi(t).feed(spaceId: "s", since: nil)
+        guard case .ok = r else { return XCTFail("\(r)") }
+        XCTAssertEqual(t.count("/api/auth/refresh"), 1)
+    }
+
+    func testFeedFallsBackToAnonymousWhenSignInIsBroken() async {
+        let t = FakeTransport()
+        t.on("/api/auth/refresh") { _ in (401, ["error": "Invalid or expired refresh token"]) }
+        t.on("/feed") { req in req.value(forHTTPHeaderField: "Authorization") == nil ? (200, self.feedBody) : (401, nil) }
+        let a = signedInApi(t)
+        let r = await a.feed(spaceId: "s", since: nil)
+        guard case .ok = r else { return XCTFail("\(r)") }
+        XCTAssertEqual(t.count("/feed"), 2)
+        XCTAssertNil(t.requests.last!.value(forHTTPHeaderField: "Authorization"))
+    }
 }

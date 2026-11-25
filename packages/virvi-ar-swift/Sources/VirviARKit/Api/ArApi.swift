@@ -75,20 +75,24 @@ public struct VisitEvent: Equatable, Sendable {
     }
 }
 
-/// The AR endpoints of a Virvi server (the visitor routes only; anonymous, no token), as the Quest's ArApi.kt.
+/// The AR endpoints of a Virvi server (the visitor routes only), as the Quest's ArApi.kt. Anonymous, except that the feed
+/// carries the account's token when `session` is signed in (the feed then knows who is present); if that token won't do
+/// even after a refresh, the feed is asked anonymously: sign-in trouble never stops a space.
 public final class ArApi: Sendable {
     public static let platform = "ar-ios"
 
     private let base: String
     private let transport: HttpTransport
     private let appVersion: String
+    private let session: AppSession?
 
-    public init(baseUrl: URL, transport: HttpTransport, appVersion: String) {
+    public init(baseUrl: URL, transport: HttpTransport, appVersion: String, session: AppSession? = nil) {
         var b = baseUrl.absoluteString.trimmingCharacters(in: .whitespacesAndNewlines)
         while b.hasSuffix("/") { b.removeLast() }
         base = b
         self.transport = transport
         self.appVersion = appVersion
+        self.session = session
     }
 
     /// `GET /api/ar/markers/by-code/:code`
@@ -98,7 +102,7 @@ public final class ArApi: Sendable {
 
     /// `GET /api/ar/spaces/:id/feed?since=`: the server holds the request up to 25 s until the version changes.
     public func feed(spaceId: String, since: String?) async -> ApiResult<ArFeedSnapshot> {
-        await get("/api/ar/spaces/\(enc(spaceId))/feed?since=\(enc(since ?? ""))", timeout: 40, parse: parseFeed)
+        await get("/api/ar/spaces/\(enc(spaceId))/feed?since=\(enc(since ?? ""))", timeout: 40, signedIn: true, parse: parseFeed)
     }
 
     /// `POST /api/ar/spaces/:id/report`; offline is `.failed`.
@@ -132,10 +136,10 @@ public final class ArApi: Sendable {
         return r
     }
 
-    private func get<T>(_ path: String, timeout: TimeInterval, parse: (Data) -> T?) async -> ApiResult<T> {
+    private func get<T>(_ path: String, timeout: TimeInterval, signedIn: Bool = false, parse: (Data) -> T?) async -> ApiResult<T> {
         guard let r = request(path, method: "GET", timeout: timeout) else { return .offline }
         do {
-            let (data, response) = try await transport.send(r)
+            let (data, response) = try await send(r, signedIn: signedIn)
             switch response.statusCode {
             case 404: return .notFound
             case 429: return .rateLimited
@@ -145,6 +149,19 @@ public final class ArApi: Sendable {
         } catch {
             return .offline
         }
+    }
+
+    /// With `signedIn` and a signed-in session, sends with its token; a 401 that survives the session's one refresh is asked again anonymously.
+    private func send(_ r: URLRequest, signedIn: Bool) async throws -> (Data, HTTPURLResponse) {
+        if signedIn, let session, session.signedIn {
+            let answer = try await session.authorized { token in
+                var a = r
+                a.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                return try await transport.send(a)
+            }
+            if let answer, answer.1.statusCode != 401 { return answer }
+        }
+        return try await transport.send(r)
     }
 
     /// The HTTP status of a JSON POST, or nil when the server could not be reached.
