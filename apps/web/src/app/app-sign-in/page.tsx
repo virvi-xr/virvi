@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 import { useApi } from '@/lib/api'
 import { signinPath } from '@/lib/landing-route'
-import { appHandoffErrorMessage, appSignInRedirect } from '@/lib/app-sign-in'
+import { APP_CODE_SIGN_IN_HINT, appHandoffErrorMessage, appSignInRedirect } from '@/lib/app-sign-in'
 
 type Phase = 'confirm' | 'working' | 'sent' | 'error'
 
@@ -70,6 +70,7 @@ export default function AppSignInPage() {
             <button type="button" onClick={() => setPhase('confirm')} className="text-sm text-blue-400 underline underline-offset-2 hover:text-blue-300">Try again</button>
           </>
         )}
+        <p className="mt-4 border-t border-gray-800 pt-3 text-xs text-gray-400">{APP_CODE_SIGN_IN_HINT}</p>
       </div>
     </main>
   )

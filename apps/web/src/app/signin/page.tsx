@@ -3,6 +3,7 @@ import { getBrowserWallet, useAuth } from '@/lib/auth'
 import { API_URL } from '@/lib/config'
 import { safeNextPath } from '@/lib/next-path'
 import { startOAuth } from '@/lib/oauth-start'
+import { APP_CODE_SIGN_IN_HINT, isAppSignInNext } from '@/lib/app-sign-in'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useEffect, useState } from 'react'
 import { BrandMark } from '@/components/BrandMark'
@@ -154,6 +155,8 @@ function SignIn() {
             </div>
           </>
         )}
+
+        {isAppSignInNext(dest) && <p className="mt-4 text-center text-sm text-gray-400">{APP_CODE_SIGN_IN_HINT}</p>}
 
         <p className="mt-4 text-center text-sm text-gray-500">
           {mode === 'login' ? (

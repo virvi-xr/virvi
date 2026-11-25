@@ -16,3 +16,11 @@ export function appHandoffErrorMessage(err: unknown): string {
   if (status === 429) return 'Too many tries. Wait a moment, then go back to the Virvi app and try again.'
   return 'Something went wrong. Go back to the Virvi app and try again.'
 }
+
+/** For a wallet-only account, who can't use the browser hand-off: the app's own code sign-in, approved on a computer. */
+export const APP_CODE_SIGN_IN_HINT = 'Use a wallet to sign in? Choose Sign in with a code in the Virvi app, then approve it at virvi.io/pair on a computer.'
+
+/** Whether a sign-in's `next` is the app sign-in page (with or without the trailing slash or a query). */
+export function isAppSignInNext(next: string | null | undefined): boolean {
+  return !!next && /^\/app-sign-in\/?(?:[?#]|$)/.test(next)
+}

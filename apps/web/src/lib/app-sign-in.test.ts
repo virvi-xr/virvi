@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { appSignInRedirect, appHandoffErrorMessage, APP_SIGNED_IN_MESSAGE } from './app-sign-in'
+import { appSignInRedirect, appHandoffErrorMessage, APP_SIGNED_IN_MESSAGE, APP_CODE_SIGN_IN_HINT, isAppSignInNext } from './app-sign-in'
 import { safeNextPath } from './next-path'
 import { headsetPairView, pairPageHref, visitorApprovalCopy } from './pairing'
 import { signUpButtons } from './trial'
@@ -21,6 +21,20 @@ describe('appSignInRedirect', () => {
 describe('the /app-signed-in page', () => {
   it('says only to return to the app, never anything about the code', () => {
     expect(APP_SIGNED_IN_MESSAGE).toBe('Return to the Virvi app.')
+  })
+})
+
+describe('signing in to the app with a code', () => {
+  it('tells a wallet-only account how', () => {
+    expect(APP_CODE_SIGN_IN_HINT).toBe('Use a wallet to sign in? Choose Sign in with a code in the Virvi app, then approve it at virvi.io/pair on a computer.')
+  })
+  it('is shown on the sign-in page only when the person is on their way to /app-sign-in', () => {
+    expect(isAppSignInNext('/app-sign-in')).toBe(true)
+    expect(isAppSignInNext('/app-sign-in/')).toBe(true)
+    expect(isAppSignInNext('/app-sign-in/?x=1')).toBe(true)
+    expect(isAppSignInNext('/scenes')).toBe(false)
+    expect(isAppSignInNext('/app-sign-in-other')).toBe(false)
+    expect(isAppSignInNext(null)).toBe(false)
   })
 })
 
