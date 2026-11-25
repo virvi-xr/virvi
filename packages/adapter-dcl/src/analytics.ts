@@ -23,6 +23,7 @@ import { PARCEL_RE, type AnalyticsProbe, type AnalyticsSceneRef, type Vec3, DCL_
 import { DclAdapter } from './DclAdapter'
 import { resolveTargetLabel } from './target-label'
 import { mountConsentOverlay } from './consent/ConsentOverlay.js'
+import { consentRequestFor } from './consent/request.js'
 
 // The HUD's real release (it said 2.0.0 for every release before)
 const SDK_VERSION = DCL_HUD_VERSION
@@ -213,7 +214,8 @@ async function start(opts: { env?: 'dev' | 'staging' | 'prod'; apiUrl?: string; 
     // The visitor notice (GDPR notice): nothing leaves the scene until the visitor accepts, and nothing after a decline
     const consent = new AnalyticsConsent({
       apiUrl,
-      request: (url, init) => transport.request!(url, init),
+      // A wallet's decision goes over a signed request only (never an unsigned fallback as the wallet)
+      request: consentRequestFor(visitorId, (url, init) => adapter.signedOnlyRequest(url, init), (url, init) => transport.request!(url, init)),
       visitorId,
       scene,
       platform: 'decentraland',

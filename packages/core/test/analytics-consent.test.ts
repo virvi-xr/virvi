@@ -54,7 +54,7 @@ describe('AnalyticsConsent', () => {
   })
 
   it('a failed lookup (network, server error, odd answer) counts as no decision: keep buffering and ask', async () => {
-    for (const answer of [new Error('offline'), { status: 0 }, { status: 503 }, { status: 200, body: 'nope' },
+    for (const answer of [new Error('offline'), { status: 0 }, { status: 503 }, { status: 401, body: { error: 'signature_required' } }, { status: 200, body: 'nope' },
       { status: 200, body: { version: ANALYTICS_CONSENT_VERSION + 1, decision: 'accept' } }]) {
       const { consent } = rig([answer as TransportResult | Error])
       await consent.load()
@@ -101,6 +101,14 @@ describe('AnalyticsConsent', () => {
     await consent.decide('accept')
     expect(calls.filter((c) => c.method === 'POST')).toHaveLength(3)
     expect(waits.length).toBe(2)
+    expect(consent.sending).toBe(true)
+  })
+
+  it('does not retry a record refused for want of a signature (401), and the decision still holds for the visit', async () => {
+    const { consent, calls } = rig([{ status: 200, body: { version: ANALYTICS_CONSENT_VERSION, decision: null } }, { status: 401, body: { error: 'signature_required' } }])
+    await consent.load()
+    await consent.decide('accept')
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1)
     expect(consent.sending).toBe(true)
   })
 

@@ -213,6 +213,20 @@ export class DclAdapter implements VirviPlatformAdapter {
     }
   }
 
+  /**
+   * A signed request with no unsigned fallback: throws when signedFetch isn't there or fails, so a caller that must
+   * prove the wallet (the visitor notice) never goes out unsigned. A GET or HEAD goes with no body.
+   */
+  async signedOnlyRequest(url: string, init: { method: string; body: string; headers?: Record<string, string> }): Promise<{ status: number; body: string }> {
+    const { signedFetch } = await import('~system/SignedFetch' as any)
+    const bodyless = /^(GET|HEAD)$/i.test(init.method)
+    const response = await signedFetch({
+      url,
+      init: { method: init.method, headers: { 'Content-Type': 'application/json', ...init.headers }, ...(bodyless ? {} : { body: init.body }) },
+    })
+    return { status: response.ok ? 200 : (response.status || 500), body: response.body || '' }
+  }
+
   async getSceneInfo(): Promise<SceneInfo> {
     await this.sceneFilesReady
     try {
