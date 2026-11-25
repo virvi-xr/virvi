@@ -98,6 +98,8 @@ class BeatController(
     val id = shownSpaceId ?: return
     consentText = null
     tracksAfterConsent = false
+    // What the last account tried is not the next one's to retry
+    lastAction = null
     load(id)
   }
 

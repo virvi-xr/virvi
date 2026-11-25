@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createHash } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
 import { getAddress } from 'ethers'
-import { AR_FEED, BEAT_APP_CONSENT_VERSION, BEAT_CONSENT_VERSION } from '@virvixr/shared'
+import { AR_FEED, BEAT_APP_CONSENT_VERSION, BEAT_CONSENT_VERSION, ringCodeOf } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { arDevices, arSpaces, beatClaims, beats, beatScenes, mediaAssets, userAuthMethods } from '../src/db/schema.js'
+import { arDevices, arSpaces, beatArcs, beatClaims, beats, beatScenes, mediaAssets, userAuthMethods } from '../src/db/schema.js'
 import { issueScenePass } from '../src/auth/scene-pass.js'
 import { arLiveSince, markBeatLive } from '../src/beats/live.js'
 import { checkInBeat, takenCount } from '../src/beats/visitor.js'
@@ -322,6 +322,66 @@ describe('BEATs in AR spaces with the Virvi app', () => {
       await app.inject({ method: 'POST', url: `/api/ar/pair/${start.json().code}/approve`, headers: { authorization: `Bearer ${tokenFor(u)}` }, payload: {} })
       const [row] = await db.select().from(arDevices).where(eq(arDevices.status, 'approved'))
       expect((await questTrack(u, row.id, b)).statusCode).toBe(401)
+    })
+
+    const questClaim = (user: TestUser, deviceId: string, b: { id: string }, ip: string, headers: Record<string, string> = {}) =>
+      app.inject({
+        method: 'POST', url: `/api/app/beats/${b.id}/claim`, payload: '{}', remoteAddress: ip,
+        headers: { authorization: `Bearer ${tokenFor(user)}`, 'content-type': 'application/json', 'x-virvi-device': deviceId, ...headers },
+      })
+
+    it('a quest: claim keeps the in-world network cap (429), while an attested claim from the same IP still succeeds', async () => {
+      ;(config as any).beats = { ...config.beats, claimsPerIp: 1, newWalletsPerIpHour: 1000 }
+      const ip = '198.51.100.77'
+      const b = await seed()
+      const q1 = await createUser({ wallet: randomWallet() })
+      const d1 = await pair(q1)
+      expect((await questTrack(q1, d1, b)).statusCode).toBe(200)
+      await db.update(beatClaims).set({ secondsPresent: 300 }).where(eq(beatClaims.userId, q1.id))
+      const ok = await questClaim(q1, d1, b, ip)
+      expect(ok.statusCode, ok.body).toBe(200)
+      const q2 = await createUser({ wallet: randomWallet() })
+      const d2 = await pair(q2)
+      expect((await questTrack(q2, d2, b)).statusCode).toBe(200)
+      await db.update(beatClaims).set({ secondsPresent: 300 }).where(eq(beatClaims.userId, q2.id))
+      const refused = await questClaim(q2, d2, b, ip)
+      expect([refused.statusCode, refused.json().error]).toEqual([429, 'too_many_from_network'])
+      expect((await rowOf(b.id, q2.id)).status).toBe('present')
+      // An App Attest claim from the same network is not capped
+      const attested = await phone({ ip })
+      expect((await track(attested, b)).statusCode).toBe(200)
+      await db.update(beatClaims).set({ secondsPresent: 300 }).where(eq(beatClaims.userId, attested.user.id))
+      const res = await claim(attested, b)
+      expect(res.statusCode, res.body).toBe(200)
+    })
+
+    it('a quest: key tracking an event ARC is 403 phone_only, and so is claiming an event claim with it', async () => {
+      const b = await seed({ locationType: 'in_person', locationVenue: 'The Hall', pinLat: 38.7, pinLng: -9.1, pinRadiusM: 150 })
+      await db.insert(beatArcs).values({ beatId: b.id, ringId: 91_001, code: ringCodeOf(91_001) })
+      const u = await createUser({ wallet: randomWallet() })
+      const deviceId = await pair(u)
+      const raw = JSON.stringify({ consentVersion: BEAT_APP_CONSENT_VERSION, arcCode: ringCodeOf(91_001), location: { lat: 38.7, lng: -9.1, accuracyM: 10 } })
+      const res = await app.inject({
+        method: 'POST', url: `/api/app/beats/${b.id}/track`, payload: raw,
+        headers: { authorization: `Bearer ${tokenFor(u)}`, 'content-type': 'application/json', 'x-virvi-device': deviceId },
+      })
+      expect([res.statusCode, res.json().error, res.json().message]).toEqual([403, 'phone_only', "Scan this BEAT's ARC with the Virvi app on your phone."])
+      expect(await rows(b.id)).toHaveLength(0)
+      // An event claim made on a phone, then claimed with a quest key, is refused too
+      const p = await phone({ user: u })
+      expect((await write(p, 'POST', `/api/app/beats/${b.id}/track`, { consentVersion: BEAT_APP_CONSENT_VERSION, arcCode: ringCodeOf(91_001), location: { lat: 38.7, lng: -9.1, accuracyM: 10 } })).statusCode).toBe(200)
+      await db.update(beatClaims).set({ secondsPresent: 300 }).where(eq(beatClaims.userId, u.id))
+      const c = await questClaim(u, deviceId, b, '127.0.0.1')
+      expect([c.statusCode, c.json().error]).toEqual([403, 'phone_only'])
+    })
+
+    it('an uppercase X-Virvi-Device gives the same quest:<lowercase id> key', async () => {
+      const b = await seed()
+      const u = await createUser({ wallet: randomWallet() })
+      const deviceId = await pair(u)
+      const res = await questTrack(u, deviceId.toUpperCase(), b)
+      expect(res.statusCode, res.body).toBe(200)
+      expect((await rowOf(b.id, u.id)).installKeyId).toBe(`quest:${deviceId.toLowerCase()}`)
     })
 
     it('an App Attest header wins: a device header beside it is not a second way in', async () => {

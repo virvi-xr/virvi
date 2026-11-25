@@ -272,10 +272,10 @@ const PROOFS: InstallProof[] = [{ header: 'x-virvi-attest', verify: appAttestIns
  */
 async function questInstall(request: FastifyRequest, deviceId: string): Promise<string> {
   if (!isUuid(deviceId)) throw attestRequired()
-  const [row] = await db.select({ purpose: arDevices.purpose, userId: arDevices.userId, status: arDevices.status, codeHash: arDevices.codeHash })
+  const [row] = await db.select({ id: arDevices.id, purpose: arDevices.purpose, userId: arDevices.userId, status: arDevices.status, codeHash: arDevices.codeHash })
     .from(arDevices).where(eq(arDevices.id, deviceId))
   if (!row || row.purpose !== 'visitor' || row.status !== 'revoked' || row.codeHash !== null || !row.userId || row.userId !== request.user.id) throw attestRequired()
-  return `quest:${deviceId}`
+  return `quest:${row.id}`
 }
 
 /**

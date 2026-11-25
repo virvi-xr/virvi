@@ -255,6 +255,22 @@ class BeatControllerTest {
   }
 
   @Test
+  fun `the account changing forgets what to retry`() {
+    routes.spaceCard = BeatResult.Ok(card())
+    StoredBeatConsent(store) { "u1" }.accept()
+    routes.tracks += BeatResult.Error(AppBeatError(403, "verify_first", "Verify first."))
+    val c = controller(checkInMs = 10_000)
+    c.spaceShown("s1")
+    waitFor("card") { view != null }
+    c.primary()
+    waitFor("error") { view?.canRetry == true }
+    c.accountChanged()
+    waitFor("track") { view?.button == "Track my attendance" }
+    c.retry() // shows the card as the server gave it; sends no track
+    assertEquals(1, routes.calls.count { it.startsWith("track") })
+  }
+
+  @Test
   fun `an answer for a space that has gone is dropped`() {
     routes.spaceCard = BeatResult.Ok(card())
     val c = controller()

@@ -42,6 +42,9 @@ const SHOWN: BeatClaimStatus[] = ['present', 'waiting', 'claimed', 'minting', 'm
 const notFound = () => new BeatError(404, 'not_found', 'BEAT not found.')
 const spaceNotFound = () => new BeatError(404, 'not_found', 'AR space not found.')
 const notTracking = () => new BeatError(404, 'not_tracking', "You're not tracking this BEAT.")
+const isQuestKey = (key: string | null | undefined) => !!key && key.startsWith('quest:')
+/** A Quest has no ARC to scan and no location: an event BEAT with a `quest:` install key can only be a forged request. */
+const phoneOnly = () => new BeatError(403, 'phone_only', "Scan this BEAT's ARC with the Virvi app on your phone.")
 const thisDevice = () => new BeatError(409, 'this_device', 'This phone already has this BEAT.')
 const walletHasIt = () => new BeatError(409, 'wallet_has_it', 'This wallet already has this BEAT.')
 const allClaimed = () => new BeatError(409, 'all_claimed', 'All of these BEATs have been claimed.')
@@ -190,6 +193,7 @@ export async function appTrack(beatId: string, t: AppTrack, now = new Date()): P
   } else {
     b = await visibleBeat(beatId)
     source = 'app_event'
+    if (isQuestKey(t.installKeyId)) throw phoneOnly()
     await requireBeatArc(b.id, t.via.arcCode)
   }
   if (t.consentVersion !== BEAT_APP_CONSENT_VERSION) throw new BeatError(400, 'bad_consent', 'Update the Virvi app to earn this BEAT.')
@@ -281,7 +285,8 @@ export interface AppClaim {
  * else the claim's own (one started in Decentraland), else the account's only wallet that can collect BEATs; several
  * → 409 `choose_wallet` with them; none → the claim waits for one (`waiting`, holding its copy). A blocked wallet, or
  * one another claim of this BEAT holds, is refused. A claim started in the app has no per-network limits; one started
- * in Decentraland keeps them (BEAT_CLAIMS_PER_IP and the new-wallet limit, as claimBeat). A claim already further along
+ * in Decentraland keeps them (BEAT_CLAIMS_PER_IP and the new-wallet limit, as claimBeat), and so does a claim with a
+ * Quest's key (`quest:`, no App Attest behind it). An event BEAT refuses a Quest key (403 `phone_only`). A claim already further along
  * is returned as it is.
  */
 export async function appClaim(beatId: string, c: AppClaim, now = new Date()): Promise<AppBeatCard> {
@@ -292,6 +297,7 @@ export async function appClaim(beatId: string, c: AppClaim, now = new Date()): P
   if (pre.status === 'present') {
     // Before asking which wallet: a claim that can't go yet says so first (checked again under the lock)
     checkClaimTime(seen, pre, now)
+    if (pre.source === 'app_event' && (isQuestKey(c.installKeyId) || isQuestKey(pre.installKeyId))) throw phoneOnly()
     if (pre.source === 'app_event') requireAtVenue(seen, c.location, `Come back to ${venueOf(seen)} to claim this BEAT.`)
     if ((await takenCount(db, seen.id)) >= seen.supplyCap) throw allClaimed()
     if (c.wallet !== undefined && c.wallet !== null) {
@@ -315,6 +321,8 @@ export async function appClaim(beatId: string, c: AppClaim, now = new Date()): P
       if (!claim) throw notTracking()
       if (claim.status !== 'present') return
       checkClaimTime(b, claim, now)
+      const quest = isQuestKey(c.installKeyId) || isQuestKey(claim.installKeyId)
+      if (claim.source === 'app_event' && quest) throw phoneOnly()
       if (claim.source === 'app_event') requireAtVenue(b, c.location, `Come back to ${venueOf(b)} to claim this BEAT.`)
       if ((await takenCount(tx, b.id)) >= b.supplyCap) throw allClaimed()
       if (wallet) {
@@ -327,7 +335,8 @@ export async function appClaim(beatId: string, c: AppClaim, now = new Date()): P
       }
       // A claim started in Decentraland keeps the in-world network limits wherever it is claimed (only app-started claims
       // skip them): the per-network cap here, and the new-wallet limit last, since it is kept in memory, not in this transaction
-      if (!claim.source.startsWith('app_')) {
+      // A Quest has no App Attest, so its claims are treated like in-world ones: they keep the network limits too
+      if (!claim.source.startsWith('app_') || quest) {
         await chargeClaimNetwork(tx, b, c.ip)
         if (wallet) await checkNewWallet(c.ip, wallet, now)
       }
