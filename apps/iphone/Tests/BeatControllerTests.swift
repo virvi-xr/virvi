@@ -518,14 +518,53 @@ final class BeatControllerTests: XCTestCase {
         myBeats.open(rows[0])
         XCTAssertEqual(beats.card.state, .claimable(name: "Opening Night"))
         XCTAssertEqual(beats.origin, .beat("b1"))
-        claimAnswers.value = [(200, ["beat": cardJson(claim: claim("claimed", seconds: 300))])]
+        // Its claim has an event check-in: the server asks for the location, and the app claims once more with it
+        claimAnswers.value = [(400, ["error": "location_needed", "message": "Your location is needed to check in at this event."]),
+                              (200, ["beat": cardJson(claim: claim("claimed", seconds: 300))])]
         beats.primaryAction()
         await until("sent") { beats.card.state == .sent(name: "Opening Night") }
         XCTAssertEqual(location.asked, 1)
+        XCTAssertNil(body(requests("/claim")[0])["location"], "not asked before the server needs it")
+        XCTAssertNotNil(body(requests("/claim")[1])["location"])
         XCTAssertEqual(requests("/claim").first?.url?.path, "/api/app/beats/b1/claim")
         XCTAssertTrue(transport.requests.allSatisfy { !$0.url!.path.contains("/api/app/arcs/") }, "no scan at all")
         beats.closeEvent()
         XCTAssertFalse(beats.visible)
+    }
+
+    func testAPinnedBeatFromMyBeatsWithNoEventCheckInClaimsWithoutAskingForTheLocation() async {
+        let card = parseAppBeatCard(cardJson(claim: claim("present", seconds: 300)))!
+        XCTAssertTrue(card.pinned)
+        beats.openBeat(card)
+        claimAnswers.value = [(200, ["beat": cardJson(claim: claim("claimed", seconds: 300))])]
+        beats.primaryAction()
+        await until("sent") { beats.card.state == .sent(name: "Opening Night") }
+        XCTAssertEqual(location.asked, 0, "no prompt: the claim was earned in a space")
+        XCTAssertNil(body(requests("/claim")[0])["location"])
+    }
+
+    func testACardWhoseTimeCantGrowHereIsAskedForAtMostEvery30SecondsAndThenLeftAlone() async throws {
+        wallMs = startsMs + 3_600_000
+        // A space's BEAT opened from My BEATs, 10 s short: its time grows only in the space
+        let card = parseAppBeatCard(cardJson(claim: claim("present", seconds: 290), type: "scene"))!
+        mineCards.value = [cardJson(claim: claim("present", seconds: 290), type: "scene")]
+        beats.openBeat(card)
+        await until("the wait") { sleeper.waiting == 1 }
+        XCTAssertEqual(sleeper.durations, [30], "never sooner than 30 s")
+        wallMs += 30_000
+        sleeper.release()
+        await until("the refetch") { transport.count("/api/app/beats/mine") == 1 }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(beats.card.state, .counting(name: "Opening Night", minutesLeft: 1))
+        // Any wait left over was cancelled: letting it go asks for nothing
+        wallMs += 30_000
+        sleeper.release()
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(transport.count("/api/app/beats/mine"), 1, "no progress: not asked for again by itself")
+
+        // Coming back to the app still asks
+        beats.appBecameActive()
+        await until("asked again") { transport.count("/api/app/beats/mine") == 2 }
     }
 
     func testATappedReminderOpensItsBeatsCard() async {

@@ -353,10 +353,11 @@ final class BeatModel {
         }
     }
 
-    /// The fix a BEAT with a venue pin needs away from a space (a `Fix` with no location when none is needed: no pin,
-    /// or the card of a space), nil when it couldn't be had (the card says why).
+    /// The fix a BEAT with a venue pin needs when its event ARC was scanned here (a `Fix` with no location when none is
+    /// needed: no pin, a space's card, or one of the visitor's own BEATs, whose claim may have no event check-in; the
+    /// server's `location_needed` then asks for one), nil when it couldn't be had (the card says why).
     private func locationIfNeeded(_ beat: AppBeatCard) async -> Fix? {
-        guard beat.pinned, origin?.isEvent == true else { return Fix(location: nil) }
+        guard beat.pinned, case .arc? = origin else { return Fix(location: nil) }
         return await locationFix()
     }
 
@@ -407,7 +408,7 @@ final class BeatModel {
         Task {
             guard let fix = await locationIfNeeded(current) else { return }
             var r = await api.claim(current.beatId, wallet: wallet, location: fix.location)
-            // A space's claim that also has an event check-in is checked at the venue, as the server says
+            // A claim with an event check-in (a space's, or one opened from My BEATs) is checked at the venue, as the server says
             if case .error(let e) = r, e.code == "location_needed", fix.location == nil, current.pinned {
                 guard gen == generation, let again = await locationFix() else { return }
                 r = await api.claim(current.beatId, wallet: wallet, location: again.location)
@@ -424,14 +425,17 @@ final class BeatModel {
 
     // MARK: - Asking again when the time is up
 
-    /// An in-person card that is counting is asked for again when its time is up (`beatClaimDueMs`), so it offers
-    /// "Claim your BEAT" without another scan.
+    /// Never asked for again sooner than this: a card whose time can't grow here would otherwise be asked every second.
+    static let refetchFloorS: Double = 30
+
+    /// An in-person card that is counting is asked for again when its time is up (`beatClaimDueMs`, at least 30 s on),
+    /// so it offers "Claim your BEAT" without another scan.
     private func syncRefetch() {
         stopRefetch()
         guard origin?.isEvent == true, case .counting = card.state, let beat = current else { return }
         let now = wallClock()
         guard let due = beatClaimDueMs(beat, nowMs: now) else { return }
-        let seconds = max(1, Double(due - now) / 1000)
+        let seconds = max(Self.refetchFloorS, Double(due - now) / 1000)
         let sleep = sleep
         refetch = Task { [weak self] in
             await sleep(seconds)
@@ -440,12 +444,16 @@ final class BeatModel {
         }
     }
 
+    /// Asks for the card again. One that came back with no progress and still counting (a space's BEAT away from its
+    /// space, or a claim past its end) isn't asked for again by itself; coming back to the app or opening it still does.
     private func refetchNow() {
         guard let id = current?.beatId else { return }
+        let before = current?.claim?.secondsPresent
         let gen = generation
         Task {
             guard case .ok(let found?) = await api.beat(id), gen == generation else { return }
             show(found)
+            if case .counting = card.state, found.claim?.secondsPresent == before { stopRefetch() }
         }
     }
 
