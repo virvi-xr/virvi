@@ -5,6 +5,8 @@ const APPLE_ISSUER = 'https://appleid.apple.com'
 const APPLE_KEYS_URL = `${APPLE_ISSUER}/auth/keys`
 const APPLE_TOKEN_URL = `${APPLE_ISSUER}/auth/token`
 const JWKS_TTL_MS = 3600_000
+/** At most one fetch of Apple's keys a minute for a key id the cached set doesn't have. */
+const JWKS_REFETCH_MIN_MS = 60_000
 
 export interface AppleIdentity { sub: string; email: string | null; emailVerified: boolean }
 export interface AppleJwk { kty: string; kid?: string; alg?: string; [k: string]: unknown }
@@ -26,6 +28,11 @@ export function buildAppleClientSecret(c: AppleSigninConfig, nowMs = Date.now())
   return `${input}.${b64u(sig)}`
 }
 
+/** The id_token names a key the given set doesn't have (Apple may have rotated its keys). */
+export class AppleUnknownKeyError extends Error {
+  constructor() { super('unknown signing key') }
+}
+
 /** Checks an Apple id_token's signature against the JWKS, its issuer, audience (our service id) and expiry. Throws if anything is off. */
 export function verifyAppleIdToken(idToken: string, jwks: AppleJwks, nowMs = Date.now()): AppleIdentity {
   const parts = idToken.split('.')
@@ -38,7 +45,7 @@ export function verifyAppleIdToken(idToken: string, jwks: AppleJwks, nowMs = Dat
   } catch { throw new Error('malformed id_token') }
   if (header.alg !== 'RS256' && header.alg !== 'ES256') throw new Error('unsupported id_token algorithm')
   const jwk = jwks.keys.find((k) => k.kid === header.kid && (!k.alg || k.alg === header.alg))
-  if (!jwk) throw new Error('unknown signing key')
+  if (!jwk) throw new AppleUnknownKeyError()
   const key = crypto.createPublicKey({ key: jwk as crypto.JsonWebKey, format: 'jwk' })
   const ok = crypto.verify('sha256', Buffer.from(`${parts[0]}.${parts[1]}`), header.alg === 'ES256' ? { key, dsaEncoding: 'ieee-p1363' } : key, Buffer.from(parts[2], 'base64url'))
   if (!ok) throw new Error('bad id_token signature')
@@ -52,15 +59,28 @@ export function verifyAppleIdToken(idToken: string, jwks: AppleJwks, nowMs = Dat
 }
 
 let jwksCache: { at: number; jwks: AppleJwks } | null = null
+let lastRefetchAt = -Infinity
+
+/** Test hook: forgets the cached keys and the last refetch. */
+export function resetAppleKeysForTests(): void {
+  jwksCache = null
+  lastRefetchAt = -Infinity
+}
 
 /** The network calls, replaceable in tests. */
 export const appleClient = {
-  async fetchJwks(): Promise<AppleJwks> {
-    if (jwksCache && Date.now() - jwksCache.at < JWKS_TTL_MS) return jwksCache.jwks
+  /** Apple's current keys, from the network. */
+  async downloadJwks(): Promise<AppleJwks> {
     const res = await fetch(APPLE_KEYS_URL, { signal: AbortSignal.timeout(10_000) })
     if (!res.ok) throw new Error(`Apple keys request failed (${res.status})`)
     const jwks = (await res.json()) as AppleJwks
     if (!Array.isArray(jwks?.keys)) throw new Error('Apple keys response malformed')
+    return jwks
+  },
+  /** The keys, cached for an hour; `fresh` skips the cache (and refills it). */
+  async fetchJwks(opts: { fresh?: boolean } = {}): Promise<AppleJwks> {
+    if (!opts.fresh && jwksCache && Date.now() - jwksCache.at < JWKS_TTL_MS) return jwksCache.jwks
+    const jwks = await appleClient.downloadJwks()
     jwksCache = { at: Date.now(), jwks }
     return jwks
   },
@@ -81,6 +101,20 @@ export const appleClient = {
     if (!json.id_token) throw new Error('Apple token response had no id_token')
     return json.id_token
   },
+}
+
+/**
+ * Verifies an id_token against Apple's keys (verifyAppleIdToken). A key id the cached keys don't have (Apple rotated
+ * them) fetches the keys again and retries, once, and not more than once a minute whatever the tokens say.
+ */
+export async function verifyAppleIdTokenFresh(idToken: string, nowMs = Date.now()): Promise<AppleIdentity> {
+  try {
+    return verifyAppleIdToken(idToken, await appleClient.fetchJwks(), nowMs)
+  } catch (e) {
+    if (!(e instanceof AppleUnknownKeyError) || nowMs - lastRefetchAt < JWKS_REFETCH_MIN_MS) throw e
+    lastRefetchAt = nowMs
+    return verifyAppleIdToken(idToken, await appleClient.fetchJwks({ fresh: true }), nowMs)
+  }
 }
 
 /** Apple's `user` form field (first authorization only) is a JSON string: the name, or null when absent or unreadable. */

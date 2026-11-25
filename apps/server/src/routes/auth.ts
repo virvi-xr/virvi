@@ -31,7 +31,7 @@ import { CREDENTIAL_RATE_LIMIT } from '../auth/credential-rate-limit.js'
 import { deletionRefused } from '../beats/reissue.js'
 import { markVerifiedByReset, sendVerification } from '../auth/email-verification.js'
 import { acceptTerms } from '../auth/terms.js'
-import { appleClient, appleConfigured, appleNameFromUserField, verifyAppleIdToken } from '../auth/apple.js'
+import { appleClient, appleConfigured, appleNameFromUserField, verifyAppleIdTokenFresh } from '../auth/apple.js'
 import { parse as parseForm } from 'node:querystring'
 import { TERMS_VERSION } from '@virvixr/shared'
 
@@ -528,7 +528,7 @@ export default async function authRoutes(app: FastifyInstance) {
       }
       try {
         const idToken = await appleClient.exchangeCode(code, `${config.oauthCallbackUrl}/api/auth/apple/callback`)
-        const identity = verifyAppleIdToken(idToken, await appleClient.fetchJwks())
+        const identity = await verifyAppleIdTokenFresh(idToken)
         const name = appleNameFromUserField(form.user)
         const session = await finishOAuth(app, {
           type: 'oauth',

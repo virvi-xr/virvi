@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { users, userAuthMethods } from '../src/db/schema.js'
 import { config } from '../src/config.js'
-import { appleClient, verifyAppleIdToken, buildAppleClientSecret } from '../src/auth/apple.js'
+import { appleClient, verifyAppleIdToken, verifyAppleIdTokenFresh, buildAppleClientSecret, resetAppleKeysForTests } from '../src/auth/apple.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser } from './helpers/factories.js'
 
@@ -45,6 +45,38 @@ describe('verifyAppleIdToken', () => {
     expect(() => verifyAppleIdToken(`${t[0]}.${b64(good({ sub: 'someone-else' }))}.${t[2]}`, JWKS, NOW)).toThrow()
     expect(() => verifyAppleIdToken(sign(good()), { keys: [] }, NOW)).toThrow()
     expect(() => verifyAppleIdToken('garbage', JWKS, NOW)).toThrow()
+  })
+})
+
+describe("Apple's keys", () => {
+  const origDownload = appleClient.downloadJwks
+  beforeEach(() => { (config as any).appleSigninServiceId = SERVICE; resetAppleKeysForTests() })
+  afterEach(() => { appleClient.downloadJwks = origDownload; resetAppleKeysForTests() })
+  /** A token signed by the RSA key under another key id (Apple rotated its keys). */
+  const rotated = (kid: string) => {
+    const input = `${b64({ alg: 'RS256', kid })}.${b64(good())}`
+    return `${input}.${b64(crypto.sign('sha256', Buffer.from(input), rsa.privateKey))}`
+  }
+
+  it('fetches the keys again once on an unknown key id, and not more than once a minute', async () => {
+    let downloads = 0
+    let served: typeof JWKS = JWKS
+    appleClient.downloadJwks = async () => { downloads++; return served }
+    expect((await verifyAppleIdTokenFresh(sign(good()), NOW)).sub).toBe('001234.abc')
+    expect(downloads).toBe(1)
+    // Apple adds a key: the cached set doesn't have it, so one fresh fetch finds it
+    served = { keys: [...JWKS.keys, jwkOf(rsa.publicKey, 'new1', 'RS256')] }
+    expect((await verifyAppleIdTokenFresh(rotated('new1'), NOW)).sub).toBe('001234.abc')
+    expect(downloads).toBe(2)
+    // A key id nobody has, 30 s later: no fetch (one a minute at most), refused
+    await expect(verifyAppleIdTokenFresh(rotated('nope'), NOW + 30_000)).rejects.toThrow('unknown signing key')
+    expect(downloads).toBe(2)
+    // A minute on: one fetch, still refused
+    await expect(verifyAppleIdTokenFresh(rotated('nope'), NOW + 61_000)).rejects.toThrow('unknown signing key')
+    expect(downloads).toBe(3)
+    // Any other failure never fetches again
+    await expect(verifyAppleIdTokenFresh(sign(good({ aud: 'other' })), NOW + 200_000)).rejects.toThrow()
+    expect(downloads).toBe(3)
   })
 })
 
