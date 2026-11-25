@@ -7,6 +7,8 @@ sidebar:
 
 This page lists what changed in each release of `@virvixr/dcl`, from 2.5.0 on. Scenes built by the Virvi dashboard get these updates when you redeploy them from the dashboard. Scenes you build yourself update when you raise `@virvixr/dcl` in `package.json` and redeploy. See [Decentraland Setup](/docs/sdk/decentraland/install/) for installing and upgrading.
 
+When a scene is behind, its page in the dashboard says which version it runs, lists what's new since then and links here.
+
 No release so far has needed changes to scene code, so none is marked as breaking.
 
 ## 2.21.1 — 2026-11-25
