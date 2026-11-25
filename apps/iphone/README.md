@@ -5,6 +5,8 @@ placed from the ARC's saved pose. Built on the shared Swift package `packages/vi
 the ARC detector and maths, the visitor flow, the AR Spaces API and the RealityKit scene renderer. This app is the
 ARKit, RealityKit and SwiftUI glue around it. The design is `docs/superpowers/specs/2026-11-22-virvi-ar-iphone-design.md`.
 
+**Name:** the app is called **Virvi** (on the phone and in its store listing). It signs visitors in with their Virvi account (including Sign in with Apple) so they can earn BEATs: in AR spaces by time present, and in person by scanning an event's ARC near the venue (location is read only at check-in and claim, and isn't stored). Quest headsets are signed in with a code at virvi.io/pair or in this app.
+
 **Get the app:** it isn't in the App Store yet. For now, build it from source as described below. The public page is
 [virvi.io/ar](https://virvi.io/ar).
 

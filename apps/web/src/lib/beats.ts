@@ -60,7 +60,7 @@ export const PAID_SUPPLY_HINT = "The supply can't be changed after paying. To al
 export const MINUTES_HINT = '0 means anyone who agrees can claim once it starts.'
 export const HOLD_LABEL = 'Check claims before they are sent'
 export const HOLD_HINT = "Claims wait for you to press Send on this page, so you can remove any you don't recognise first. If you don't, they're sent anyway 24 hours after the end."
-export const LOCATION_SCENE_ONLY = 'People claim this BEAT in your Virvi scene. Ways to claim in person or on other platforms are coming.'
+export const LOCATION_SCENE_ONLY = 'People claim this BEAT in your Virvi scene, or in an AR space with the Virvi app.'
 export const LOCATION_TYPE_LABELS: Record<BeatLocationType, string> = { scene: 'In my Virvi scenes', online: 'Online, on another platform', in_person: 'In person' }
 
 // Artwork (fix round I-3: the art is frozen at payment, and again after each image change)

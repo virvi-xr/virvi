@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { beatClaimsPerNetworkText, beatConsentText } from '@virvixr/shared'
+import { beatAppConsentText, beatClaimsPerNetworkText, beatConsentText } from '@virvixr/shared'
 
 export const metadata: Metadata = {
   title: 'Privacy',
@@ -124,6 +124,35 @@ export default function PrivacyPage() {
           </li>
           <li>
             <strong>A lost or stolen wallet:</strong> you can ask Virvi to move your BEATs to a new wallet (Settings, Move my BEATs to a new wallet). Virvi stores both wallets, your reason, your account, and how your session signed in when you asked or cancelled; reviewers see these with your account's name and email, and you see the reviewer's note. Virvi also records when and how each wallet was linked to your account, and unlinks and blocks. If approved, the old wallet is blocked from your account and from BEATs (it can't sign in to your account, its sessions there are refused, and it can never collect a BEAT again), your API keys and paired devices are removed, and a reviewer may also remove and block other wallets linked while signed in with the old wallet. The move is recorded on Polygon for good: anyone can see that the old wallet was replaced by the new one for that BEAT, and the Safe's signers see both wallets in the transaction file. The old copy stays in the old wallet and can never move. Hosts see your new wallet marked as reissued. Requests are deleted 30 days after they close, or when you delete your data; if you delete your data while a move is under way, Virvi keeps only the two wallets, the BEAT numbers and the state, with no link to you, until it finishes or is withdrawn (and for 7 days after a withdrawal, in case the transaction goes through anyway). A blocked wallet stays blocked after you delete your data or your account: Virvi keeps only its address and why it was blocked.
+          </li>
+        </ul>
+
+        <h2>BEATs in the Virvi app</h2>
+        <p>
+          In the Virvi app (iPhone) you can earn a BEAT in an AR space, by time present while the space is shown, or in person, by scanning the event's printed ARC near the venue. Nothing about you is stored unless you choose to track your attendance and agree to this:
+        </p>
+        <blockquote className="my-3 border-l-2 border-gray-700 pl-4 text-gray-400">{beatAppConsentText('{name}')}</blockquote>
+        <ul className="list-disc pl-5">
+          <li>
+            <strong>Signing in:</strong> you sign in to the Virvi app with your Virvi account, through virvi.io's sign-in, which includes Sign in with Apple. Apple may give Virvi a private relay email instead of your own. Virvi treats that email as verified and never merges the account with another one by email.
+          </li>
+          <li>
+            <strong>What's stored:</strong> your account, how long you were present (in an AR space, while the space is shown; at an in-person event, from your check-in) and, when you claim, the wallet you choose. Minutes from Decentraland and from AR spaces add up toward one claim. You get one claim per BEAT. If you have several wallets, you choose one for each BEAT.
+          </li>
+          <li>
+            <strong>Location:</strong> the app reads your location only at two moments: when you check in to an in-person BEAT and when you claim it. It is compared with the event's venue pin and is not stored.
+          </li>
+          <li>
+            <strong>App Attest:</strong> Apple's device check proves a request comes from the genuine Virvi app. Virvi stores a key made for that install of the app, not your Apple ID or a device identifier. Each install can claim a BEAT once.
+          </li>
+          <li>
+            <strong>Waiting claims:</strong> if you have no wallet linked, your BEAT is saved and holds one of the limited copies. It is sent when you link a wallet. It is kept until it is sent, the host removes it, or you delete your account, and it is never lost to the 30-day clean-up.
+          </li>
+          <li>
+            <strong>Quest headsets:</strong> you sign a headset in by entering its code at virvi.io/pair or in the Virvi app on your phone. On a Quest you can earn BEATs in AR spaces; in-person BEATs are phone-only. The headset's sign-in tokens are stored encrypted on the headset.
+          </li>
+          <li>
+            <strong>Stopping and deleting:</strong> you can stop tracking before you claim, which deletes what was stored. Who sees your data, what goes on the blockchain and what happens when you delete your data or account are as described under BEATs above.
           </li>
         </ul>
 

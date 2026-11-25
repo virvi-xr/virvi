@@ -34,7 +34,7 @@ If your BEAT gives people something valuable (a whitelist place, a prize), check
    - **Starts** and **Ends:** the event's time. It must start in the future and can run for up to 31 days.
    - **Minimum minutes present:** how long a visitor must be in the scene to claim. The default is 5 minutes; the most is 120. "0 means anyone who agrees can claim once it starts."
    - **Scenes:** where the event happens. You need to be able to run events in each one. A scene can have one BEAT at a time.
-   - **Where is it?:** **In my Virvi scenes** (the default: the token names your scene, with its World name or coordinates), **Online, on another platform** (a **Platform name** and an **Event link**), or **In person** (a **Venue name**, **City or region**, **Country**, and optionally a **Street address** and a **Map link**). Links must start with `https://` or `http://`. For online and in-person events the form says: "People claim this BEAT in your Virvi scene. Ways to claim in person or on other platforms are coming."
+   - **Where is it?:** **In my Virvi scenes** (the default: the token names your scene, with its World name or coordinates), **Online, on another platform** (a **Platform name** and an **Event link**), or **In person** (a **Venue name**, **City or region**, **Country**, and optionally a **Street address** and a **Map link**). Links must start with `https://` or `http://`. For an in-person event you also set a venue pin (see [In person, with the Virvi app](#in-person-with-the-virvi-app)). For an online event the form says: "People claim this BEAT in your Virvi scene, or in an AR space with the Virvi app."
    - **Supply cap:** from 1 to 5,000, 100 by default. "The most BEATs that can be claimed. You pay for this many up front. You can raise it later, never lower it."
    - **Tradeable:** "Holders can send it to other wallets. You can't change this once the BEAT starts."
    - **Check claims before they are sent:** "Claims wait for you to press Send on this page, so you can remove any you don't recognise first. If you don't, they're sent anyway 24 hours after the end."
@@ -115,11 +115,32 @@ After a claim the card says one of:
 
 ## What you see
 
-Open the BEAT in the dashboard to see **When**, **Claiming** ("Visitors can claim until …"), **Minimum time in scene**, **Where**, **Scenes**, **Tradeable** and **Check claims first**, and the counts: **Claimed (waiting to send)**, **Sending**, **Delivered**, **Failed** and **Cap**, with "N of M used". "Failed claims are retried automatically. A wallet that can't accept BEATs stays failed."
+Open the BEAT in the dashboard to see **When**, **Claiming** ("Visitors can claim until …"), **Minimum time in scene**, **Where**, **Scenes**, **Tradeable** and **Check claims first**, and the counts: **Claimed (waiting to send)**, **Waiting for a wallet**, **Sending**, **Delivered**, **Failed** and **Cap**, with "N of M used". "Failed claims are retried automatically. A wallet that can't accept BEATs stays failed."
 
-The list is headed "Attendees (N): X claimed, Y still attending". It shows each visitor's display name, wallet and status (**Attending**, **Claimed**, **Waiting for your Send**, **Sending**, **Delivered**, **Failed** or **Removed by you**), with a **View** link to the record on Polygonscan, Polygon's public explorer, once it's delivered. A BEAT that Virvi sent again to a visitor's new wallet, because their old one was lost or stolen, is marked **Reissued**, with a **Reissue** link. **Copy wallets that claimed** copies the wallet of everyone who claimed, one per line; visitors still attending aren't included.
+The list is headed "Attendees (N): X claimed, Y still attending". It shows each visitor's display name, wallet and status (**Attending**, **Claimed**, **Waiting for your Send**, **Waiting for a wallet**, **Sending**, **Delivered**, **Failed** or **Removed by you**), with a **View** link to the record on Polygonscan, Polygon's public explorer, once it's delivered. A BEAT that Virvi sent again to a visitor's new wallet, because their old one was lost or stolen, is marked **Reissued**, with a **Reissue** link. **Copy wallets that claimed** copies the wallet of everyone who claimed, one per line; visitors still attending aren't included.
 
 You and anyone who can run events in one of the BEAT's scenes can see this. Visitors' wallets show here even when the scene's wallet visibility (for analytics) is off, because they agreed to it for the BEAT.
+
+## In person, with the Virvi app
+
+Visitors can also earn a BEAT with the **Virvi app** on an iPhone. They sign in with their Virvi account (the website's sign-in, which includes Sign in with Apple) and earn it in one of two ways:
+- **In an AR space:** by time present while the space is shown.
+- **In person:** by scanning your event's printed ARC (Augmented Reality Code) near the venue.
+
+Each visitor gets one claim per BEAT. If they have several wallets, they choose one for each BEAT. Minutes from Decentraland and from AR spaces add up toward the same claim.
+
+**Setting up an in-person BEAT:**
+- **Venue pin:** the point visitors must be near. Choose **Suggest from the address** to place it from your street address ("Suggested from the address. Drag it to the entrance if it's off."), or drop it yourself ("Couldn't find that address on the map. Drop the pin yourself."). The **radius** is how close visitors must be: from 50 to 1000 metres, 150 by default.
+- **Event ARC:** download it black on white or white on black. The page says: "Print this ARC and put it up at {venue}. Visitors scan it with the Virvi app to earn this BEAT."
+- **Waiting for a wallet:** the BEAT's page shows how many claims are waiting for a wallet (see below).
+
+**Location.** The app reads a visitor's location only twice: when they check in to an in-person BEAT and when they claim it. It is compared with your venue pin and is not stored. A visitor outside the pin sees "You need to be at {venue} to check in." or "Come back to {venue} to claim this BEAT."; if the phone can't find its position well enough they're asked to step outside or near a window and try again.
+
+**No wallet yet.** A visitor with no wallet can still claim. Their BEAT is saved, holds one of your limited copies, and is sent when they link a wallet. A saved BEAT stays until it is sent, you remove it, or the visitor deletes their account, and the clean-up of data from visitors who never claimed doesn't touch it. With **Check claims before they are sent** on, you can remove a waiting claim with **Remove**, like any other.
+
+**One claim per install.** The app proves it is the genuine Virvi app with Apple's App Attest, which stores a key made for that install (not an Apple ID or a device identifier). Each install can claim a BEAT once.
+
+**Quest headsets.** A visitor signs a headset in by entering its code at virvi.io/pair or in the Virvi app on their phone. On a Quest they can earn BEATs in AR spaces. In-person BEATs are phone-only.
 
 ## Checking claims before they are sent
 

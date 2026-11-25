@@ -111,7 +111,7 @@ describe('form', () => {
     expect(locationLine(beat().location)).toBe('In Virvi: A')
     expect(locationLine({ ...beat().location, type: 'online', platform: 'Zoom' })).toBe('Online, on Zoom')
     expect(locationLine({ ...beat().location, type: 'in_person', venue: 'Hall', address: '1 Main St', city: 'Lisbon', country: 'Portugal' })).toBe('Hall, 1 Main St, Lisbon, Portugal')
-    expect(LOCATION_SCENE_ONLY).toBe('People claim this BEAT in your Virvi scene. Ways to claim in person or on other platforms are coming.')
+    expect(LOCATION_SCENE_ONLY).toBe('People claim this BEAT in your Virvi scene, or in an AR space with the Virvi app.')
   })
   it('plain-ux I4: says what is permanent, and the review sums it up', () => {
     expect(TRADEABLE_HINT).toBe("Holders can send it to other wallets. You can't change this once the BEAT starts.")

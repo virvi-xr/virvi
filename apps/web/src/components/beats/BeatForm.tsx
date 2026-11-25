@@ -284,7 +284,7 @@ export function BeatForm({ initial, editing, error, busy, submitLabel, busyLabel
             <VenuePin pin={f.location.pin} radiusM={clampRadius(f.location.radiusM)} onPin={placePin} />
           </div>
         )}
-        {f.location.type !== 'scene' && <p role="note" className="rounded-md border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-300">{LOCATION_SCENE_ONLY}</p>}
+        {f.location.type === 'online' && <p role="note" className="rounded-md border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-300">{LOCATION_SCENE_ONLY}</p>}
         <FieldNote error={shown} field="location" />
       </fieldset>
 
