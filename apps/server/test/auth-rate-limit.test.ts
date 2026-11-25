@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildApp } from '../src/app.js'
+import { addressKey } from '../src/http/rate-key.js'
 import { CREDENTIAL_RATE_LIMIT } from '../src/auth/credential-rate-limit.js'
 import { config } from '../src/config.js'
 
@@ -13,8 +14,8 @@ describe('credential route rate limits', () => {
   })
   afterAll(async () => { await app.close() })
 
-  it('is 20 a minute', () => {
-    expect(CREDENTIAL_RATE_LIMIT).toEqual({ max: 20, timeWindow: '1 minute' })
+  it('is 20 a minute, per address', () => {
+    expect(CREDENTIAL_RATE_LIMIT).toEqual({ max: 20, timeWindow: '1 minute', keyGenerator: addressKey })
   })
 
   const routes: Array<{ method: 'POST' | 'PUT'; url: string }> = [

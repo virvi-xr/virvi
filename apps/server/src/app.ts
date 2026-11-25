@@ -86,7 +86,7 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { bearerMatches, register, httpRequestsTotal, httpRequestDurationSeconds } from './metrics.js'
-import { rateKey } from './http/rate-key.js'
+import { globalRateKey } from './http/rate-key.js'
 
 /** The server release, reported by the API docs, /api/health and /api/instance. */
 const SERVER_VERSION = '2.0.0'
@@ -174,8 +174,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       max: config.rateLimitMax,
       timeWindow: '1 minute',
       allowList: (request) => !request.url.startsWith('/api/'),
-      // Per signed-in account, else per address (venue Wi-Fi puts every visitor on one address)
-      keyGenerator: (request) => rateKey(app, request),
+      // Per signed-in account, else per address (venue Wi-Fi puts every visitor on one address); a route's own limit
+      // that names no key stays per address (globalRateKey)
+      keyGenerator: (request) => globalRateKey(app, request),
     })
   }
 

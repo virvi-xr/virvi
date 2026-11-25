@@ -48,6 +48,31 @@ describe('global rate limit', () => {
     expect(last).toBe(429)
   })
 
+  // A route's own limit (sign-in, pairing, sign-ups...) stays per address: many accounts must not multiply the guesses
+  const accountBearer = () => ({ authorization: `Bearer ${tokenFor({ id: crypto.randomUUID(), email: null, role: 'viewer', wallet: null } as unknown as TestUser)}` })
+  const post = (url: string, remoteAddress: string, headers: Record<string, string>, payload: unknown) =>
+    app.inject({ method: 'POST', url, remoteAddress, headers, payload: payload as Record<string, unknown> })
+
+  it('limits sign-in attempts per address, with or without an account bearer', async () => {
+    const tries = async (ip: string, bearer: boolean) => {
+      const out: number[] = []
+      for (let i = 0; i < 21; i++) out.push((await post('/api/auth/login', ip, bearer ? accountBearer() : {}, { email: `nobody${i}@test.dev`, password: 'wrong-password' })).statusCode)
+      return out
+    }
+    const plain = await tries('198.51.100.6', false)
+    const withBearer = await tries('198.51.100.7', true)
+    expect(plain.slice(0, 20)).not.toContain(429)
+    expect(plain[20]).toBe(429)
+    expect(withBearer.slice(0, 20)).not.toContain(429)
+    expect(withBearer[20]).toBe(429)
+  })
+
+  it("keeps a route's own limit per address for other routes too (headset pairing)", async () => {
+    let last = 0
+    for (let i = 0; i < 11; i++) last = (await post('/api/ar/pair', '198.51.100.8', accountBearer(), {})).statusCode
+    expect(last).toBe(429)
+  })
+
   it("doesn't count the dashboard's own files, uploads or well-known files", async () => {
     for (let i = 0; i <= config.rateLimitMax; i++) await hit('/api/health', '198.51.100.2')
     for (const url of ['/.well-known/assetlinks.json', '/', '/scenes/abc', '/_next/static/chunk.js', '/uploads/missing.png']) {
