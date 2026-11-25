@@ -7,6 +7,8 @@ enum LocationOutcome: Equatable {
     case fix(BeatLocation)
     /// Location is off for the app (or restricted): the visitor has to allow it in Settings.
     case denied
+    /// Allowed, but only approximately (Precise Location is off): the visitor has to turn it on in Settings.
+    case reduced
     /// No usable fix in time.
     case unavailable
 }
@@ -17,16 +19,28 @@ protocol LocationProvider: AnyObject {
     func fix() async -> LocationOutcome
 }
 
-/// One position fix for a BEAT's venue check: "While using the app", the best accuracy, and no more than 10 seconds
-/// for the answer. Asked at check-in and at claim only; nothing is kept and nothing runs in between.
-@MainActor
-final class VenueLocation: NSObject, LocationProvider, CLLocationManagerDelegate {
-    static let timeoutS: Double = 10
+enum LocationAuthorization: Equatable {
+    case notDetermined, denied, reduced, full
+}
 
+/// The part of `CLLocationManager` the fix uses (a fake in tests).
+@MainActor
+protocol LocationManaging: AnyObject {
+    var authorization: LocationAuthorization { get }
+    /// Set by `VenueLocation`: the authorization changed, a fix arrived, the request failed.
+    var onAuthorizationChange: (() -> Void)? { get set }
+    var onLocation: ((CLLocation) -> Void)? { get set }
+    var onError: ((Error) -> Void)? { get set }
+    func requestPermission()
+    func requestOne()
+}
+
+@MainActor
+final class SystemLocationManager: NSObject, LocationManaging, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
-    private var waiting: CheckedContinuation<LocationOutcome, Never>?
-    private var deadline: Task<Void, Never>?
-    private var best: CLLocation?
+    var onAuthorizationChange: (() -> Void)?
+    var onLocation: ((CLLocation) -> Void)?
+    var onError: ((Error) -> Void)?
 
     override init() {
         super.init()
@@ -34,69 +48,92 @@ final class VenueLocation: NSObject, LocationProvider, CLLocationManagerDelegate
         manager.desiredAccuracy = kCLLocationAccuracyBest
     }
 
+    var authorization: LocationAuthorization {
+        switch manager.authorizationStatus {
+        case .notDetermined: return .notDetermined
+        case .denied, .restricted: return .denied
+        default: return manager.accuracyAuthorization == .reducedAccuracy ? .reduced : .full
+        }
+    }
+
+    func requestPermission() { manager.requestWhenInUseAuthorization() }
+    func requestOne() { manager.requestLocation() }
+
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        MainActor.assumeIsolated { onAuthorizationChange?() }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let last = locations.last else { return }
+        MainActor.assumeIsolated { onLocation?(last) }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        MainActor.assumeIsolated { onError?(error) }
+    }
+}
+
+/// One position fix for a BEAT's venue check: "While using the app", the best accuracy, and no more than 10 seconds
+/// for the answer, counted from the moment the position is asked for (not while the visitor is still answering the
+/// permission prompt). Asked at check-in and claim only; nothing is kept and nothing runs in between.
+@MainActor
+final class VenueLocation: LocationProvider {
+    static let timeoutS: Double = 10
+
+    private let manager: LocationManaging
+    private let sleep: @Sendable (Double) async -> Void
+    private var waiting: CheckedContinuation<LocationOutcome, Never>?
+    private var deadline: Task<Void, Never>?
+
+    init(manager: LocationManaging? = nil,
+         sleep: @escaping @Sendable (Double) async -> Void = { try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) }) {
+        let manager = manager ?? SystemLocationManager()
+        self.manager = manager
+        self.sleep = sleep
+        manager.onAuthorizationChange = { [weak self] in self?.authorizationChanged() }
+        manager.onLocation = { [weak self] l in
+            self?.finish(l.horizontalAccuracy >= 0
+                         ? .fix(BeatLocation(lat: l.coordinate.latitude, lng: l.coordinate.longitude, accuracyM: l.horizontalAccuracy))
+                         : .unavailable)
+        }
+        manager.onError = { [weak self] e in self?.finish((e as? CLError)?.code == .denied ? .denied : .unavailable) }
+    }
+
     func fix() async -> LocationOutcome {
         // One question at a time: a new ask replaces one still open, which gets "unavailable"
-        if let waiting { waiting.resume(returning: .unavailable) }
+        finish(.unavailable)
         return await withCheckedContinuation { c in
             waiting = c
-            best = nil
-            deadline?.cancel()
+            if manager.authorization == .notDetermined { manager.requestPermission() } else { proceed() }
+        }
+    }
+
+    private func authorizationChanged() {
+        // Only an answer to the prompt while a fix waits for it (not one that is already being fetched)
+        guard waiting != nil, deadline == nil, manager.authorization != .notDetermined else { return }
+        proceed()
+    }
+
+    private func proceed() {
+        switch manager.authorization {
+        case .notDetermined: break
+        case .denied: finish(.denied)
+        case .reduced: finish(.reduced)
+        case .full:
+            let sleep = sleep
             deadline = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(Self.timeoutS * 1_000_000_000))
-                if !Task.isCancelled { self?.timedOut() }
+                await sleep(Self.timeoutS)
+                if !Task.isCancelled { self?.finish(.unavailable) }
             }
-            begin()
+            manager.requestOne()
         }
-    }
-
-    private func begin() {
-        switch manager.authorizationStatus {
-        case .notDetermined: manager.requestWhenInUseAuthorization()
-        case .denied, .restricted: finish(.denied)
-        default: manager.requestLocation()
-        }
-    }
-
-    private func timedOut() {
-        finish(best.flatMap(Self.usable).map(LocationOutcome.fix) ?? .unavailable)
     }
 
     private func finish(_ outcome: LocationOutcome) {
         deadline?.cancel()
         deadline = nil
-        manager.stopUpdatingLocation()
         let c = waiting
         waiting = nil
         c?.resume(returning: outcome)
-    }
-
-    private static func usable(_ l: CLLocation) -> BeatLocation? {
-        guard l.horizontalAccuracy >= 0 else { return nil }
-        return BeatLocation(lat: l.coordinate.latitude, lng: l.coordinate.longitude, accuracyM: l.horizontalAccuracy)
-    }
-
-    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        let status = manager.authorizationStatus
-        MainActor.assumeIsolated {
-            guard waiting != nil else { return }
-            switch status {
-            case .denied, .restricted: finish(.denied)
-            case .authorizedWhenInUse, .authorizedAlways: self.manager.requestLocation()
-            default: break
-            }
-        }
-    }
-
-    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let last = locations.last else { return }
-        MainActor.assumeIsolated {
-            best = last
-            finish(Self.usable(last).map(LocationOutcome.fix) ?? .unavailable)
-        }
-    }
-
-    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        let denied = (error as? CLError)?.code == .denied
-        MainActor.assumeIsolated { finish(denied ? .denied : .unavailable) }
     }
 }

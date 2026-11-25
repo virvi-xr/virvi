@@ -74,9 +74,10 @@ public final class AppBeatApi: Sendable {
         self.appVersion = appVersion
     }
 
-    /// `GET /api/app/spaces/:spaceId/beat`: the BEAT running in a space, if any.
+    /// `GET /api/app/spaces/:spaceId/beat`: the BEAT running in a space, if any. Signed out it is asked without a token
+    /// and the card has no claim and no wallets, so the app can ask the visitor to sign in.
     public func spaceBeat(_ spaceId: String) async -> AppBeatResult<AppBeatCard?> {
-        await run(.get, "/api/app/spaces/\(enc(spaceId))/beat", body: nil) { (o: [String: Any]) -> AppBeatCard?? in
+        await run(.get, "/api/app/spaces/\(enc(spaceId))/beat", body: nil, anonymousOk: true) { (o: [String: Any]) -> AppBeatCard?? in
             if o["beat"] == nil || o["beat"] is NSNull { return .some(nil) }
             return parseAppBeatCard(o["beat"]).map { .some($0) }
         }

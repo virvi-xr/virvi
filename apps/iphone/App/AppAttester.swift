@@ -89,9 +89,20 @@ actor AppAttester: Attester {
 
     func assertion(for body: Data) async throws -> String {
         guard service.isSupported else { throw AttestUnsupported() }
+        let hash = Data(SHA256.hash(data: body))
         let id = try await registeredKey()
-        let assertion = try await service.generateAssertion(id, clientDataHash: Data(SHA256.hash(data: body)))
-        return "\(id).\(assertion.base64EncodedString())"
+        do {
+            return try await asserted(id, hash)
+        } catch let e as DCError where e.code == .invalidKey || e.code == .invalidInput {
+            // The Keychain outlives a deleted app, the key doesn't: this id is no longer a key on this phone. A new one is
+            // made and registered, and the write asserted once more.
+            await renewKey()
+            return try await asserted(try await registeredKey(), hash)
+        }
+    }
+
+    private func asserted(_ id: String, _ hash: Data) async throws -> String {
+        "\(id).\(try await service.generateAssertion(id, clientDataHash: hash).base64EncodedString())"
     }
 
     func renewKey() async {

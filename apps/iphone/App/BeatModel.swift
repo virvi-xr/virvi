@@ -78,6 +78,7 @@ final class BeatModel {
     static let checkInIntervalS: Double = 30
     static let NO_LOCATION = "Virvi needs your location to check you're at the event. Allow it in Settings → Apps → Virvi."
     static let STOP_TRACKING = "Stop tracking"
+    static let NEEDS_PRECISE = "Turn on Precise Location for Virvi in Settings to check in at the event."
     static let RETRY = "Try again"
     static let AGREE = "I agree"
 
@@ -313,6 +314,9 @@ final class BeatModel {
         case .denied:
             locationDenied = true
             card.apply(error: AppBeatError(status: 0, code: "no_location", message: Self.NO_LOCATION))
+        case .reduced:
+            locationDenied = true
+            card.apply(error: AppBeatError(status: 0, code: "no_precise_location", message: Self.NEEDS_PRECISE))
         case .unavailable: card.apply(error: AppBeatError(status: 0, code: "poor_fix", message: VisitorCopy.BEAT_POOR_FIX))
         }
         return nil
@@ -389,8 +393,8 @@ final class BeatModel {
             show(updated)
             await remind(updated, atMs: wallClock())
         case .error(let e):
-            // A phone that dropped offline for a moment just checks in at the next tick
-            guard e.status != 0 else { return }
+            // A phone that dropped offline for a moment just checks in at the next tick; any other failure is shown and ends the loop
+            guard e.code != "offline" else { return }
             card.apply(error: e)
             checkIns?.cancel()
             checkIns = nil

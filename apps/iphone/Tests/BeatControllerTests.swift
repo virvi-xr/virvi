@@ -1,4 +1,6 @@
+import CoreLocation
 import CryptoKit
+import DeviceCheck
 import Foundation
 import simd
 import XCTest
@@ -27,8 +29,10 @@ func fakeAccessToken(id: String) -> String {
 final class RecordingAttester: Attester, @unchecked Sendable {
     private let lock = NSLock()
     private var seen: [Data] = []
+    var failWith: Error?
     var bodies: [Data] { lock.lock(); defer { lock.unlock() }; return seen }
     func assertion(for body: Data) async throws -> String {
+        if let failWith { throw failWith }
         lock.lock(); seen.append(body); let n = seen.count; lock.unlock()
         return "key1.assertion\(n)"
     }
@@ -248,6 +252,9 @@ final class BeatControllerTests: XCTestCase {
         await tick(expectingCheckIns: 2)
         await tick(expectingCheckIns: 3)
         XCTAssertEqual(Set(sleeper.durations), [30])
+        // The feed is asked as the signed-in visitor: the server credits check-ins only for presence on the feed
+        let feed = try XCTUnwrap(requests("/feed").first)
+        XCTAssertEqual(feed.value(forHTTPHeaderField: "Authorization")?.hasPrefix("Bearer "), true)
         let first = try XCTUnwrap(requests("/checkin").first)
         XCTAssertEqual(body(first)["spaceId"] as? String, "s1")
         XCTAssertEqual(first.value(forHTTPHeaderField: "X-Virvi-Attest"), "key1.assertion1")
@@ -267,6 +274,39 @@ final class BeatControllerTests: XCTestCase {
         await tick(expectingCheckIns: 2)
         XCTAssertEqual(notifier.permissionRequests, 1)
         XCTAssertEqual(notifier.scheduled.count, 1, "set once, at the first check-in")
+    }
+
+    func testACheckInThatFailsToAttestIsShownAndStopsTheTimer() async throws {
+        spaceCard.value = cardJson(claim: claim("present", seconds: 60), type: "scene")
+        attester.failWith = URLError(.cancelled)
+        try await showSpace()
+        await until("the timer to sleep") { sleeper.waiting == 1 }
+        sleeper.release()
+        await until("the refusal") { beats.card.state == .failed(message: "This app couldn't be verified. Update the Virvi app and try again.") }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(sleeper.waiting, 0, "the loop ended: no silent key registration every 30 s")
+        XCTAssertEqual(transport.count("/checkin"), 0)
+    }
+
+    func testSignedOutASharedSpacesBeatAsksToSignIn() async throws {
+        spaceCard.value = cardJson(type: "scene")
+        session.signOut()
+        try await showSpace()
+        await until("the sign-in card") { beats.card.state == .signInToEarn(name: "Opening Night", minutes: 5) }
+        XCTAssertEqual(beats.card.buttonTitle, "Sign in to earn this BEAT")
+        XCTAssertNil(requests("/api/app/spaces/s1/beat").first?.value(forHTTPHeaderField: "Authorization"))
+    }
+
+    func testPreciseLocationOffSendsToSettings() async throws {
+        eventCardBox.value = cardJson()
+        consent.accept(account: "u1")
+        location.outcome = .reduced
+        try await seeRing(RingCodec.parseCode(eventCode)!, frames: 15)
+        await until("the card") { beats.card.state != .hidden }
+        beats.primaryAction()
+        await until("the refusal") { beats.card.state == .failed(message: BeatModel.NEEDS_PRECISE) }
+        XCTAssertTrue(beats.locationDenied)
+        XCTAssertEqual(transport.count("/track"), 0)
     }
 
     // MARK: event ARCs
@@ -436,6 +476,7 @@ private final class FakeAttestService: AttestService, @unchecked Sendable {
     private(set) var attested: [(keyId: String, hash: Data)] = []
     private(set) var asserted: [(keyId: String, hash: Data)] = []
     var failAttest = false
+    var invalidKeys: Set<String> = []
     var isSupported: Bool { supported }
 
     func generateKey() async throws -> String {
@@ -452,6 +493,7 @@ private final class FakeAttestService: AttestService, @unchecked Sendable {
     func generateAssertion(_ keyId: String, clientDataHash: Data) async throws -> Data {
         lock.lock(); defer { lock.unlock() }
         asserted.append((keyId, clientDataHash))
+        if invalidKeys.contains(keyId) { throw DCError(.invalidKey) }
         return Data("assertion".utf8)
     }
 }
@@ -540,6 +582,16 @@ final class AppAttesterTests: XCTestCase {
         XCTAssertEqual(transport.count("/register"), 2)
     }
 
+    func testAfterAReinstallTheKeptKeyIsInvalidAndANewOneIsRegisteredAndTheWriteSucceeds() async throws {
+        store.save("key-from-before-the-reinstall")
+        service.invalidKeys = ["key-from-before-the-reinstall"]
+        let header = try await attester().assertion(for: Data("{}".utf8))
+        XCTAssertTrue(header.hasPrefix("key-1."), header)
+        XCTAssertEqual(store.load(), "key-1")
+        XCTAssertEqual(transport.count("/register"), 1)
+        XCTAssertEqual(service.asserted.map(\.keyId), ["key-from-before-the-reinstall", "key-1"])
+    }
+
     func testAPhoneWithoutAppAttestThrowsUnsupportedAndTouchesNothing() async {
         service.supported = false
         do { _ = try await attester().assertion(for: Data()); XCTFail("should throw") } catch is AttestUnsupported {} catch { XCTFail("\(error)") }
@@ -557,5 +609,83 @@ final class AppAttesterTests: XCTestCase {
         XCTAssertEqual(keys.load(), "def")
         keys.save(nil)
         XCTAssertNil(keys.load())
+    }
+}
+
+// MARK: - The location fix
+
+@MainActor
+private final class FakeLocationManager: LocationManaging {
+    var authorization: LocationAuthorization
+    var onAuthorizationChange: (() -> Void)?
+    var onLocation: ((CLLocation) -> Void)?
+    var onError: ((Error) -> Void)?
+    private(set) var permissionRequests = 0
+    private(set) var fixRequests = 0
+    init(_ a: LocationAuthorization) { authorization = a }
+    func requestPermission() { permissionRequests += 1 }
+    func requestOne() { fixRequests += 1 }
+}
+
+@MainActor
+final class VenueLocationTests: XCTestCase {
+    private func settle(_ n: Int = 5) async { for _ in 0..<n { await Task.yield(); try? await Task.sleep(nanoseconds: 10_000_000) } }
+
+    func testTheTenSecondsStartOnlyOnceTheVisitorHasAllowedAndAreNotSpentOnThePrompt() async throws {
+        let manager = FakeLocationManager(.notDetermined)
+        let sleeper = FakeSleeper()
+        let vl = VenueLocation(manager: manager, sleep: { await sleeper.sleep($0) })
+        let result = Task { await vl.fix() }
+        await settle()
+        XCTAssertEqual(manager.permissionRequests, 1)
+        XCTAssertEqual(manager.fixRequests, 0)
+        XCTAssertEqual(sleeper.waiting, 0, "no deadline while the prompt is open")
+
+        // A late Allow still gets its fix
+        manager.authorization = .full
+        manager.onAuthorizationChange?()
+        await settle()
+        XCTAssertEqual(manager.fixRequests, 1)
+        XCTAssertEqual(sleeper.waiting, 1, "the deadline starts when the fix is asked for")
+        XCTAssertEqual(sleeper.durations, [10])
+        manager.onLocation?(CLLocation(coordinate: CLLocationCoordinate2D(latitude: 1.5, longitude: 2.5), altitude: 0,
+                                       horizontalAccuracy: 8, verticalAccuracy: 0, timestamp: Date()))
+        let outcome = await result.value
+        XCTAssertEqual(outcome, .fix(BeatLocation(lat: 1.5, lng: 2.5, accuracyM: 8)))
+        sleeper.release()
+    }
+
+    func testNoFixWithinTheDeadlineIsUnavailable() async {
+        let manager = FakeLocationManager(.full)
+        let sleeper = FakeSleeper()
+        let vl = VenueLocation(manager: manager, sleep: { await sleeper.sleep($0) })
+        let result = Task { await vl.fix() }
+        await settle()
+        XCTAssertEqual(manager.fixRequests, 1)
+        sleeper.release()
+        let outcome = await result.value
+        XCTAssertEqual(outcome, .unavailable)
+    }
+
+    func testDeniedAndReducedAccuracyAreAnsweredAtOnceWithoutAskingForAFix() async {
+        for (auth, want) in [(LocationAuthorization.denied, LocationOutcome.denied), (.reduced, .reduced)] {
+            let manager = FakeLocationManager(auth)
+            let vl = VenueLocation(manager: manager, sleep: { _ in })
+            let outcome = await vl.fix()
+            XCTAssertEqual(outcome, want)
+            XCTAssertEqual(manager.fixRequests, 0)
+            XCTAssertEqual(manager.permissionRequests, 0)
+        }
+    }
+
+    func testRefusingThePromptIsDenied() async {
+        let manager = FakeLocationManager(.notDetermined)
+        let vl = VenueLocation(manager: manager, sleep: { _ in })
+        let result = Task { await vl.fix() }
+        await settle()
+        manager.authorization = .denied
+        manager.onAuthorizationChange?()
+        let outcome = await result.value
+        XCTAssertEqual(outcome, .denied)
     }
 }

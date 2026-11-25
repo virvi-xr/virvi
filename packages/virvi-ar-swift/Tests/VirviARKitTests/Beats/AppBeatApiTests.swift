@@ -40,10 +40,20 @@ final class AppBeatApiTests: XCTestCase {
     func testSignedOutSendsNothingAndSaysSo() async {
         let t = FakeTransport()
         let (api, _) = make(t, signedIn: false)
-        let r = await api.spaceBeat("s1")
+        let r = await api.mine()
         guard case .error(let e) = r else { return XCTFail("\(r)") }
         XCTAssertEqual(e.code, "signed_out")
         XCTAssertTrue(t.requests.isEmpty)
+    }
+
+    func testSignedOutASpacesBeatIsAskedWithoutAToken() async {
+        let t = FakeTransport()
+        t.on("/api/app/spaces/s1/beat") { _ in (200, ["beat": self.cardJson]) }
+        let (api, _) = make(t, signedIn: false)
+        let r = await api.spaceBeat("s1")
+        guard case .ok(let card?) = r else { return XCTFail("\(r)") }
+        XCTAssertEqual(card.name, "Opening Night")
+        XCTAssertNil(t.requests[0].value(forHTTPHeaderField: "Authorization"))
     }
 
     func testArcBeatAndSpaceVariants() async {
