@@ -13,11 +13,19 @@ export const REDEPLOY_REQUIRED = 'redeploy_required'
 
 /**
  * The HUD's release, sent as x-virvi-hud-version with every API request, so the server can tell a scene running an old
- * HUD to redeploy (LIV-33, LIV-13). Kept equal to @virvixr/dcl's version: raise both together at each release (a
- * test checks they match). A request without the header is from a HUD released before 2.14.0.
+ * HUD to redeploy (LIV-33, LIV-13). Always equal to @virvixr/dcl's version: raise both together when cutting a release
+ * (a test checks they match), so a published package reports its own version. A request without the header is from a
+ * HUD released before 2.14.0. (2.20.0 and 2.21.0 went out reporting the release before theirs: 2.19.0 and 2.20.0.)
  */
 export const HUD_VERSION_HEADER = 'x-virvi-hud-version'
-export const DCL_HUD_VERSION = '2.20.0'
+export const DCL_HUD_VERSION = '2.21.1'
+
+/**
+ * The newest version a published HUD reports, which the dashboard compares scenes against. Unlike DCL_HUD_VERSION it
+ * moves only once a release is on npm, so nobody is told to update to a version they can't install. 2.20.0 is what
+ * the published 2.21.0 reported.
+ */
+export const DCL_HUD_LATEST = '2.21.1'
 
 /** "2.13.0" → [2, 13, 0]; null for anything that isn't three whole numbers. */
 export function parseHudVersion(v: unknown): [number, number, number] | null {

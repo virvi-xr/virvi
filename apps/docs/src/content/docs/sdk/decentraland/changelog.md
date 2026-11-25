@@ -9,6 +9,10 @@ This page lists what changed in each release of `@virvixr/dcl`, from 2.5.0 on. S
 
 No release so far has needed changes to scene code, so none is marked as breaking.
 
+## 2.21.1 — 2026-11-25
+
+- **Version reporting:** the scene reports its own version to Virvi. 2.20.0 and 2.21.0 reported the release before theirs, so the dashboard could show them one version behind.
+
 ## 2.21.0 — 2026-11-25
 
 - **BEAT auto-claim:** when a BEAT has auto-claim on, a visitor who agrees to attendance tracking gets the BEAT claimed for them once they have been there long enough. The card says "Your BEAT is on its way."

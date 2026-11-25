@@ -146,8 +146,8 @@ describe('dcl runtime', () => {
     expect(src).toContain("Agreeing also claims this BEAT to your wallet once you've been here long enough.")
     expect(src).toContain("It's claimed for you once you've been here long enough.")
     expect(src).toContain('Your BEAT is on its way.')
-    // It reports DCL_HUD_VERSION, which stays 2.20.0 until 2.21.0 is on npm
-    expect(src).toContain('2.20.0')
+    // It reports DCL_HUD_VERSION, the package's own version
+    expect(src).toContain('"2.21.1"')
     // Still the privacy notice and the giveaway card
     expect(src).toContain('/api/analytics/consent')
     expect(src).toContain('Agree and continue')
