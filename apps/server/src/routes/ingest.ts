@@ -5,7 +5,7 @@ import { resolveAnalyticsScene } from '../analytics/registry.js'
 import { INGEST_LIMITS, TokenBucketLimiter, checkIpLimits, checkRequesterLimits, checkSceneLimits } from '../analytics/limiter.js'
 import { createCountryLookup, type CountryLookup } from '../analytics/country.js'
 import { writeBatch, SessionSceneMismatchError } from '../analytics/writer.js'
-import { anyDeclined, ingestSubjects } from '../analytics/consent.js'
+import { anyDeclined, consentSubject } from '../analytics/consent.js'
 
 let limiter = new TokenBucketLimiter()
 let sweepTimer: NodeJS.Timeout | null = null
@@ -58,7 +58,7 @@ export default async function ingestRoutes(app: FastifyInstance) {
         // The visitor declined the analytics notice in force (GDPR notice): nothing is written, not even the scene's row,
         // and no wallet notice is asked for. Accepted with nothing stored, so the collector doesn't retry. Only a decline
         // is enforced here: a scene on a runtime from before the notice never asks, and its visitors' events keep flowing
-        if (await anyDeclined(ingestSubjects(signer, batch.visitorId))) return reply.send({ ok: true, accepted: 0, notice: false })
+        if (await anyDeclined([consentSubject(signer, batch.visitorId)])) return reply.send({ ok: true, accepted: 0, notice: false })
 
         const requesterLimit = checkRequesterLimits(limiter, {
           requesterKey: signer ? `w:${signer}` : `ip:${request.ip}`,

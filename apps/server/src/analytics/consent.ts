@@ -17,23 +17,21 @@ const SUBJECT_KEY = createHmac('sha256', config.jwtSecret).update('virvi-analyti
 
 const hmac = (key: string) => createHmac('sha256', SUBJECT_KEY).update(key).digest('hex')
 
-/** The key a decision is recorded and looked up under: the signer when the request was signed, else the visitor id. */
+/** A visitor id shaped like a wallet: only a signed request may decide for it. */
+export const isWalletShaped = (visitorId: string) => /^0x[0-9a-f]{40}$/i.test(visitorId)
+
+/**
+ * The one key a request decides, looks up and is enforced under: `w:<signer>` when it was signed, else `g:<visitor id>`.
+ * The two never cross, so the consent routes and ingest always read the same key for the same request. The consent
+ * routes refuse an unsigned request for a wallet-shaped visitor id (no one may decide for someone else's wallet), so
+ * no `g:` row for a wallet is ever written.
+ */
 export function consentSubject(signer: string | null, visitorId: string): string {
   return signer ? hmac(`w:${signer.toLowerCase()}`) : hmac(`g:${visitorId.toLowerCase()}`)
 }
 
-/**
- * Every key an ingest batch's visitor could have decided under. The decline of any of them stops the batch: an unsigned
- * batch claiming a wallet is dropped when that wallet declined (signed), and a guest's decline holds however the batch
- * came. Dropping more never reveals anything; it only records less.
- */
-export function ingestSubjects(signer: string | null, visitorId: string): string[] {
-  const ids = new Set([visitorId.toLowerCase(), ...(signer ? [signer.toLowerCase()] : [])])
-  return [...ids].flatMap((id) => [hmac(`w:${id}`), hmac(`g:${id}`)])
-}
-
-/** The subjects a verified wallet's data-deletion request covers. */
-export const walletSubject = (wallet: string) => hmac(`w:${wallet.toLowerCase()}`)
+/** The keys a verified wallet's data-deletion request covers: its own, and any guest-keyed rows under its address. */
+export const walletSubjects = (wallet: string) => [hmac(`w:${wallet.toLowerCase()}`), hmac(`g:${wallet.toLowerCase()}`)]
 
 export class StaleConsentError extends Error {
   constructor() { super('This is not the current privacy notice. Update the scene to see it.') }

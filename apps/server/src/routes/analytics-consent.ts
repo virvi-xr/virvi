@@ -4,7 +4,7 @@ import { isPrivacyDecision, locationKeyFor, validateSceneRef } from '@virvixr/sh
 import { db } from '../db/connection.js'
 import { analyticsScenes } from '../db/schema.js'
 import { hasDclAuthHeaders, verifyDclSignedFetch } from '../middleware/dcl-auth.js'
-import { StaleConsentError, consentStatus, consentSubject, recordConsent } from '../analytics/consent.js'
+import { StaleConsentError, consentStatus, consentSubject, isWalletShaped, recordConsent } from '../analytics/consent.js'
 
 const PLATFORMS = new Set(['decentraland', 'hyperfy', 'ar', 'web'])
 
@@ -21,6 +21,9 @@ async function signerOf(request: FastifyRequest): Promise<string | null> {
 
 const visitorIdOf = (v: unknown): string | null => (typeof v === 'string' && v.length > 0 && v.length <= 100 ? v : null)
 
+/** An unsigned request may decide only for a guest id, never for a wallet (the collector then treats it as no decision). */
+const signatureRequired = { error: 'signature_required', message: 'Sign the request to read or record a decision for a wallet.' }
+
 /**
  * The scene visitor notice (GDPR notice): a visitor's decision on Virvi's analytics, one for every Virvi scene. Under the
  * scene's analytics auth, as /api/ingest: a signed fetch decides as its wallet, anything else as the visitor id it
@@ -34,6 +37,7 @@ export default async function analyticsConsentRoutes(app: FastifyInstance) {
     const signer = await signerOf(request)
     const visitorId = visitorIdOf(request.query?.visitorId)
     if (!signer && !visitorId) return reply.status(400).send({ error: 'visitorId is required' })
+    if (!signer && isWalletShaped(visitorId!)) return reply.status(401).send(signatureRequired)
     return reply.send(await consentStatus(consentSubject(signer, signer ?? visitorId!)))
   })
 
@@ -44,6 +48,7 @@ export default async function analyticsConsentRoutes(app: FastifyInstance) {
       const signer = await signerOf(request)
       const visitorId = visitorIdOf(body.visitorId)
       if (!signer && !visitorId) return reply.status(400).send({ error: 'visitorId is required' })
+      if (!signer && isWalletShaped(visitorId!)) return reply.status(401).send(signatureRequired)
       const subject = consentSubject(signer, signer ?? visitorId!)
       // Where it was given: the analytics location, when Virvi already knows it (never created from here)
       const ref = validateSceneRef(body.scene)

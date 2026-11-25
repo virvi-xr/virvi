@@ -115,12 +115,22 @@ describe('scene visitor analytics notice', () => {
     expect((await status()).json().decision).toBeNull()
   })
 
-  it("an unsigned call can't speak for a wallet: it decides as a guest", async () => {
-    await decide('accept', {}, { visitorId: WALLET })
-    expect((await status()).json().decision).toBeNull()
-    expect((await status({}, WALLET)).json().decision).toBe('accept')
+  it("an unsigned call can't read or record a decision for a wallet-shaped id (401), and nothing is stored", async () => {
+    for (const id of [WALLET, WALLET.toUpperCase().replace('0X', '0x')]) {
+      const read = await status({}, id)
+      expect(read.statusCode).toBe(401)
+      expect(read.json()).toMatchObject({ error: 'signature_required' })
+      const write = await decide('decline', {}, { visitorId: id })
+      expect(write.statusCode).toBe(401)
+    }
+    expect(await db.select().from(analyticsConsents)).toHaveLength(0)
+    expect((await ingest(batch())).json()).toMatchObject({ accepted: 2 }) // the wallet's own batches still flow
+  })
+
+  it('an unsigned guest id decides as a guest', async () => {
     await decide('decline', {}, { visitorId: GUEST })
     expect((await status({}, GUEST)).json().decision).toBe('decline')
+    expect((await status()).json().decision).toBeNull()
   })
 
   describe('ingest', () => {
@@ -141,12 +151,23 @@ describe('scene visitor analytics notice', () => {
       expect(await db.select().from(analyticsScenes)).toHaveLength(0)
     })
 
-    it('drops an unsigned batch that claims a wallet which declined, and a guest who declined', async () => {
-      await decide('decline')
-      expect((await ingest(batch(), {})).json()).toMatchObject({ accepted: 0 })
+    it('drops a guest who declined; keys never cross between signed and unsigned', async () => {
       await decide('decline', {}, { visitorId: GUEST })
       expect((await ingest(batch({ visitorId: GUEST, isGuest: true, noticeShown: false, displayName: undefined }), {})).json()).toMatchObject({ accepted: 0 })
       expect(await db.select().from(analyticsSessions)).toHaveLength(0)
+      // A signed decline is enforced on signed batches only: an unsigned batch is checked under its own guest key
+      await decide('decline')
+      expect((await ingest(batch())).json()).toMatchObject({ accepted: 0 })
+      expect((await ingest(batch(), {})).json()).toMatchObject({ accepted: 2 })
+    })
+
+    it('reads the same key the consent GET reads, for the same request', async () => {
+      await decide('accept')
+      expect((await status()).json().decision).toBe('accept')
+      expect((await ingest(batch())).json()).toMatchObject({ accepted: 2 })
+      await decide('decline')
+      expect((await status()).json().decision).toBe('decline')
+      expect((await ingest(batch({ sessionId: '33333333-3333-4333-8333-333333333333' }))).json()).toMatchObject({ accepted: 0 })
     })
 
     it('a decline on an older version is not enforced (the visitor is asked again)', async () => {
@@ -177,6 +198,19 @@ describe('scene visitor analytics notice', () => {
       expect(left.map((r) => r.decision).sort()).toEqual(['decline', 'decline'])
       expect((await status()).json().decision).toBe('decline')
       expect((await ingest(batch())).json()).toMatchObject({ accepted: 0 })
+    })
+
+    it("also removes guest-keyed rows under the wallet's address, keeping a final decline there too", async () => {
+      const g = consentSubject(null, WALLET)
+      await db.insert(analyticsConsents).values([
+        { subjectHash: g, decision: 'accept', version: ANALYTICS_CONSENT_VERSION, platform: 'decentraland', createdAt: new Date(Date.now() - 2000) },
+        { subjectHash: g, decision: 'decline', version: ANALYTICS_CONSENT_VERSION, platform: 'decentraland', createdAt: new Date(Date.now() - 1000) },
+      ])
+      await decide('accept')
+      const res = await del(WALLET)
+      expect(res.json().deleted.consents).toBe(2) // the wallet's accept and the old guest-keyed accept
+      const left = await db.select().from(analyticsConsents)
+      expect(left.map((r) => [r.subjectHash === g, r.decision])).toEqual([[true, 'decline']])
     })
 
     it('removes every row when the latest decision is an accept', async () => {
