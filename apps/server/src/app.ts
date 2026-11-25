@@ -11,6 +11,7 @@ import { registerJwt } from './middleware/auth.js'
 import authRoutes from './routes/auth.js'
 import emailVerificationRoutes from './routes/email-verification.js'
 import termsRoutes from './routes/terms.js'
+import privacyRoutes from './routes/privacy.js'
 import walletAuthRoutes from './routes/wallet-auth.js'
 import trialRoutes from './routes/trial.js'
 import authHandoffRoutes from './routes/auth-handoff.js'
@@ -58,6 +59,7 @@ import advertiserLeadRoutes from './routes/advertiser-leads.js'
 import summitSignupRoutes from './routes/summit-signups.js'
 import venueRoutes from './routes/venues.js'
 import ingestRoutes from './routes/ingest.js'
+import analyticsConsentRoutes from './routes/analytics-consent.js'
 import wizardRoutes from './routes/wizard.js'
 import dclDestinationRoutes from './routes/dcl-destinations.js'
 import studioWorkerRoutes from './routes/studio-worker.js'
@@ -226,6 +228,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     await scope.register(authRoutes)
     await scope.register(emailVerificationRoutes)
     await scope.register(termsRoutes)
+    await scope.register(privacyRoutes)
     await scope.register(walletAuthRoutes)
     await scope.register(trialRoutes)
     await scope.register(authHandoffRoutes)
@@ -293,6 +296,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(summitSignupRoutes)
   await app.register(venueRoutes)
   await app.register(ingestRoutes)
+  await app.register(analyticsConsentRoutes)
   await app.register(wizardRoutes)
   await app.register(dclDestinationRoutes)
   await app.register(studioWorkerRoutes)

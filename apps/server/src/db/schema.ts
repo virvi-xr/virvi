@@ -1348,6 +1348,37 @@ export const termsAcceptances = pgTable('terms_acceptances', {
   acceptedAt: timestamp('accepted_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({ oneEach: uniqueIndex('terms_acceptances_user_version_idx').on(t.userId, t.version) }))
 
+// ── Privacy decisions (GDPR notice) ─────────────────────────────────────────
+
+/**
+ * Scene visitors' decisions on the analytics notice (ANALYTICS_CONSENT_VERSION), append-only: a new decision is a new
+ * row, never an update. The current decision is the latest row for the current version. `subject_hash` is the
+ * cross-scene key (analytics/consent.ts): an HMAC of the verified wallet or the guest id, never the raw value.
+ */
+export const analyticsConsents = pgTable('analytics_consents', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  subjectHash: text('subject_hash').notNull(),
+  /** 'accept' | 'decline' */
+  decision: text('decision').notNull(),
+  version: integer('version').notNull(),
+  /** The analytics location the decision was made in, when Virvi knows it. */
+  sceneId: uuid('scene_id').references(() => analyticsScenes.id, { onDelete: 'set null' }),
+  platform: text('platform').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ bySubject: index('analytics_consents_subject_idx').on(t.subjectHash, t.version, t.createdAt) }))
+
+/** Accounts' decisions on the dashboard privacy notice (PRIVACY_NOTICE_VERSION), append-only; they go with the account. */
+export const privacyDecisions = pgTable('privacy_decisions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  /** 'accept' | 'decline' */
+  decision: text('decision').notNull(),
+  version: integer('version').notNull(),
+  /** 'prompt' (the dashboard notice) | 'settings' (the Settings row) */
+  via: text('via').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ byUser: index('privacy_decisions_user_idx').on(t.userId, t.version, t.createdAt) }))
+
 // ── Password Reset Tokens ───────────────────────────────────────────────────
 
 export const passwordResetTokens = pgTable('password_reset_tokens', {

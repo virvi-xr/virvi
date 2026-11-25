@@ -89,6 +89,15 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] terms_acceptances table ensured');
       } catch(e) { console.log('[virvi-server] terms_acceptances:', e.message); }
 
+      // Privacy decisions (GDPR notice); match analyticsConsents and privacyDecisions in src/db/schema.ts
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS analytics_consents (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), subject_hash TEXT NOT NULL, decision TEXT NOT NULL, version INTEGER NOT NULL, scene_id UUID CONSTRAINT analytics_consents_scene_id_analytics_scenes_id_fk REFERENCES analytics_scenes(id) ON DELETE SET NULL, platform TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE INDEX IF NOT EXISTS analytics_consents_subject_idx ON analytics_consents (subject_hash, version, created_at)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS privacy_decisions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL CONSTRAINT privacy_decisions_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, decision TEXT NOT NULL, version INTEGER NOT NULL, via TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE INDEX IF NOT EXISTS privacy_decisions_user_idx ON privacy_decisions (user_id, version, created_at)\`;
+        console.log('[virvi-server] privacy decision tables ensured');
+      } catch(e) { console.log('[virvi-server] privacy decision tables:', e.message); }
+
       // Per-scene media library; matches sceneLibrary in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS scene_library (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), scene_id UUID NOT NULL REFERENCES scenes(id) ON DELETE CASCADE, media_asset_id UUID REFERENCES media_assets(id) ON DELETE CASCADE, asset_item_id UUID REFERENCES asset_library_items(id) ON DELETE CASCADE, added_by UUID REFERENCES users(id) ON DELETE SET NULL, booking_id UUID REFERENCES bookings(id) ON DELETE CASCADE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), CONSTRAINT scene_library_one_item CHECK ((media_asset_id IS NULL) <> (asset_item_id IS NULL)))\`;

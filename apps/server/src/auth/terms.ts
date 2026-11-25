@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, inArray } from 'drizzle-orm'
 import { TERMS_VERSION } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { termsAcceptances } from '../db/schema.js'
@@ -26,4 +26,22 @@ export async function termsStatus(userId: string): Promise<TermsStatus> {
 export async function acceptTerms(userId: string, version: unknown, via: 'sign-up' | 'prompt'): Promise<void> {
   if (version !== TERMS_VERSION) throw new StaleTermsError()
   await db.insert(termsAcceptances).values({ userId, version, via }).onConflictDoNothing()
+}
+
+/** termsStatus for many accounts at once (the admin user list), keyed by user id, with when the current Terms were agreed. */
+export async function termsStatusesFor(userIds: string[]): Promise<Map<string, TermsStatus & { acceptedAt: string | null }>> {
+  const out = new Map<string, TermsStatus & { acceptedAt: string | null }>(
+    userIds.map((id) => [id, { version: TERMS_VERSION, accepted: false, acceptedVersion: null, acceptedAt: null }]),
+  )
+  if (!userIds.length) return out
+  const rows = await db.select({ userId: termsAcceptances.userId, version: termsAcceptances.version, at: termsAcceptances.acceptedAt })
+    .from(termsAcceptances).where(inArray(termsAcceptances.userId, userIds)).orderBy(termsAcceptances.acceptedAt)
+  for (const r of rows) {
+    const cur = out.get(r.userId)!
+    if (cur.accepted) continue
+    out.set(r.userId, r.version === TERMS_VERSION
+      ? { version: TERMS_VERSION, accepted: true, acceptedVersion: TERMS_VERSION, acceptedAt: r.at.toISOString() }
+      : { ...cur, acceptedVersion: r.version })
+  }
+  return out
 }
