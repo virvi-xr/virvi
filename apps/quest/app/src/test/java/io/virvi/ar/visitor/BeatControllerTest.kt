@@ -1,6 +1,5 @@
 package io.virvi.ar.visitor
 
-import io.virvi.ar.builder.FakeSecureStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -50,7 +49,6 @@ class FakeRoutes : BeatRoutes {
 class BeatControllerTest {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
   private val routes = FakeRoutes()
-  private val store = FakeSecureStore()
   private var signedIn = true
   private var signInAsked = 0
   private var view: BeatView? = null
@@ -61,7 +59,7 @@ class BeatControllerTest {
 
   private fun controller(checkInMs: Long = 5): BeatController =
       BeatController(
-          scope, routes, StoredBeatConsent(store) { "u1" },
+          scope, routes,
           signedIn = { signedIn }, startSignIn = { signInAsked++ },
           publish = { view = it; views += it }, nowMs = { NOW }, checkInMs = checkInMs,
       )
@@ -113,10 +111,11 @@ class BeatControllerTest {
   }
 
   @Test
-  fun `the first track asks for consent, then sends it once accepted, and the consent is remembered`() {
+  fun `every track asks for consent, and sends it only once accepted`() {
     routes.spaceCard = BeatResult.Ok(card())
     routes.tracks += BeatResult.Ok(card(present(0)))
-    val c = controller()
+    routes.tracks += BeatResult.Ok(card(present(0)))
+    val c = controller(checkInMs = 10_000)
     c.spaceShown("s1")
     waitFor("card") { view != null }
     c.primary()
@@ -124,11 +123,15 @@ class BeatControllerTest {
     assertFalse(routes.calls.any { it.startsWith("track") })
     c.acceptConsent()
     waitFor("tracked") { routes.calls.contains("track:b1:s1") }
-    waitFor("counting") { view?.text == "Attend for 5 minutes to earn the Opening Night BEAT." && view?.canStop == true }
-    assertNull(view!!.consent)
-    // A second BEAT's first track does not ask again
-    assertTrue(StoredBeatConsent(store) { "u1" }.accepted())
-    assertFalse(StoredBeatConsent(store) { "u2" }.accepted())
+    waitFor("counting") { view?.canStop == true && view?.consent == null }
+    // Stopping and tracking again asks again: nothing is remembered between tracks
+    c.stopTracking()
+    waitFor("track again") { view?.button == "Track my attendance" }
+    c.primary()
+    assertEquals(beatAppConsentText("Opening Night"), view!!.consent)
+    assertEquals(1, routes.calls.count { it.startsWith("track") })
+    c.acceptConsent()
+    waitFor("tracked twice") { routes.calls.count { it.startsWith("track") } == 2 }
   }
 
   @Test
@@ -145,7 +148,6 @@ class BeatControllerTest {
 
   @Test
   fun `check-ins run only while counting and only while the space is shown`() {
-    StoredBeatConsent(store) { "u1" }.accept()
     routes.spaceCard = BeatResult.Ok(card(present(0)))
     routes.checkIns += BeatResult.Ok(card(present(30)))
     routes.checkIns += BeatResult.Ok(card(present(60)))
@@ -228,16 +230,17 @@ class BeatControllerTest {
   @Test
   fun `an error shows the server's words, and a retry asks again`() {
     routes.spaceCard = BeatResult.Ok(card())
-    StoredBeatConsent(store) { "u1" }.accept()
     routes.tracks += BeatResult.Error(AppBeatError(403, "verify_first", "Verify your email at virvi.io to earn BEATs."))
     routes.tracks += BeatResult.Ok(card(present(0)))
     val c = controller(checkInMs = 10_000)
     c.spaceShown("s1")
     waitFor("card") { view != null }
     c.primary()
+    c.acceptConsent()
     waitFor("error") { view?.text == "Verify your email at virvi.io to earn BEATs." }
     assertTrue(view!!.canRetry)
     c.retry()
+    c.acceptConsent() // a retried track asks for consent again
     waitFor("counting") { view?.canStop == true }
   }
 
@@ -257,12 +260,12 @@ class BeatControllerTest {
   @Test
   fun `the account changing forgets what to retry`() {
     routes.spaceCard = BeatResult.Ok(card())
-    StoredBeatConsent(store) { "u1" }.accept()
     routes.tracks += BeatResult.Error(AppBeatError(403, "verify_first", "Verify first."))
     val c = controller(checkInMs = 10_000)
     c.spaceShown("s1")
     waitFor("card") { view != null }
     c.primary()
+    c.acceptConsent()
     waitFor("error") { view?.canRetry == true }
     c.accountChanged()
     waitFor("track") { view?.button == "Track my attendance" }

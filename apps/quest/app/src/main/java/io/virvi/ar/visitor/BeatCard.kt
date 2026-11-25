@@ -16,9 +16,13 @@ import kotlinx.serialization.json.jsonObject
 /** The version of the consent text, stored with each app claim: `BEAT_APP_CONSENT_VERSION` in packages/shared/src/beats.ts. */
 const val BEAT_APP_CONSENT_VERSION = 1
 
-/** What the visitor agrees to before tracking a BEAT: `beatAppConsentText(name)` in packages/shared/src/beats.ts, word for word. */
+/**
+ * What the visitor agrees to before tracking a BEAT: `beatAppConsentText(name)` in packages/shared/src/beats.ts, word for
+ * word, except its sentence about location checks. The headset never checks the location (event BEATs are phone-only), so
+ * saying it would be untrue here.
+ */
 fun beatAppConsentText(name: String) =
-    "To track your attendance for the $name BEAT, Virvi stores your account, how long you're here and, when you claim, the wallet you choose. Virvi checks your location only when you check in and when you claim, and doesn't keep it. The hosts of this event will see your name and time. If you claim, your wallet, this BEAT and the time it was sent are recorded on Polygon, a public blockchain: anyone can see that record, and nobody can delete it. You can stop tracking at any time before you claim, which deletes what was stored."
+    "To track your attendance for the $name BEAT, Virvi stores your account, how long you're here and, when you claim, the wallet you choose. The hosts of this event will see your name, your time and, if you claim, the wallet you choose. If you claim, your wallet, this BEAT and the time it was sent are recorded on Polygon, a public blockchain: anyone can see that record, and nobody can delete it. You can stop tracking at any time before you claim, which deletes what was stored."
 
 data class AppBeatClaim(
     /** `present`, `waiting`, `claimed`, `minting`, `minted`, `failed` or `removed`. */

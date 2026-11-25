@@ -40,20 +40,9 @@ interface BeatLink {
   fun accountChanged()
 }
 
-/** Whether this account has accepted the consent text, kept on the headset (the server also records the version at each track). */
-class StoredBeatConsent(private val store: SecureStore, private val userId: () -> String?) {
-  private fun key(id: String) = "beat_consent_$id"
-
-  fun accepted(): Boolean = userId()?.let { store.get(key(it)) == BEAT_APP_CONSENT_VERSION.toString() } == true
-
-  fun accept() {
-    userId()?.let { store.put(key(it), BEAT_APP_CONSENT_VERSION.toString()) }
-  }
-}
-
 /**
  * The BEAT card's behaviour in an AR space, mirroring the Virvi app's `BeatModel`: which BEAT the shown space has,
- * tracking (with the consent text first), check-ins every [checkInMs] while the shown space's BEAT is counting,
+ * tracking (with the consent text first, on every track), check-ins every [checkInMs] while the shown space's BEAT is counting,
  * claiming (with the wallet choice), and stopping. [BeatCard] decides what it says. The Quest has no location and no
  * event ARCs, so there is no location check and no event card. A signed-out visitor sees the card and its **Sign in to earn
  * this BEAT** button ([startSignIn]). Main thread only.
@@ -61,7 +50,6 @@ class StoredBeatConsent(private val store: SecureStore, private val userId: () -
 class BeatController(
     private val scope: CoroutineScope,
     private val routes: BeatRoutes,
-    private val consent: StoredBeatConsent,
     private val signedIn: () -> Boolean,
     private val startSignIn: () -> Unit,
     private val publish: (BeatView?) -> Unit,
@@ -175,13 +163,10 @@ class BeatController(
     val beat = current ?: return
     if (!signedIn()) return
     lastAction = Action.Track
-    if (!consent.accepted()) {
-      consentText = beatAppConsentText(beat.name)
-      tracksAfterConsent = true
-      emit()
-      return
-    }
-    startTracking(beat)
+    // Every track asks: nothing about an earlier answer is kept
+    consentText = beatAppConsentText(beat.name)
+    tracksAfterConsent = true
+    emit()
   }
 
   override fun acceptConsent() {
@@ -189,7 +174,6 @@ class BeatController(
     val beat = current
     if (!tracksAfterConsent || beat == null) return emit()
     tracksAfterConsent = false
-    consent.accept()
     emit()
     startTracking(beat)
   }

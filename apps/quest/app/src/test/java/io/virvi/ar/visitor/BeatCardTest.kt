@@ -1,7 +1,9 @@
 package io.virvi.ar.visitor
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** The Quest's BEAT card mirrors packages/virvi-ar-swift's BeatCardTests: the same states, words and mapping. */
@@ -171,12 +173,20 @@ class BeatCardTest {
   }
 
   @Test
-  fun `the consent text is the global constraints' word for word`() {
+  fun `the consent text is the shared one word for word, less the location sentence the headset cannot keep`() {
     assertEquals(1, BEAT_APP_CONSENT_VERSION)
-    assertEquals(
-        "To track your attendance for the Opening Night BEAT, Virvi stores your account, how long you're here and, when you claim, the wallet you choose. Virvi checks your location only when you check in and when you claim, and doesn't keep it. The hosts of this event will see your name and time. If you claim, your wallet, this BEAT and the time it was sent are recorded on Polygon, a public blockchain: anyone can see that record, and nobody can delete it. You can stop tracking at any time before you claim, which deletes what was stored.",
-        beatAppConsentText("Opening Night"),
-    )
+    val shared =
+        java.io.File("../../../packages/shared/src/beats.ts").readText()
+            .substringAfter("export function beatAppConsentText(name: string): string {")
+            .substringAfter("return `")
+            .substringBefore("`")
+            .replace("\${name}", "Opening Night")
+    val location = "Virvi checks your location only when you check in and when you claim, and doesn't keep it. "
+    assertTrue(shared, shared.contains(location))
+    val text = beatAppConsentText("Opening Night")
+    assertEquals(shared.replace(location, ""), text)
+    assertFalse(text, text.contains("location"))
+    assertTrue(text, text.contains("The hosts of this event will see your name, your time and, if you claim, the wallet you choose."))
   }
 
   @Test

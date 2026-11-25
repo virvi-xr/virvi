@@ -107,7 +107,6 @@ import io.virvi.ar.visitor.BeatPanel
 import io.virvi.ar.visitor.MenuActions
 import io.virvi.ar.visitor.SignInPanel
 import io.virvi.ar.visitor.SignInState
-import io.virvi.ar.visitor.StoredBeatConsent
 import io.virvi.ar.visitor.VisitorSignIn
 import io.virvi.ar.visitor.MenuButton
 import io.virvi.ar.visitor.RingOutline
@@ -220,7 +219,6 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
         BeatController(
             scope,
             AppBeatRoutes(api, visitorSignIn),
-            StoredBeatConsent(secure, visitorSignIn::userId),
             signedIn = { visitorSignIn.bearer() != null },
             startSignIn = ::signIn,
             publish = { state.beat = it },
