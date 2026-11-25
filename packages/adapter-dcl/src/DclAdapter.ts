@@ -175,9 +175,10 @@ export class DclAdapter implements VirviPlatformAdapter {
   /**
    * Make an HTTP request using DCL's signedFetch.
    * The DCL runtime automatically adds AuthChain headers that prove
-   * the request comes from the player's Ethereum wallet.
+   * the request comes from the player's Ethereum wallet. A GET or HEAD goes with no body.
    */
   async signedRequest(url: string, init: { method: string; body: string; headers?: Record<string, string> }): Promise<{ status: number; body: string }> {
+    const bodyless = /^(GET|HEAD)$/i.test(init.method)
     try {
       const { signedFetch } = await import('~system/SignedFetch' as any)
       const response = await signedFetch({
@@ -188,7 +189,7 @@ export class DclAdapter implements VirviPlatformAdapter {
             'Content-Type': 'application/json',
             ...init.headers,
           },
-          body: init.body,
+          ...(bodyless ? {} : { body: init.body }),
         },
       })
       return {
@@ -203,7 +204,7 @@ export class DclAdapter implements VirviPlatformAdapter {
           'Content-Type': 'application/json',
           ...init.headers,
         },
-        body: init.body,
+        ...(bodyless ? {} : { body: init.body }),
       })
       return {
         status: response.status,
