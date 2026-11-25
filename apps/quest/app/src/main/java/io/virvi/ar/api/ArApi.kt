@@ -18,6 +18,12 @@ sealed interface ApiResult<out T> {
   data class Failed(val status: Int) : ApiResult<Nothing>
 }
 
+/** What a call to the app's routes (`ArApi.appCall`) came to: the server's status and body, or no answer at all. */
+sealed interface AppResponse {
+  data class Response(val status: Int, val body: String) : AppResponse
+  data object Offline : AppResponse
+}
+
 /** How a visitor's report of a space ended. */
 enum class ReportResult { Sent, RateLimited, Failed }
 
@@ -138,12 +144,14 @@ class ArApi(baseUrl: String, private val userAgentVersion: Int = 1) {
       }
 
   /** `POST /api/ar/pair`: [secretHash] is the hex SHA-256 of the headset's secret. The secret itself is never sent here. */
-  suspend fun startPairing(secretHash: String, deviceName: String?): BuilderCall<PairStart> =
+  suspend fun startPairing(secretHash: String, deviceName: String?, purpose: String? = null): BuilderCall<PairStart> =
       device(
           "/api/ar/pair",
           buildJsonObject {
             put("secretHash", secretHash)
             if (deviceName != null) put("deviceName", deviceName)
+            // `visitor` makes a visitor sign-in (its claim returns the approver's account session); absent is a builder headset
+            if (purpose != null) put("purpose", purpose)
           },
           ::parsePairStart,
       )
@@ -170,6 +178,58 @@ class ArApi(baseUrl: String, private val userAgentVersion: Int = 1) {
   /** `POST /api/ar/devices/:id/spaces`: the spaces the approver can build on. */
   suspend fun deviceSpaces(deviceId: String, secret: String): BuilderCall<List<DeviceSpace>> =
       device("/api/ar/devices/${enc(deviceId)}/spaces", secretBody(secret), ::parseDeviceSpaces)
+
+  /**
+   * `POST /api/auth/refresh` with the visitor's [refreshToken] as the bearer. 400, 401 and 403 refuse the token; offline,
+   * rate limits and server errors learn nothing, and the session is kept.
+   */
+  suspend fun refresh(refreshToken: String): RefreshResult =
+      when (val r = appCall("POST", "/api/auth/refresh", refreshToken, null, "")) {
+        AppResponse.Offline -> RefreshResult.Unavailable
+        is AppResponse.Response ->
+            when (r.status) {
+              200 -> parseRefresh(r.body) ?: RefreshResult.Unavailable
+              400, 401, 403 -> RefreshResult.Refused
+              else -> RefreshResult.Unavailable
+            }
+      }
+
+  /**
+   * A call to the Virvi app's routes (`/api/app/...`): anonymous when [token] is null, else with it as the bearer, and
+   * with [deviceId] as `X-Virvi-Device` (a signed-in Quest's proof of its own install, beside the session). The answer
+   * is the status and body whatever they are; the callers read them. [body] is sent as JSON.
+   */
+  suspend fun appCall(method: String, path: String, token: String?, deviceId: String?, body: String?): AppResponse =
+      withContext(Dispatchers.IO) {
+        val c =
+            try {
+              URL(base + path).openConnection() as HttpURLConnection
+            } catch (e: java.io.IOException) {
+              return@withContext AppResponse.Offline
+            }
+        try {
+          c.requestMethod = method
+          c.connectTimeout = 15_000
+          c.readTimeout = 15_000
+          c.useCaches = false
+          c.setRequestProperty("X-Virvi-App-Version", userAgentVersion.toString())
+          if (!token.isNullOrEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
+          if (!token.isNullOrEmpty() && !deviceId.isNullOrEmpty()) c.setRequestProperty("X-Virvi-Device", deviceId)
+          if (body != null) {
+            c.doOutput = true
+            // An empty body has no content type: the server would read it as empty JSON and refuse it
+            if (body.isNotEmpty()) c.setRequestProperty("Content-Type", "application/json")
+            c.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+          }
+          val status = c.responseCode
+          val text = (if (status in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
+          AppResponse.Response(status, text)
+        } catch (e: java.io.IOException) {
+          AppResponse.Offline
+        } finally {
+          c.disconnect()
+        }
+      }
 
   private fun secretBody(secret: String) = buildJsonObject { put("secret", secret) }
 

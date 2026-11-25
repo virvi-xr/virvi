@@ -10,4 +10,6 @@
   <item name="builder_hud" type="id" />
   <item name="builder_prompt" type="id" />
   <item name="ring_panel" type="id" />
+  <item name="beat_card" type="id" />
+  <item name="sign_in_panel" type="id" />
 </resources>

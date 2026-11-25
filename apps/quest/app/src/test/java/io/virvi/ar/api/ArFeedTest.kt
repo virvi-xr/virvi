@@ -138,4 +138,66 @@ class ArFeedTest {
         statuses.toList(),
     )
   }
+
+  /** A feed whose answers depend on the Authorization header: [answer] gets it (null for none). */
+  private fun feedServer(answer: (auth: String?) -> MockResponse): CopyOnWriteArrayList<String?> {
+    val auths = CopyOnWriteArrayList<String?>()
+    server.dispatcher =
+        object : Dispatcher() {
+          override fun dispatch(request: RecordedRequest): MockResponse {
+            auths += request.getHeader("Authorization")
+            return answer(request.getHeader("Authorization"))
+          }
+        }
+    server.start()
+    return auths
+  }
+
+  private fun waitForSnapshot(snaps: List<String>) {
+    val deadline = System.currentTimeMillis() + 10_000
+    while (snaps.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(10)
+  }
+
+  @Test
+  fun `a refused visitor token is refreshed and the feed goes on with the new one`() {
+    var token = "old"
+    val auths = feedServer { a -> if (a == "Bearer new") MockResponse().setBody(feedBody("a")) else MockResponse().setResponseCode(401).setBody("""{"error":"unauthorized"}""") }
+    val snaps = CopyOnWriteArrayList<String>()
+    val refused = CopyOnWriteArrayList<String>()
+    ArFeed(scope, ArApi(server.url("/").toString()), {}, { snaps += it.version }, refused = { used -> refused += used; token = "new"; true })
+        .start("s1") { token }
+    waitForSnapshot(snaps)
+    assertEquals(listOf("old"), refused.toList())
+    assertEquals(listOf("Bearer old", "Bearer new"), auths.take(2))
+  }
+
+  @Test
+  fun `a token that stays refused falls back to an anonymous poll`() {
+    val auths = feedServer { a -> if (a == null) MockResponse().setBody(feedBody("a")) else MockResponse().setResponseCode(401).setBody("""{"error":"unauthorized"}""") }
+    val snaps = CopyOnWriteArrayList<String>()
+    ArFeed(scope, ArApi(server.url("/").toString()), {}, { snaps += it.version }, refused = { true }).start("s1") { "same" }
+    waitForSnapshot(snaps)
+    assertEquals(listOf("Bearer same", null), auths.take(2))
+  }
+
+  @Test
+  fun `a visitor who signed out while refused polls anonymously`() {
+    var token: String? = "old"
+    val auths = feedServer { a -> if (a == null) MockResponse().setBody(feedBody("a")) else MockResponse().setResponseCode(401) }
+    val snaps = CopyOnWriteArrayList<String>()
+    ArFeed(scope, ArApi(server.url("/").toString()), {}, { snaps += it.version }, refused = { token = null; true }).start("s1") { token }
+    waitForSnapshot(snaps)
+    assertEquals(listOf("Bearer old", null), auths.take(2))
+  }
+
+  @Test
+  fun `a refused token that is not the visitor's (a builder's pass) is not retried or dropped`() {
+    val auths = feedServer { MockResponse().setResponseCode(401).setBody("""{"error":"unauthorized"}""") }
+    val statuses = CopyOnWriteArrayList<FeedStatus>()
+    ArFeed(scope, ArApi(server.url("/").toString()), { statuses += it }, {}, refused = { false }).start("s1") { "pass" }
+    val deadline = System.currentTimeMillis() + 10_000
+    while (FeedStatus.FAILED !in statuses && System.currentTimeMillis() < deadline) Thread.sleep(10)
+    assertEquals(FeedStatus.FAILED, statuses.last())
+    assertTrue(auths.all { it == "Bearer pass" })
+  }
 }

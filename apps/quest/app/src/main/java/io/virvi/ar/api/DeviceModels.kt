@@ -17,9 +17,19 @@ data class PairStart(val code: String, val approveUrl: String, val codeExpiresAt
   override fun toString() = "PairStart(codeExpiresAtMs=$codeExpiresAtMs)"
 }
 
+/** A visitor's signed-in account, as a visitor pairing's claim gives it. The tokens are credentials: they are not printed. */
+data class AccountSession(val userId: String, val userName: String?, val accessToken: String, val refreshToken: String) {
+  override fun toString() = "AccountSession(userId=$userId)"
+}
+
 sealed interface PairClaim {
   data object Pending : PairClaim
   data class Approved(val deviceId: String, val kind: DeviceKind, val expiresAtMs: Long) : PairClaim
+  /**
+   * A visitor pairing: the approver's account session, and the pairing's id, which BEAT writes send as `X-Virvi-Device`.
+   * The id is no builder device: it can mint no pass.
+   */
+  data class Visitor(val deviceId: String, val session: AccountSession) : PairClaim
   data object Refused : PairClaim
 }
 
@@ -62,6 +72,7 @@ fun parseClaim(body: String): PairClaim? {
     "pending" -> PairClaim.Pending
     "refused" -> PairClaim.Refused
     "approved" ->
+        if (o.str("purpose") == "visitor") parseVisitorClaim(o) else
         PairClaim.Approved(
             o.str("deviceId") ?: return null,
             when (o.str("kind")) {
@@ -73,6 +84,36 @@ fun parseClaim(body: String): PairClaim? {
         )
     else -> null
   }
+}
+
+private fun parseVisitorClaim(o: JsonObject): PairClaim? {
+  val s = o["session"] as? JsonObject ?: return null
+  val user = s["user"] as? JsonObject ?: return null
+  return PairClaim.Visitor(
+      o.str("deviceId") ?: return null,
+      AccountSession(
+          user.str("id") ?: return null,
+          user.str("displayName"),
+          s.str("accessToken")?.takeIf { it.isNotEmpty() } ?: return null,
+          s.str("refreshToken")?.takeIf { it.isNotEmpty() } ?: return null,
+      ),
+  )
+}
+
+/** What `POST /api/auth/refresh` came to: new tokens, a refusal of the refresh token, or nothing learned (offline, a server error). */
+sealed interface RefreshResult {
+  /** [refreshToken] is null when the server kept the old one. */
+  data class Tokens(val accessToken: String, val refreshToken: String?) : RefreshResult
+  data object Refused : RefreshResult
+  data object Unavailable : RefreshResult
+}
+
+fun parseRefresh(body: String): RefreshResult.Tokens? {
+  val o = obj(body) ?: return null
+  return RefreshResult.Tokens(
+      o.str("accessToken")?.takeIf { it.isNotEmpty() } ?: return null,
+      o.str("refreshToken")?.takeIf { it.isNotEmpty() },
+  )
 }
 
 fun parsePass(body: String): MintedPass? {

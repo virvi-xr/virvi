@@ -101,7 +101,14 @@ import io.virvi.ar.space.SpaceSession
 import io.virvi.ar.visitor.CameraRings
 import io.virvi.ar.visitor.HintCard
 import io.virvi.ar.visitor.LazyFollow
+import io.virvi.ar.visitor.AppBeatRoutes
+import io.virvi.ar.visitor.BeatController
+import io.virvi.ar.visitor.BeatPanel
 import io.virvi.ar.visitor.MenuActions
+import io.virvi.ar.visitor.SignInPanel
+import io.virvi.ar.visitor.SignInState
+import io.virvi.ar.visitor.StoredBeatConsent
+import io.virvi.ar.visitor.VisitorSignIn
 import io.virvi.ar.visitor.MenuButton
 import io.virvi.ar.visitor.RingOutline
 import io.virvi.ar.visitor.SpacePage
@@ -113,6 +120,7 @@ import java.io.File
 import kotlin.math.atan2
 import kotlin.math.sqrt
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -134,6 +142,9 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
   private lateinit var prefs: AppPrefs
   private lateinit var renderer: SceneRenderer
   private lateinit var visitor: VisitorController
+  private lateinit var visitorSignIn: VisitorSignIn
+  private lateinit var beats: BeatController
+  private var signInJob: Job? = null
   private lateinit var builder: BuilderController
   private lateinit var roomScan: RoomScanFlow
   private val builderPanels = BuilderPanels(state)
@@ -142,6 +153,10 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
   private var menuButton: Entity? = null
   private var menuPanel: Entity? = null
   private var spacePagePanel: Entity? = null
+  private var beatPanel: Entity? = null
+  private var signInPanel: Entity? = null
+  /** The sign-in code panel has been put in front of the visitor since it opened. */
+  private var signInPlaced = false
   /** The space page has been put in front of the visitor since it opened. */
   private var spacePagePlaced = false
   private var developerPanel: Entity? = null
@@ -197,10 +212,31 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
     // Release builds always use https://virvi.io; debug builds take a `baseUrl` extra (saved for next time).
     state.serverUrl = prefs.baseUrl(intent.getStringExtra("baseUrl"))
     val api = ArApi(state.serverUrl)
+    // One encrypted store for the builder's pairing and the visitor's sign-in (their keys are apart)
+    val secure = EncryptedSecureStore(this)
+    visitorSignIn = VisitorSignIn(api, secure, System::currentTimeMillis, deviceName = Build.MODEL)
+    state.signIn = visitorSignIn.state
+    beats =
+        BeatController(
+            scope,
+            AppBeatRoutes(api, visitorSignIn),
+            StoredBeatConsent(secure, visitorSignIn::userId),
+            signedIn = { visitorSignIn.bearer() != null },
+            startSignIn = ::signIn,
+            publish = { state.beat = it },
+        )
+    var lastSignIn: SignInState = visitorSignIn.state
+    visitorSignIn.onState = { now ->
+      val before = lastSignIn
+      lastSignIn = now
+      state.signIn = now
+      // The card is asked for again as the new account (or none) once a sign-in finishes or a session ends
+      if (now is SignInState.SignedIn || (before is SignInState.SignedIn && now is SignInState.SignedOut)) beats.accountChanged()
+    }
     val session =
         SpaceSession(
             renderer,
-            { onStatus, onSnapshot -> ArFeed(scope, api, onStatus, onSnapshot) },
+            { onStatus, onSnapshot -> ArFeed(scope, api, onStatus, onSnapshot, refused = visitorSignIn::refreshAfter) },
             RingOutline(),
             SystemClock::elapsedRealtime,
         )
@@ -215,8 +251,10 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
             prefs = prefs,
             ui = state,
             setRegistered = { ids -> tracker.registered = ids },
+            visitorToken = visitorSignIn::bearer,
+            beats = beats,
         )
-    val auth = DeviceAuth(api, EncryptedSecureStore(this), System::currentTimeMillis, deviceName = Build.MODEL)
+    val auth = DeviceAuth(api, secure, System::currentTimeMillis, deviceName = Build.MODEL)
     val builderApi = BuilderApi(api, auth)
     builder =
         BuilderController(
@@ -298,6 +336,8 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
     menuButton = Entity.createPanelEntity(R.id.menu_button, Transform(Pose())).also { show(it, false) }
     menuPanel = Entity.createPanelEntity(R.id.visitor_menu, Transform(Pose())).also { show(it, false) }
     spacePagePanel = Entity.createPanelEntity(R.id.space_page, Transform(Pose())).also { show(it, false) }
+    beatPanel = Entity.createPanelEntity(R.id.beat_card, Transform(Pose())).also { show(it, false) }
+    signInPanel = Entity.createPanelEntity(R.id.sign_in_panel, Transform(Pose())).also { show(it, false) }
     if (BuildConfig.DEBUG) {
       developerPanel = Entity.createPanelEntity(R.id.control_panel, Transform(Pose()), Grabbable()).also { show(it, false) }
     }
@@ -311,7 +351,11 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
       listOfNotNull(
           composePanel(R.id.hint_card, 0.5f, 0.3f) { HintCard(state.hint ?: "") },
           composePanel(R.id.menu_button, 0.08f, 0.08f) { MenuButton(this) },
-          composePanel(R.id.visitor_menu, 0.5f, 0.6f) { VisitorMenu(state, this, BuildConfig.DEBUG) },
+          composePanel(R.id.visitor_menu, 0.5f, 0.7f) { VisitorMenu(state, this, BuildConfig.DEBUG) },
+          composePanel(R.id.beat_card, BEAT_CARD_WIDTH_M, BEAT_CARD_HEIGHT_M) { state.beat?.let { BeatPanel(it, beats) } },
+          composePanel(R.id.sign_in_panel, 0.5f, 0.4f) {
+            (state.signIn as? SignInState.ShowingCode)?.let { SignInPanel(it.code, ::cancelSignIn) }
+          },
           composePanel(R.id.space_page, 0.5f, 0.4f) { SpacePage(state, ::closeSpacePage) },
           composePanel(R.id.pairing_panel, 0.45f, 0.5f) { state.pairing?.let { PairingPanel(it) { builder.cancelPairing() } } },
           composePanel(R.id.builder_prompt, 0.5f, 0.5f) {
@@ -421,6 +465,21 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
       show(it, state.menuButtonShown)
     }
     menuPanel?.let { show(it, state.menuOpen) }
+    // The BEAT card takes the hint card's place (the hint is hidden while a scene is shown), above the "⋯" button
+    beatPanel?.let {
+      it.setComponent(Transform(Pose(Vector3(p.x, p.y + BEAT_CARD_ABOVE_M, p.z), facing)))
+      show(it, state.beat != null)
+    }
+    signInPanel?.let {
+      val open = state.signIn is SignInState.ShowingCode
+      // It appears where the visitor is looking when it opens, and stays there.
+      if (open && !signInPlaced) {
+        it.setComponent(Transform(aheadPose(head, 0.8f, -0.05f)))
+        signInPlaced = true
+      }
+      if (!open) signInPlaced = false
+      show(it, open)
+    }
     spacePagePanel?.let {
       val open = state.spacePage != null
       // It appears where the visitor is looking when it opens, and stays there.
@@ -526,6 +585,24 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
   override fun signOut() {
     state.menuOpen = false
     builder.signOut()
+  }
+
+  /** The menu's **Sign in**: shows a code and polls for the visitor's approval. The AR scene carries on meanwhile. */
+  override fun signIn() {
+    state.menuOpen = false
+    if (state.signIn is SignInState.SignedIn || signInJob?.isActive == true) return
+    signInJob = scope.launch { visitorSignIn.begin() }
+  }
+
+  private fun cancelSignIn() {
+    signInJob?.cancel()
+    signInJob = null
+    visitorSignIn.signOut()
+  }
+
+  override fun signOutVisitor() {
+    state.menuOpen = false
+    visitorSignIn.signOut()
   }
 
   override fun toggleDeveloper() {
@@ -938,6 +1015,10 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
     private const val WALLS_EVERY_MS = 100L
     /** The "⋯" button sits this far below the hint card's place. */
     private const val MENU_BUTTON_BELOW_M = 0.35f
+    private const val BEAT_CARD_WIDTH_M = 0.5f
+    private const val BEAT_CARD_HEIGHT_M = 0.45f
+    /** The BEAT card's centre above the hint card's. */
+    private const val BEAT_CARD_ABOVE_M = 0.1f
     /** A room with neither a ceiling nor walls gets this ceiling height. */
     private const val DEFAULT_CEILING_M = 2.5f
     /** Labels that aren't furniture: a volume's label is its first other one. */

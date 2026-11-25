@@ -42,6 +42,10 @@ interface MenuActions {
   fun setKeepLoaded(on: Boolean)
   /** Owner only: leaves builder mode and forgets the headset's pairing. */
   fun signOut()
+  /** The visitor's own sign-in: shows a code to approve at virvi.io/pair or in the Virvi app. */
+  fun signIn()
+  /** Signs the visitor out of their Virvi account on this headset. */
+  fun signOutVisitor()
   /** Swaps the menu for the report's reason picker. */
   fun startReport()
   fun cancelReport()
@@ -100,6 +104,13 @@ fun VisitorMenu(s: AppState, act: MenuActions, developer: Boolean) {
           if (s.recentSpaces.isEmpty()) Text(VisitorCopy.NO_SPACES, color = Color(0xFFE0E0E0), fontSize = 13.sp)
           s.recentSpaces.forEach { r -> Wide(r.spaceName, { act.openSpace(r.code) }, outlined = true) }
         }
+      }
+      when (val si = s.signIn) {
+        is SignInState.SignedIn -> {
+          Text(si.userName ?: "Signed in", color = Color(0xFFE0E0E0), fontSize = 13.sp)
+          Wide(VisitorCopy.MENU_SIGN_OUT, act::signOutVisitor, outlined = true)
+        }
+        else -> Wide(VisitorCopy.MENU_SIGN_IN, act::signIn, outlined = true)
       }
       Wide(VisitorCopy.BUILDER, act::openBuilder, enabled = !s.builderActive)
       if (s.reportSpaceId != null && !s.builderActive) Wide(VisitorCopy.REPORT_SPACE, act::startReport, outlined = true)

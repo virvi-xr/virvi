@@ -63,6 +63,27 @@ object VisitorCopy {
       "Your room's walls and surfaces are used on the headset to hide virtual things behind real ones and to snap items to walls. They aren't uploaded."
   const val PERMISSION_RATIONALE = "$PERMISSION_RATIONALE_CAMERA $PERMISSION_RATIONALE_SPATIAL"
   const val NO_WALL = "Can't see the wall behind this ARC. Look around the room so the headset can map it."
+
+  // BEATs and signing in (the plan's Global Constraints, word for word; the same words as the Virvi app's VisitorCopy)
+  const val BEAT_TRACK = "Track my attendance"
+  const val BEAT_SIGN_IN = "Sign in to earn this BEAT"
+  const val BEAT_CLAIM = "Claim your BEAT"
+  const val BEAT_WAITING = "Saved for you. Link a wallet at virvi.io and it'll be sent."
+  const val BEAT_POOR_FIX = "Couldn't get your location accurately. Step outside or near a window and try again."
+  const val BEAT_TRY_AGAIN = "Something went wrong. Try again in a moment."
+  const val THE_VENUE = "the venue"
+  const val MENU_SIGN_IN = "Sign in"
+  const val MENU_SIGN_OUT = "Sign out"
+  const val PAIR_INSTRUCTION = "Go to virvi.io/pair or open the Virvi app on your phone and enter this code:"
+  /** The BEAT card's own controls (the Virvi app's card has the same). */
+  const val BEAT_STOP = "Stop tracking"
+  const val BEAT_AGREE = "I agree"
+  const val BEAT_RETRY = "Try again"
+
+  fun beatAttend(minutes: Int, name: String) = "Attend for $minutes minutes to earn the $name BEAT."
+  fun beatSent(name: String) = "Your $name BEAT is in your wallet"
+  fun beatOutsideClaim(venue: String) = "Come back to $venue to claim this BEAT."
+  fun beatOutsideCheckIn(venue: String) = "You need to be at $venue to check in."
 }
 
 /** The line the menu shows once a report has been tried. */

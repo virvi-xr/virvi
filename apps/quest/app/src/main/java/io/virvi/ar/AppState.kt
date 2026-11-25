@@ -14,7 +14,9 @@ import io.virvi.ar.builder.StreamsState
 import io.virvi.ar.ring.CameraStatus
 import io.virvi.ar.ring.RING_TEST_MARKERS
 import io.virvi.ar.roomscan.RoomScanUi
+import io.virvi.ar.visitor.BeatView
 import io.virvi.ar.visitor.RecentSpace
+import io.virvi.ar.visitor.SignInState
 import io.virvi.ar.visitor.SpacePageInfo
 import io.virvi.ar.visitor.VisitorCopy
 
@@ -42,6 +44,11 @@ class AppState {
   var spacePage by mutableStateOf<SpacePageInfo?>(null)
   /** Why the open space page can't show its space (the lookup failed), or null. */
   var spaceProblem by mutableStateOf<String?>(null)
+
+  /** The visitor's own sign-in (the menu's **Sign in**): the code panel shows while it is [SignInState.ShowingCode]. */
+  var signIn by mutableStateOf<SignInState>(SignInState.SignedOut)
+  /** The BEAT card of the space now shown, or null (the card hides). */
+  var beat by mutableStateOf<BeatView?>(null)
 
   // ── builder (written by the builder controller) ──
   /** Builder mode holds the space (placing, aligning or building); visitor mode is paused. */

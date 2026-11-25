@@ -132,6 +132,8 @@ class DeviceAuth(
               when (val c = r.value) {
                 PairClaim.Pending -> Unit
                 PairClaim.Refused -> return signOut()
+                // A builder pairing is never a visitor claim; refuse it rather than keep a session it didn't ask for
+                is PairClaim.Visitor -> return signOut()
                 is PairClaim.Approved -> {
                   store.put(KEY_SECRET, secret)
                   store.put(KEY_ID, c.deviceId)

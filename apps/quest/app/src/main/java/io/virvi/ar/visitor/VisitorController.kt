@@ -43,6 +43,13 @@ interface VisitorPrefs {
   var recentSpaces: List<RecentSpace>
 }
 
+/** No BEAT card (the visitor tests'). */
+private object NoBeats : BeatLink {
+  override fun spaceShown(spaceId: String?) = Unit
+
+  override fun accountChanged() = Unit
+}
+
 /** Builder mode's hold on visitor mode ([VisitorController] in the app). */
 interface VisitorLink {
   /** Builder mode takes the space session: visitor mode forgets its space (nothing loaded) and waits. */
@@ -74,6 +81,10 @@ class VisitorController(
     private val prefs: VisitorPrefs,
     private val ui: AppState,
     private val setRegistered: (Set<Long>?) -> Unit,
+    /** The signed-in visitor's access token for the feed (null: signed out, so an anonymous poll). */
+    private val visitorToken: () -> String? = { null },
+    /** Told which space is shown (null: none), for its BEAT card. */
+    private val beats: BeatLink = NoBeats,
     private val clock: () -> Long = SystemClock::elapsedRealtime,
     private val nanoClock: () -> Long = SystemClock::elapsedRealtimeNanos,
 ) : VisitorLink {
@@ -339,7 +350,7 @@ class VisitorController(
   private fun run(fx: VisitorEffect) {
     when (fx) {
       is VisitorEffect.Lookup -> lookup(fx.code)
-      is VisitorEffect.StartFeed -> session.start(fx.spaceId)
+      is VisitorEffect.StartFeed -> session.start(fx.spaceId, visitorToken)
       VisitorEffect.StopFeed -> {
         session.stop()
         endVisit()
@@ -420,6 +431,8 @@ class VisitorController(
         }
     ui.hint = hintText(st, gather, unreadableSince?.let { now - it } ?: 0L, device)
     ui.sceneShown = st is VisitorState.Shown
+    // The BEAT card (and its check-ins) belong to the space while its scene is shown, and to no other state
+    beats.spaceShown((st as? VisitorState.Shown)?.space?.id)
     ui.menuButtonShown = menuButtonShown(st, flow.spaceChosen)
     ui.reportSpaceId = flow.reportSpaceId
     ui.visitorState = st::class.simpleName ?: ""

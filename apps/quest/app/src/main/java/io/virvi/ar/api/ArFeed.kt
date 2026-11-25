@@ -20,6 +20,13 @@ class ArFeed(
     private val api: ArApi,
     private val onStatus: (FeedStatus) -> Unit,
     private val onSnapshot: (ArFeedSnapshot) -> Unit,
+    /**
+     * Asked when the feed refuses the [token] it sent (401), with that token: true when it was the visitor's own (it has
+     * been refreshed, or the visitor is signed out now), so the poll is asked again with the token as it is now. A token
+     * that is still refused, or gone, is dropped and the poll goes on anonymously: signing in must never stop the
+     * scene. False (a builder's pass is not the visitor's) leaves the answer as it was.
+     */
+    private val refused: (suspend (token: String) -> Boolean)? = null,
 ) : SpaceFeed {
   private var job: Job? = null
 
@@ -34,11 +41,22 @@ class ArFeed(
     job = null
   }
 
+  /** One request; a visitor token the feed refuses is refreshed once, and then dropped (see [refused]). */
+  private suspend fun poll(spaceId: String, version: String, token: (() -> String?)?): ApiResult<ArFeedSnapshot> {
+    val used = token?.invoke()
+    val first = api.feed(spaceId, version, used)
+    if (used == null || refused == null || first !is ApiResult.Failed || first.status != 401) return first
+    if (!refused.invoke(used)) return first
+    val next = token.invoke()?.takeIf { it != used }
+    val second = api.feed(spaceId, version, next)
+    return if (next != null && second is ApiResult.Failed && second.status == 401) api.feed(spaceId, version, null) else second
+  }
+
   private suspend fun loop(spaceId: String, token: (() -> String?)?) {
     var version = ""
     var wait = 0.0
     while (scope.isActive) {
-      when (val r = api.feed(spaceId, version, token?.invoke())) {
+      when (val r = poll(spaceId, version, token)) {
         is ApiResult.Ok -> {
           wait = 0.0
           if (r.value.version != version) {
