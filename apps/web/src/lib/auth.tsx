@@ -31,7 +31,7 @@ interface AuthState {
   /** Starts a trial session (a signed-out visitor trying Virvi); `entry` is the page it started from. */
   startTrial: (turnstileToken: string, entry?: TrialEntry) => Promise<void>
   /** The URL for Google or Discord sign-in; from a trial it keeps the trial in this tab for the callback page to move in. */
-  oauthUrl: (provider: 'google' | 'discord', fromAction?: string) => Promise<string>
+  oauthUrl: (provider: 'google' | 'discord' | 'apple', fromAction?: string) => Promise<string>
   logout: () => void
   /** The person signing out: also forgets this browser's wizard draft. (Not for a session that merely ended: a trial that
    *  became an account keeps its draft.) */
@@ -205,7 +205,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     adopt(await res.json())
   }
 
-  const oauthUrl = async (provider: 'google' | 'discord', fromAction?: string) => {
+  const oauthUrl = async (provider: 'google' | 'discord' | 'apple', fromAction?: string) => {
     // From a trial, this tab keeps the trial's token; the callback page moves it in when the sign-in brings `state` back
     let state: string | null = null
     try { state = stashTrialHandover(sessionStorage, user?.trial ? readStoredAuth(localStorage) : null, fromAction, Date.now()) } catch {}

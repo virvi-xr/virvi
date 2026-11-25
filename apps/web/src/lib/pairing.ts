@@ -68,3 +68,23 @@ export function headsetSignInPrompt(deviceName: string | null, trial: boolean): 
   const into = trial ? 'your trial' : 'your account'
   return deviceName ? `"${deviceName}" wants to sign in to ${into}.` : `A headset wants to sign in to ${into}.`
 }
+
+/** Which approval a headset code gets: a visitor code signs the headset in as the approver, so it never shares the builder's personal/shared picker. */
+export function headsetPairView(purpose: string | undefined): 'visitor' | 'builder' {
+  return purpose === 'visitor' ? 'visitor' : 'builder'
+}
+
+/** The page that approves a headset code (the code is a query param: one static page). */
+export function pairPageHref(code: string): string {
+  return `/pair/?code=${encodeURIComponent(code)}`
+}
+
+/** What the approver is told before signing a visitor headset in to their account. */
+export function visitorApprovalCopy(deviceName: string | null): { heading: string; device: string; warning: string; confirm: string } {
+  return {
+    heading: 'Sign this headset in to your Virvi account',
+    device: deviceName ? `Device name (reported by the device): ${deviceName}` : 'Device name (reported by the device): the device did not report a name',
+    warning: "Only approve a headset you're holding. It will be signed in as you.",
+    confirm: 'Yes, sign this headset in as me',
+  }
+}

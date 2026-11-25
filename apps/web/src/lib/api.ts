@@ -456,7 +456,7 @@ function useRealApi() {
       apiFetch<{ raffle: HostRaffle }>(`/api/scenes/${sceneId}/raffles`, { method: 'POST', userAction: true, body: JSON.stringify(body) }),
     getRaffle: (raffleId: string) => apiFetch<RaffleDetail>(`/api/raffles/${raffleId}`),
     raffleAction: (raffleId: string, action: 'open' | 'snapshot' | 'close' | 'cancel') =>
-      apiFetch<{ raffle?: HostRaffle; snapshot?: RaffleSnapshotRow }>(`/api/raffles/${raffleId}/${action}`, { method: 'POST', userAction: true }),
+      apiFetch<{ raffle?: HostRaffle; snapshot?: RaffleSnapshotRow }>(`/api/raffles/${raffleId}/${action}`, { method: 'POST' }),
     updateRaffle: (raffleId: string, body: ReturnType<typeof editBody>) =>
       apiFetch<{ raffle: HostRaffle }>(`/api/raffles/${raffleId}`, { method: 'PATCH', userAction: true, body: JSON.stringify(body) }),
     drawRaffle: (raffleId: string, body: ReturnType<typeof drawBody> | Record<string, never> = {}) =>
@@ -475,8 +475,8 @@ function useRealApi() {
     updateBeat: (beatId: string, body: Partial<ReturnType<typeof beatEditBody>>) =>
       apiFetch<PublicBeat>(beatApiPath(beatId), { method: 'PATCH', userAction: true, body: JSON.stringify(body) }),
     getBeatClaimants: (beatId: string) => apiFetch<BeatClaimant[]>(beatApiPath(beatId, 'claimants')),
-    cancelBeat: (beatId: string) => apiFetch<PublicBeat>(beatApiPath(beatId, 'cancel'), { method: 'POST', userAction: true }),
-    endBeatEarly: (beatId: string) => apiFetch<PublicBeat>(beatApiPath(beatId, 'end-early'), { method: 'POST', userAction: true }),
+    cancelBeat: (beatId: string) => apiFetch<PublicBeat>(beatApiPath(beatId, 'cancel'), { method: 'POST' }),
+    endBeatEarly: (beatId: string) => apiFetch<PublicBeat>(beatApiPath(beatId, 'end-early'), { method: 'POST' }),
     getBeatQuote: (beatId: string, cap?: number, method?: 'credit') =>
       apiFetch<BeatQuote>(`${beatApiPath(beatId, 'quote')}?${new URLSearchParams({ ...(cap === undefined ? {} : { cap: String(cap) }), ...(method ? { method } : {}) })}`),
     checkoutBeat: (beatId: string, body: ReturnType<typeof payBody>) =>
@@ -637,7 +637,7 @@ function useRealApi() {
       apiFetch<{ success: boolean }>('/api/auth/password', { method: 'PUT', body: JSON.stringify({ currentPassword, newPassword }) }),
     // Email verification (LIV-161)
     getEmailStatus: () => apiFetch<EmailStatus>('/api/auth/email'),
-    resendEmailVerification: () => apiFetch<EmailStatus>('/api/auth/email/resend', { method: 'POST', userAction: true }),
+    resendEmailVerification: () => apiFetch<EmailStatus>('/api/auth/email/resend', { method: 'POST' }),
     // Terms of Service agreement
     getTermsStatus: () => apiFetch<TermsStatus>('/api/auth/terms'),
     acceptTerms: (version: string) =>
@@ -759,7 +759,7 @@ function useRealApi() {
       apiFetch<{ destination: DclDestination }>(`/api/dcl/destinations/${id}/revoke`, { method: 'POST', body: JSON.stringify(data) }),
     /** Mode virvi answers 202 with just the deployment; mode sign adds the `payload` to sign (then `submitDeploySignature`). */
     deployDclDestination: (id: string) =>
-      apiFetch<{ deployment: DclDeployment; payload?: string; expiresAt?: string }>(`/api/dcl/destinations/${id}/deploy`, { method: 'POST', userAction: true }),
+      apiFetch<{ deployment: DclDeployment; payload?: string; expiresAt?: string }>(`/api/dcl/destinations/${id}/deploy`, { method: 'POST' }),
     /** 409 `expired`: prepare the deploy again. */
     submitDeploySignature: (deploymentId: string, chain: AuthChain) =>
       apiFetch<{ deployment: DclDeployment }>(`/api/deploy/${deploymentId}/signature`, { method: 'POST', userAction: true, body: JSON.stringify({ chain }) }),
@@ -778,7 +778,7 @@ function useRealApi() {
       readTextRecovering((b) => fetch(`${API_URL}/api/imports/${id}/log`, { headers: requestHeaders(b, {}) }), token, { swapToStoredAccount, renew }, dropDeadSession),
     /** 200 with the `payload` to sign (then `submitDeploySignature`), or 202 with just the deployment: Virvi deploys. */
     deploySceneImport: (id: string) =>
-      apiFetch<{ deployment: DclDeployment; payload?: string; expiresAt?: string; usesScene?: SceneImportMove }>(`/api/imports/${id}/deploy`, { method: 'POST', userAction: true }),
+      apiFetch<{ deployment: DclDeployment; payload?: string; expiresAt?: string; usesScene?: SceneImportMove }>(`/api/imports/${id}/deploy`, { method: 'POST' }),
     /** What a World deployment put live, as a zip: through the authenticated route, never a plain link. */
     downloadDeployFiles: async (deploymentId: string): Promise<{ blob: Blob; filename: string }> => {
       const res = await fetch(`${API_URL}/api/deploy/${deploymentId}/files.zip`, { headers: requestHeaders(token, {}) })
@@ -825,6 +825,8 @@ function useRealApi() {
       apiFetch<ArPairApprovalInfo>(`/api/ar/pair/${encodeURIComponent(code)}`),
     approveHeadsetPairing: (code: string, kind: ArDeviceKind) =>
       apiFetch<{ result: string }>(`/api/ar/pair/${encodeURIComponent(code)}/approve`, { method: 'POST', body: JSON.stringify({ kind }) }),
+    /** The Virvi app's sign-in: a short-lived code the app trades for a session (accounts only; a trial or scene pass is refused). */
+    createAppHandoff: () => apiFetch<{ code: string; expiresAt: string }>('/api/auth/app-handoff', { method: 'POST' }),
     getHeadsets: () => apiFetch<ArDeviceSummary[]>('/api/ar/devices'),
     revokeHeadset: (id: string) => apiFetch<void>(`/api/ar/devices/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
@@ -1039,7 +1041,7 @@ function useRealApi() {
     shareAsset: (id: string, data: { license: string; rightsConfirmed: boolean; credit?: string }) =>
       apiFetch<{ asset: any }>(`/api/assets/${id}/share`, { method: 'POST', userAction: true, body: JSON.stringify(data) }),
     unshareAsset: (id: string) =>
-      apiFetch<{ asset: any }>(`/api/assets/${id}/unshare`, { method: 'POST', userAction: true }),
+      apiFetch<{ asset: any }>(`/api/assets/${id}/unshare`, { method: 'POST' }),
     reportAsset: (id: string, data: { reason: string; details?: string }) =>
       apiFetch<{ reported: boolean }>(`/api/assets/${id}/report`, { method: 'POST', userAction: true, body: JSON.stringify(data) }),
     getAdminAssetReports: () => apiFetch<{ reports: AdminAssetReport[] }>('/api/admin/asset-reports'),

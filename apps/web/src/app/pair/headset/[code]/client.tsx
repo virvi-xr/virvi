@@ -6,7 +6,7 @@ import { formatPairingCode, type ArDeviceKind } from '@virvixr/shared'
 import { useAuth } from '@/lib/auth'
 import { useApi } from '@/lib/api'
 import { signinPath } from '@/lib/landing-route'
-import { headsetErrorMessage, headsetPairingCodeFromPath, headsetSignInPrompt } from '@/lib/pairing'
+import { headsetErrorMessage, headsetPairingCodeFromPath, headsetPairView, headsetSignInPrompt, pairPageHref } from '@/lib/pairing'
 import { pairChoices } from '@/lib/trial-scene'
 
 type Phase = 'loading' | 'ready' | 'approving' | 'done' | 'error'
@@ -48,7 +48,13 @@ export default function HeadsetPairClient() {
     }
     let cancelled = false
     api.getHeadsetPairingInfo(code)
-      .then(i => { if (!cancelled) { setDeviceName(i.deviceName); setPhase('ready') } })
+      .then(i => {
+        if (cancelled) return
+        // A visitor headset signs in as the approver: it gets its own plain confirmation, never this personal/shared picker
+        if (headsetPairView(i.purpose) === 'visitor') { router.replace(pairPageHref(code)); return }
+        setDeviceName(i.deviceName)
+        setPhase('ready')
+      })
       .catch(err => { if (!cancelled) { setError(headsetErrorMessage(err)); setPhase('error') } })
     return () => { cancelled = true }
     // useApi() returns new functions every render; refetch only when the code or session changes

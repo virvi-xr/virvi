@@ -11,6 +11,7 @@ const BUTTON_STYLE = {
   wallet: 'bg-orange-500 text-white hover:bg-orange-600',
   google: 'bg-white text-gray-900 hover:bg-gray-100',
   discord: 'bg-[#5865F2] text-white hover:bg-[#4752C4]',
+  apple: 'bg-black text-white ring-1 ring-gray-600 hover:bg-gray-950',
 } as const
 
 const input = 'w-full rounded-lg bg-gray-800 px-4 py-2 text-white outline-none focus:ring-2 focus:ring-blue-500'
@@ -32,7 +33,7 @@ export function SignUpSheet() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [agreed, setAgreed] = useState(false)
-  const [providers, setProviders] = useState<{ google: boolean; discord: boolean }>({ google: false, discord: false })
+  const [providers, setProviders] = useState<{ google: boolean; discord: boolean; apple?: boolean }>({ google: false, discord: false, apple: false })
   const [hasWallet, setHasWallet] = useState(false)
   // Set synchronously around the sheet's own sign-up/sign-in: the new user can land (and this re-render) before it resolves
   const submitting = useRef(false)
@@ -78,7 +79,7 @@ export function SignUpSheet() {
   }
 
   // Google and Discord leave the page: come back to this page, which says "You're signed in" (the blocked action is not replayed)
-  const oauth = async (provider: 'google' | 'discord') => {
+  const oauth = async (provider: 'google' | 'discord' | 'apple') => {
     setError('')
     setBusy(true)
     try {

@@ -25,7 +25,7 @@ function SignIn() {
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [hasWallet, setHasWallet] = useState(false)
-  const [providers, setProviders] = useState<{ google: boolean; discord: boolean }>({ google: false, discord: false })
+  const [providers, setProviders] = useState<{ google: boolean; discord: boolean; apple?: boolean }>({ google: false, discord: false, apple: false })
 
   useEffect(() => {
     // A trial visitor signing in stays here: the sign-in carries their trial designs into the account
@@ -59,7 +59,7 @@ function SignIn() {
   }
 
   // From a trial, this tab keeps the trial so the callback page moves its designs into the account
-  const handleOAuth = async (provider: 'google' | 'discord') => {
+  const handleOAuth = async (provider: 'google' | 'discord' | 'apple') => {
     setError('')
     setSubmitting(true)
     try {
@@ -123,7 +123,7 @@ function SignIn() {
           </button>
         </form>
 
-        {(hasWallet || providers.google || providers.discord) && (
+        {(hasWallet || providers.google || providers.discord || providers.apple) && (
           <>
             <div className="flex items-center gap-3 my-4"><div className="flex-1 border-t border-gray-700" /><span className="text-xs text-gray-500">or</span><div className="flex-1 border-t border-gray-700" /></div>
             <div className="space-y-3">
@@ -137,6 +137,12 @@ function SignIn() {
                 <button type="button" onClick={() => handleOAuth('google')} disabled={submitting}
                   className="block w-full rounded-lg bg-white py-2 text-center font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-50">
                   Continue with Google
+                </button>
+              )}
+              {providers.apple && (
+                <button type="button" onClick={() => handleOAuth('apple')} disabled={submitting}
+                  className="block w-full rounded-lg bg-black py-2 text-center font-medium text-white ring-1 ring-gray-600 hover:bg-gray-950 disabled:opacity-50">
+                  Sign in with Apple
                 </button>
               )}
               {providers.discord && (
