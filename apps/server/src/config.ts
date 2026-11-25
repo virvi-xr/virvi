@@ -435,6 +435,12 @@ export const config = {
   googleClientSecret: env('GOOGLE_CLIENT_SECRET'),
   oauthCallbackUrl: env('OAUTH_CALLBACK_URL') || env('PUBLIC_URL') || 'http://localhost:3010',
 
+  // ── Sign in with Apple (all four enable it; the private key is the .p8 PEM, `\n` escapes allowed) ──
+  appleSigninServiceId: env('APPLE_SIGNIN_SERVICE_ID'),
+  appleSigninTeamId: env('APPLE_SIGNIN_TEAM_ID'),
+  appleSigninKeyId: env('APPLE_SIGNIN_KEY_ID'),
+  appleSigninPrivateKey: env('APPLE_SIGNIN_PRIVATE_KEY'),
+
   // ── Discord OAuth ────────────────────────────────────────────────────────
   discordClientId: env('DISCORD_CLIENT_ID'),
   discordClientSecret: env('DISCORD_CLIENT_SECRET'),

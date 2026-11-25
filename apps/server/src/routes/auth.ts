@@ -31,6 +31,8 @@ import { CREDENTIAL_RATE_LIMIT } from '../auth/credential-rate-limit.js'
 import { deletionRefused } from '../beats/reissue.js'
 import { markVerifiedByReset, sendVerification } from '../auth/email-verification.js'
 import { acceptTerms } from '../auth/terms.js'
+import { appleClient, appleConfigured, appleNameFromUserField, verifyAppleIdToken } from '../auth/apple.js'
+import { parse as parseForm } from 'node:querystring'
 import { TERMS_VERSION } from '@virvixr/shared'
 
 interface RegisterBody {
@@ -59,6 +61,7 @@ export default async function authRoutes(app: FastifyInstance) {
   app.get('/api/auth/providers', async () => ({
     google: !!(config.googleClientId && config.googleClientSecret),
     discord: !!(config.discordClientId && config.discordClientSecret),
+    apple: appleConfigured(),
   }))
 
   // ── POST /api/auth/register ──────────────────────────────────────────────
@@ -491,6 +494,60 @@ export default async function authRoutes(app: FastifyInstance) {
       }
     },
   )
+
+  // ── Sign in with Apple ─────────────────────────────────────────────────────
+  // Apple posts the result back as a form body (response_mode=form_post), so the callback gets its own parser.
+
+  app.get<{ Querystring: { state?: string } }>('/api/auth/apple', async (request, reply) => {
+    if (!appleConfigured()) return reply.status(501).send({ error: 'Apple sign-in is not configured' })
+    const params = new URLSearchParams({
+      client_id: config.appleSigninServiceId!,
+      redirect_uri: `${config.oauthCallbackUrl}/api/auth/apple/callback`,
+      response_type: 'code',
+      response_mode: 'form_post',
+      scope: 'name email',
+    })
+    if (OAUTH_STATE.test(request.query.state ?? '')) params.set('state', request.query.state!)
+    return reply.redirect(`https://appleid.apple.com/auth/authorize?${params.toString()}`)
+  })
+
+  await app.register(async (apple) => {
+    apple.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string', bodyLimit: 64 * 1024 }, (_req, body, done) => {
+      try { done(null, { ...parseForm(body as string) }) } catch (e) { done(e as Error) }
+    })
+
+    apple.post<{ Body: { code?: string; error?: string; state?: string; user?: string } | undefined }>('/api/auth/apple/callback', async (request, reply) => {
+      if (!appleConfigured()) return reply.status(501).send({ error: 'Apple sign-in is not configured' })
+      const form = request.body && typeof request.body === 'object' ? request.body : {}
+      const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
+      const code = str(form.code)
+      const oauthError = str(form.error)
+      const state = str(form.state)
+      if (oauthError || !code) {
+        return reply.redirect(`${config.publicUrl}/auth/callback?error=${encodeURIComponent(oauthError || 'missing_code')}`)
+      }
+      try {
+        const idToken = await appleClient.exchangeCode(code, `${config.oauthCallbackUrl}/api/auth/apple/callback`)
+        const identity = verifyAppleIdToken(idToken, await appleClient.fetchJwks())
+        const name = appleNameFromUserField(form.user)
+        const session = await finishOAuth(app, {
+          type: 'oauth',
+          identifier: `apple:${identity.sub}`,
+          email: identity.email,
+          emailVerified: identity.emailVerified,
+          displayName: name ?? 'Apple User',
+          metadata: { provider: 'apple', appleUserId: identity.sub, email: identity.email },
+        })
+        const params = new URLSearchParams({ token: session.accessToken, refresh: session.refreshToken })
+        if (OAUTH_STATE.test(state ?? '')) params.set('state', state!)
+        return reply.redirect(`${config.publicUrl}/auth/callback?${params.toString()}`)
+      } catch (err) {
+        // The message names the step that failed; it never carries the key or the client secret
+        request.log.error({ msg: (err as Error).message }, 'Apple OAuth callback error')
+        return reply.redirect(`${config.publicUrl}/auth/callback?error=oauth_failed`)
+      }
+    })
+  })
 
   // ── GET /api/auth/discord — Redirect to Discord OAuth consent screen ──────
 
