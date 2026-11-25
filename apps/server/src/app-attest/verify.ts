@@ -184,7 +184,8 @@ export function verifyAttestation(keyId: string, attestation: Buffer, clientData
   if (authData.length < 55) throw new Error('authData too short')
   if (!same(authData.subarray(0, 32), sha256(Buffer.from(s.appId, 'utf8')))) throw new Error('rpIdHash')
   if (authData.readUInt32BE(33) !== 0) throw new Error('counter')
-  if (!same(authData.subarray(37, 53), AAGUID[s.env])) throw new Error('aaguid')
+  const aaguid = authData.subarray(37, 53)
+  if (!same(aaguid, AAGUID[s.env]) && !(s.allowDevelopment && same(aaguid, AAGUID.development))) throw new Error('aaguid')
   const credLen = authData.readUInt16BE(53)
   if (!same(authData.subarray(55, 55 + credLen), id)) throw new Error('credential id')
 

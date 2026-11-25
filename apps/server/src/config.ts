@@ -229,7 +229,8 @@ oyFraWVIyd/dganmrduC1bmTBGwD
 /**
  * App Attest (the Virvi app's BEAT claims): the app id the attestations are for (`<team id>.<bundle id>`), which App
  * Attest environment the app is built for (`development` or `production`; it decides the aaguid) and the root CA
- * (a PEM; `\n` escapes allowed). A bad environment refuses to start.
+ * (a PEM; `\n` escapes allowed). A bad environment refuses to start. APP_ATTEST_ALLOW_DEVELOPMENT=true (default off) also
+ * accepts the development aaguid, for test builds of the app, on top of the configured environment's.
  */
 export function appAttestFrom(e: Record<string, string | undefined>) {
   const env = (e.APP_ATTEST_ENV || 'production') as 'development' | 'production'
@@ -238,6 +239,7 @@ export function appAttestFrom(e: Record<string, string | undefined>) {
     appId: e.APP_ATTEST_APP_ID || 'P22YGT64VU.io.virvi.app',
     env,
     rootCa: e.APP_ATTEST_ROOT_CA ? e.APP_ATTEST_ROOT_CA.replace(/\\n/g, '\n') : APPLE_APP_ATTESTATION_ROOT_CA,
+    allowDevelopment: e.APP_ATTEST_ALLOW_DEVELOPMENT === 'true',
   }
 }
 

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { X509Certificate } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import type { FastifyRequest } from 'fastify'
-import { config } from '../src/config.js'
+import { appAttestFrom, config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
 import { appAttestChallenges, appAttestKeys } from '../src/db/schema.js'
 import { decodeCbor, requireAssertion } from '../src/app-attest/verify.js'
@@ -90,6 +90,22 @@ describe('App Attest', () => {
     const other = makeDevice(APP_ID)
     const ch2 = await challenge()
     expect((await register(other, ch2, makeAttestation(ca, other, ch2, { appId: APP_ID }))).statusCode).toBe(400)
+  })
+
+  it('takes the development aaguid in a production server only when APP_ATTEST_ALLOW_DEVELOPMENT is on, and still the production one', async () => {
+    const dev = makeDevice(APP_ID)
+    const ch = await challenge()
+    const refused = await register(dev, ch, makeAttestation(ca, dev, ch, { appId: APP_ID, aaguid: AAGUID.development }))
+    expect([refused.statusCode, refused.json().error]).toEqual([400, 'bad_attestation'])
+
+    ;(config as any).appAttest = { ...config.appAttest, allowDevelopment: true }
+    const ch2 = await challenge()
+    expect((await register(dev, ch2, makeAttestation(ca, dev, ch2, { appId: APP_ID, aaguid: AAGUID.development }))).statusCode).toBe(201)
+    const prod = makeDevice(APP_ID)
+    const ch3 = await challenge()
+    expect((await register(prod, ch3, makeAttestation(ca, prod, ch3, { appId: APP_ID }))).statusCode).toBe(201)
+    expect(appAttestFrom({}).allowDevelopment).toBe(false)
+    expect(appAttestFrom({ APP_ATTEST_ALLOW_DEVELOPMENT: 'true' }).allowDevelopment).toBe(true)
   })
 
   it('a challenge is single use, its own caller\'s, and refused once expired (400)', async () => {
