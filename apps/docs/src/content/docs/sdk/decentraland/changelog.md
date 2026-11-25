@@ -13,7 +13,6 @@ No release so far has needed changes to scene code, so none is marked as breakin
 
 - **BEAT auto-claim:** when a BEAT has auto-claim on, a visitor who agrees to attendance tracking gets the BEAT claimed for them once they have been there long enough. The card says "Your BEAT is on its way."
 - **New consent text:** the BEAT card shows an updated agreement that mentions auto-claim. Visitors in scenes on older versions still agree to the old text and press Claim themselves.
-- This version isn't on npm yet. It is being published.
 
 ## 2.20.0 — 2026-11-24
 
