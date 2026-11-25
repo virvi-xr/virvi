@@ -1,5 +1,6 @@
 package io.virvi.ar.visitor
 
+import io.virvi.ar.api.ArSpace
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -282,5 +283,58 @@ class BeatControllerTest {
     Thread.sleep(20)
     assertNull(view)
     assertNotNull(c)
+  }
+
+  @Test
+  fun `losing the ring for a moment keeps the card and its loop, and checks in only while the space is shown`() {
+    routes.spaceCard = BeatResult.Ok(card(present(60)))
+    repeat(200) { routes.checkIns += BeatResult.Ok(card(present(60))) }
+    val c = controller(checkInMs = 5)
+    c.spaceShown("s1")
+    waitFor("one check-in") { routes.calls.any { it.startsWith("checkin") } }
+    c.spaceLocking("s1")
+    // A check-in that was already on its way may land; after that none while locking
+    Thread.sleep(30)
+    val n = routes.calls.count { it.startsWith("checkin") }
+    Thread.sleep(60)
+    assertEquals(n, routes.calls.count { it.startsWith("checkin") })
+    assertNotNull(view)
+    assertTrue(view!!.canStop)
+    assertEquals(1, routes.calls.count { it == "card:s1" })
+    c.spaceShown("s1")
+    waitFor("checking in again") { routes.calls.count { it.startsWith("checkin") } > n }
+    assertEquals(1, routes.calls.count { it == "card:s1" })
+  }
+
+  @Test
+  fun `locking onto another space, or leaving, clears the card`() {
+    routes.spaceCard = BeatResult.Ok(card(present(60)))
+    val c = controller(checkInMs = 10_000)
+    c.spaceShown("s1")
+    waitFor("card") { view != null }
+    c.spaceLocking("s2")
+    assertNull(view)
+    c.spaceShown("s1")
+    waitFor("card back") { view != null }
+    c.spaceLocking("s1")
+    assertNotNull(view)
+    c.spaceShown(null)
+    assertNull(view)
+  }
+
+  @Test
+  fun `the visitor controller tells the card which space is shown, locking or gone`() {
+    val calls = mutableListOf<String>()
+    val link =
+        object : BeatLink {
+          override fun spaceShown(spaceId: String?) { calls += "shown:$spaceId" }
+          override fun spaceLocking(spaceId: String) { calls += "locking:$spaceId" }
+          override fun accountChanged() = Unit
+        }
+    val space = ArSpace("s1", "Cafe", null, true, emptyList())
+    link.tell(VisitorState.Locking(space))
+    link.tell(VisitorState.Hint)
+    link.tell(VisitorState.StepCloser)
+    assertEquals(listOf("locking:s1", "shown:null", "shown:null"), calls)
   }
 }

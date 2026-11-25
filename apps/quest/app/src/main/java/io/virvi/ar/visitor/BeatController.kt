@@ -1,6 +1,5 @@
 package io.virvi.ar.visitor
 
-import io.virvi.ar.builder.SecureStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -36,8 +35,22 @@ interface BeatActions {
 
 /** Visitor mode's link to the BEAT card: which space is shown (null: none), and who is signed in. */
 interface BeatLink {
+  /** [spaceId] is in view (null: no space is). */
   fun spaceShown(spaceId: String?)
+
+  /** [spaceId] is locking or relocking, so not in view. The card stays only if it is for this space. */
+  fun spaceLocking(spaceId: String)
+
   fun accountChanged()
+}
+
+/** Tells the card what the visitor's state means for it: a shown space, a space still locking, or no space. */
+fun BeatLink.tell(st: VisitorState) {
+  when (st) {
+    is VisitorState.Shown -> spaceShown(st.space.id)
+    is VisitorState.Locking -> spaceLocking(st.space.id)
+    else -> spaceShown(null)
+  }
 }
 
 /**
@@ -59,6 +72,8 @@ class BeatController(
   private val card = BeatCard()
   private var current: AppBeatCard? = null
   private var shownSpaceId: String? = null
+  /** The space is in view now, not just chosen: check-ins are credited only then. */
+  private var inView = false
   private var consentText: String? = null
   private var tracksAfterConsent = false
   private var checkIns: Job? = null
@@ -75,10 +90,23 @@ class BeatController(
 
   /** The space now shown changes (null: none is). A shown space with a BEAT shows its card, and checks in every 30 s while counting. */
   override fun spaceShown(spaceId: String?) {
+    inView = spaceId != null
     if (spaceId == shownSpaceId) return
     shownSpaceId = spaceId
     clear()
     if (spaceId != null) load(spaceId)
+  }
+
+  /**
+   * The same space losing and finding its ring again keeps the card and the check-in loop; the loop checks in only while
+   * the space is shown. Any other space is not this card's, so it is cleared.
+   */
+  override fun spaceLocking(spaceId: String) {
+    if (spaceId == shownSpaceId) {
+      inView = false
+      return
+    }
+    spaceShown(null)
   }
 
   /** The visitor signed in or out: the card is asked for again as the new account. */
@@ -258,6 +286,7 @@ class BeatController(
   }
 
   private suspend fun checkIn() {
+    if (!inView) return
     val id = shownSpaceId ?: return
     val beat = current ?: return
     val gen = generation

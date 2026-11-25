@@ -47,6 +47,8 @@ interface VisitorPrefs {
 private object NoBeats : BeatLink {
   override fun spaceShown(spaceId: String?) = Unit
 
+  override fun spaceLocking(spaceId: String) = Unit
+
   override fun accountChanged() = Unit
 }
 
@@ -431,8 +433,9 @@ class VisitorController(
         }
     ui.hint = hintText(st, gather, unreadableSince?.let { now - it } ?: 0L, device)
     ui.sceneShown = st is VisitorState.Shown
-    // The BEAT card (and its check-ins) belong to the space while its scene is shown, and to no other state
-    beats.spaceShown((st as? VisitorState.Shown)?.space?.id)
+    // The BEAT card (and its check-ins) belong to the space while its scene is shown; a moment of locking the same space
+    // keeps them, and any other state clears them
+    beats.tell(st)
     ui.menuButtonShown = menuButtonShown(st, flow.spaceChosen)
     ui.reportSpaceId = flow.reportSpaceId
     ui.visitorState = st::class.simpleName ?: ""
