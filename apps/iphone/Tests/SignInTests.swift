@@ -42,4 +42,16 @@ final class SignInTests: XCTestCase {
         store.save(nil)
         XCTAssertNil(store.load())
     }
+
+    func testSavingTwiceKeepsTheSecondAndClearingRemovesIt() {
+        let store = KeychainSessionStore(service: "io.virvi.app.tests.\(UUID().uuidString)")
+        defer { store.save(nil) }
+        XCTAssertEqual(store.write(AppTokens(accessToken: "a1", refreshToken: "r1")), errSecSuccess)
+        let second = AppTokens(accessToken: "a2", refreshToken: "r2", userName: "Ada")
+        XCTAssertEqual(store.write(second), errSecSuccess)
+        XCTAssertEqual(store.load(), second)
+        XCTAssertEqual(store.write(nil), errSecSuccess)
+        XCTAssertNil(store.load())
+        XCTAssertEqual(store.write(nil), errSecSuccess)
+    }
 }

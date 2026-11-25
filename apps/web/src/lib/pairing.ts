@@ -84,7 +84,7 @@ export function visitorApprovalCopy(deviceName: string | null): { heading: strin
   return {
     heading: 'Sign this headset in to your Virvi account',
     device: deviceName ? `Device name (reported by the device): ${deviceName}` : 'Device name (reported by the device): the device did not report a name',
-    warning: "Only approve a headset you're holding. It will be signed in as you.",
+    warning: "Only approve a headset you're holding. It will be signed in as you, with full access to your Virvi account.",
     confirm: 'Yes, sign this headset in as me',
   }
 }

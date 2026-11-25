@@ -36,6 +36,9 @@ still run in Debug. Don't switch Run to Debug unless you need a local server.
 Release builds talk to `https://virvi.io`. Debug builds take `-baseUrl <url>` as a launch argument (see
 `AppConfig`), so use it from a Debug test run or switch the scheme's Run configuration to Debug for a local server.
 
+The App Attest entitlement is `development` in every configuration: Apple ignores its value for TestFlight and App Store
+builds (they always use production), and a development-signed Run needs it.
+
 Universal links (`https://virvi.io/s/<code>`) need the server's `/.well-known/apple-app-site-association`, which
 lists `P22YGT64VU.io.virvi.app`.
 

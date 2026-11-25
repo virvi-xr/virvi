@@ -26,12 +26,21 @@ struct KeychainSessionStore: SessionStore {
         return try? JSONDecoder().decode(AppTokens.self, from: data)
     }
 
-    func save(_ t: AppTokens?) {
-        SecItemDelete(query as CFDictionary)
-        guard let t, let data = try? JSONEncoder().encode(t) else { return }
-        var q = query
-        q[kSecValueData as String] = data
-        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(q as CFDictionary, nil)
+    func save(_ t: AppTokens?) { write(t) }
+
+    /// Stores `t` (nil removes it) and gives the Keychain's status, `errSecSuccess` when it worked. An existing item is
+    /// updated in place, so a failed write keeps what was stored.
+    @discardableResult
+    func write(_ t: AppTokens?) -> OSStatus {
+        guard let t else {
+            let s = SecItemDelete(query as CFDictionary)
+            return s == errSecItemNotFound ? errSecSuccess : s
+        }
+        guard let data = try? JSONEncoder().encode(t) else { return errSecParam }
+        let attributes: [String: Any] = [kSecValueData as String: data,
+                                         kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        let updated = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        guard updated == errSecItemNotFound else { return updated }
+        return SecItemAdd(query.merging(attributes) { $1 } as CFDictionary, nil)
     }
 }

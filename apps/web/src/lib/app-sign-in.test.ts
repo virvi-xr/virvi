@@ -52,7 +52,7 @@ describe('headset pairing views', () => {
     const c = visitorApprovalCopy('Quest 3 of Sam')
     expect(c.heading).toBe('Sign this headset in to your Virvi account')
     expect(c.device).toBe('Device name (reported by the device): Quest 3 of Sam')
-    expect(c.warning).toBe("Only approve a headset you're holding. It will be signed in as you.")
+    expect(c.warning).toBe("Only approve a headset you're holding. It will be signed in as you, with full access to your Virvi account.")
     expect(visitorApprovalCopy(null).device).toMatch(/did not report a name/i)
   })
 })

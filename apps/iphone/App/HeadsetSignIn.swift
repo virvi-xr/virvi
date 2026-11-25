@@ -14,7 +14,7 @@ struct HeadsetPairing: Equatable {
 @Observable
 final class HeadsetSignInModel {
     static let HEADLINE = "Sign this headset in to your Virvi account"
-    static let WARNING = "Only approve a headset you're holding. It will be signed in as you."
+    static let WARNING = "Only approve a headset you're holding. It will be signed in as you, with full access to your Virvi account."
     static let REPORTED = "Name reported by the device"
     static let BUILDER = "This code is for building spaces. Go to virvi.io/pair on your computer to approve it."
     static let NOT_FOUND = "That code isn't right, or it has run out. Check the headset and try again."

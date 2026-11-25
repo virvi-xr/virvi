@@ -33,6 +33,7 @@ final class SignInModel: NSObject, ASWebAuthenticationPresentationContextProvidi
     var userName: String? { _ = changes; return session.userName }
 
     func signIn() {
+        guard web == nil else { return }
         message = nil
         let url = AppConfig.baseUrl.appendingPathComponent("app-sign-in")
         let web = ASWebAuthenticationSession(url: url, callbackURLScheme: "virvi") { [weak self] callback, error in
