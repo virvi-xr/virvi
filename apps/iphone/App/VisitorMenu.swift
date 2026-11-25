@@ -22,6 +22,7 @@ struct MenuButton: View {
 struct VisitorMenu: View {
     let controller: VisitorController
     let signIn: SignInModel
+    let myBeats: MyBeatsModel
     /// Whether the phone has scene depth (LiDAR); the occlusion switch shows only then.
     let occlusionSupported: Bool
     @Binding var occlusionOn: Bool
@@ -29,6 +30,7 @@ struct VisitorMenu: View {
 
     @State private var reporting = false
     @State private var signingHeadsetIn = false
+    @State private var showingMyBeats = false
 
     /// The spec's words for the iPhone's one occlusion mode (ARKit scene depth, people occlusion and the scanned mesh).
     static let HIDE_BEHIND = "Hide behind people and things"
@@ -54,6 +56,7 @@ struct VisitorMenu: View {
                 if let name = signIn.userName {
                     Text(name).font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, alignment: .leading)
                 }
+                wide(MyBeatsModel.TITLE) { showingMyBeats = true }
                 wide(Self.SIGN_HEADSET_IN) { signingHeadsetIn = true }
                 wide(Self.SIGN_OUT) { signIn.signOut() }
             } else {
@@ -69,6 +72,9 @@ struct VisitorMenu: View {
         }
         .padding(16)
         .onDisappear { controller.menuNote = nil }
+        .sheet(isPresented: $showingMyBeats) {
+            MyBeatsView(model: myBeats) { showingMyBeats = false }
+        }
         .sheet(isPresented: $signingHeadsetIn) {
             HeadsetSignInView(model: HeadsetSignInModel(session: signIn.session)) { signingHeadsetIn = false }
                 .presentationDetents([.medium])

@@ -21,6 +21,7 @@ final class AppModel {
     let driver: ArSessionDriver
     let signIn: SignInModel
     let session: AppSession
+    let myBeats: MyBeatsModel
     private let network = NWPathMonitor()
 
     init() {
@@ -32,7 +33,15 @@ final class AppModel {
         self.session = session
         signIn = SignInModel(session: session)
         let api = ArApi(baseUrl: AppConfig.baseUrl, transport: URLSessionTransport(), appVersion: version, session: session)
-        controller = VisitorController(api: api, view: RealitySceneView(arView: arView), outline: RingOutline(arView: arView))
+        let attester = AppAttester(baseUrl: AppConfig.baseUrl, transport: URLSessionTransport(), session: session)
+        let beatApi = AppBeatApi(baseUrl: AppConfig.baseUrl, transport: URLSessionTransport(), session: session, attest: attester,
+                                 appVersion: version)
+        let beats = BeatModel(api: beatApi, session: session, location: VenueLocation(), notifier: SystemClaimNotifier())
+        beats.signIn = { [signIn] in signIn.signIn() }
+        signIn.onChange = { [weak beats] in beats?.accountChanged() }
+        myBeats = MyBeatsModel(api: beatApi)
+        controller = VisitorController(api: api, view: RealitySceneView(arView: arView), outline: RingOutline(arView: arView),
+                                       beats: beats)
         driver = ArSessionDriver(arView: arView, controller: controller)
         let controller = controller
         network.pathUpdateHandler = { path in
@@ -95,7 +104,7 @@ struct VisitorScreen: View {
             }
         }
         .sheet(isPresented: $menuOpen) {
-            VisitorMenu(controller: controller, signIn: model.signIn, occlusionSupported: ArSessionDriver.supportsOcclusion,
+            VisitorMenu(controller: controller, signIn: model.signIn, myBeats: model.myBeats, occlusionSupported: ArSessionDriver.supportsOcclusion,
                         occlusionOn: $occlusionOn) { menuOpen = false }
                 .fixedSize(horizontal: false, vertical: true)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { menuHeight = $0 }

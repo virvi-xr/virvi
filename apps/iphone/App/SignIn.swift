@@ -25,6 +25,8 @@ final class SignInModel: NSObject, ASWebAuthenticationPresentationContextProvidi
     private(set) var message: String?
     /// Bumped when the session changes, so views re-read the name.
     private(set) var changes = 0
+    /// Called after the visitor has signed in or out.
+    var onChange: (() -> Void)?
     private var web: ASWebAuthenticationSession?
 
     init(session: AppSession) { self.session = session }
@@ -50,6 +52,7 @@ final class SignInModel: NSObject, ASWebAuthenticationPresentationContextProvidi
         session.signOut()
         message = nil
         changes += 1
+        onChange?()
     }
 
     private func finish(callback: URL?, error: Error?) async {
@@ -60,6 +63,7 @@ final class SignInModel: NSObject, ASWebAuthenticationPresentationContextProvidi
             return
         }
         changes += 1
+        onChange?()
     }
 
     nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {

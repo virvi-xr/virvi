@@ -46,6 +46,7 @@ public enum VisitorCopy {
     public static let BEAT_WAITING = "Saved for you. Link a wallet at virvi.io and it'll be sent."
     public static let BEAT_POOR_FIX = "Couldn't get your location accurately. Step outside or near a window and try again."
     public static let BEAT_TRY_AGAIN = "Something went wrong. Try again in a moment."
+    public static let BEAT_PHONE_CANT = "This phone can't earn BEATs."
     public static let THE_VENUE = "the venue"
     public static let MENU_SIGN_IN = "Sign in"
     public static let MENU_SIGN_OUT = "Sign out"

@@ -5,6 +5,19 @@ import Foundation
 /// with the server is the attester's own business. It is asked again for each attempt, since an assertion is used once.
 public protocol Attester: Sendable {
     func assertion(for body: Data) async throws -> String
+    /// The server refused the install's key (`bad_assertion`: invalidated, or the app was reinstalled): drop it, so the
+    /// next `assertion(for:)` makes and registers a new one. The request is tried once more after this.
+    func renewKey() async
+}
+
+public extension Attester {
+    func renewKey() async {}
+}
+
+/// An attester's way to say this phone can't attest at all (the simulator, old devices): the write is refused with
+/// `VisitorCopy.BEAT_PHONE_CANT` and not tried again.
+public struct AttestUnsupported: Error, Sendable {
+    public init() {}
 }
 
 /// The phone's position, as the server wants it. Sent only at check-in and claim; the server doesn't keep it.
@@ -69,9 +82,10 @@ public final class AppBeatApi: Sendable {
         }
     }
 
-    /// `GET /api/app/arcs/:code`
+    /// `GET /api/app/arcs/:code`. Signed out it is asked without a token: the server answers a space's ARC as ever and an
+    /// event's with no card (the BEAT's name only), so the app can ask the visitor to sign in.
     public func arc(_ code: String) async -> AppBeatResult<AppArc> {
-        await run(.get, "/api/app/arcs/\(enc(code))", body: nil) { o in
+        await run(.get, "/api/app/arcs/\(enc(code))", body: nil, anonymousOk: true) { o in
             switch o["kind"] as? String {
             case "space":
                 guard let lookup = o["lookup"], let data = try? JSONSerialization.data(withJSONObject: lookup),
@@ -140,29 +154,42 @@ public final class AppBeatApi: Sendable {
         return await run(method, path, body: data, signed: true, parse)
     }
 
-    private func run<T>(_ method: Method, _ path: String, body: Data?, signed: Bool = false,
+    /// Sends, and when the server refuses the install's key (`bad_assertion`) asks the attester for a new one and sends once more.
+    private func run<T>(_ method: Method, _ path: String, body: Data?, signed: Bool = false, anonymousOk: Bool = false,
                         _ parse: @escaping ([String: Any]) -> T?) async -> AppBeatResult<T> {
+        let first = await attempt(method, path, body: body, signed: signed, anonymousOk: anonymousOk, parse)
+        guard signed, case .error(let e) = first, e.code == "bad_assertion" else { return first }
+        await attest.renewKey()
+        return await attempt(method, path, body: body, signed: signed, anonymousOk: false, parse)
+    }
+
+    private func attempt<T>(_ method: Method, _ path: String, body: Data?, signed: Bool, anonymousOk: Bool,
+                            _ parse: @escaping ([String: Any]) -> T?) async -> AppBeatResult<T> {
         guard let url = URL(string: base + path) else {
             return .error(AppBeatError(status: 0, code: "bad_request", message: VisitorCopy.BEAT_TRY_AGAIN))
         }
         do {
-            let answer = try await session.authorized { token in
+            let send: (String?) async throws -> (Data, HTTPURLResponse) = { token in
                 var r = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
                 r.httpMethod = method.rawValue
-                r.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-                if let appVersion { r.setValue(appVersion, forHTTPHeaderField: "X-Virvi-App-Version") }
+                if let token { r.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+                if let appVersion = self.appVersion { r.setValue(appVersion, forHTTPHeaderField: "X-Virvi-App-Version") }
                 if let body {
                     if !body.isEmpty {
                         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
                         r.httpBody = body
                     }
                     if signed {
-                        do { r.setValue(try await attest.assertion(for: body), forHTTPHeaderField: "X-Virvi-Attest") }
+                        do { r.setValue(try await self.attest.assertion(for: body), forHTTPHeaderField: "X-Virvi-Attest") }
+                        catch is AttestUnsupported { throw AttestUnsupported() }
                         catch { throw AttestFailed() }
                     }
                 }
-                return try await transport.send(r)
+                return try await self.transport.send(r)
             }
+            let answer: (Data, HTTPURLResponse)?
+            if anonymousOk, !session.signedIn { answer = try await send(nil) }
+            else { answer = try await session.authorized { try await send($0) } }
             guard let (data, response) = answer else {
                 return .error(AppBeatError(status: 0, code: "signed_out", message: VisitorCopy.BEAT_SIGN_IN))
             }
@@ -177,6 +204,8 @@ public final class AppBeatApi: Sendable {
                 return .error(AppBeatError(status: response.statusCode, code: "bad_data", message: VisitorCopy.BEAT_TRY_AGAIN))
             }
             return .ok(parsed)
+        } catch is AttestUnsupported {
+            return .error(AppBeatError(status: 0, code: "attest_unsupported", message: VisitorCopy.BEAT_PHONE_CANT))
         } catch is AttestFailed {
             return .error(AppBeatError(status: 0, code: "attest_failed", message: "This app couldn't be verified. Update the Virvi app and try again."))
         } catch {

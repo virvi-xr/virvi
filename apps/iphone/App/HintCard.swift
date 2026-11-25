@@ -8,7 +8,9 @@ struct HintCard: View {
 
     var body: some View {
         Group {
-            if let page = controller.spacePage {
+            if let beats = controller.beats, beats.visible {
+                BeatCardView(model: beats)
+            } else if let page = controller.spacePage {
                 pageCard(spacePageLines(page, hint: controller.hint, problem: controller.spaceProblem))
             } else if let hint = controller.hint {
                 hintCard(hint)

@@ -168,4 +168,42 @@ final class AppBeatApiTests: XCTestCase {
         XCTAssertEqual(e.code, "bad_assertion")
         XCTAssertEqual(t.count("/api/auth/refresh"), 0)
     }
+    func testABadAssertionRenewsTheKeyAndSendsOnceMoreWithAFreshAssertion() async {
+        final class Renewing: Attester, @unchecked Sendable {
+            private let lock = NSLock()
+            private(set) var renewals = 0
+            private var n = 0
+            func assertion(for body: Data) async throws -> String { lock.lock(); defer { lock.unlock() }; n += 1; return "key\(renewals).a\(n)" }
+            func renewKey() async { lock.lock(); renewals += 1; lock.unlock() }
+        }
+        let t = FakeTransport()
+        t.script("/claim", [(401, ["error": "bad_assertion", "message": "x"]), (200, ["beat": cardJson])])
+        let attester = Renewing()
+        let session = AppSession(baseUrl: base, transport: t, store: MemoryStore(tokens))
+        let api = AppBeatApi(baseUrl: base, transport: t, session: session, attest: attester)
+        guard case .ok = await api.claim("b1", wallet: nil, location: nil) else { return XCTFail() }
+        XCTAssertEqual(attester.renewals, 1)
+        let claims = t.requests.filter { $0.url!.path.hasSuffix("/claim") }
+        XCTAssertEqual(claims.map { $0.value(forHTTPHeaderField: "X-Virvi-Attest") }, ["key0.a1", "key1.a2"])
+    }
+
+    func testAPhoneThatCantAttestIsToldSoAndNothingIsSent() async {
+        struct Unsupported: Attester { func assertion(for body: Data) async throws -> String { throw AttestUnsupported() } }
+        let t = FakeTransport()
+        let session = AppSession(baseUrl: base, transport: t, store: MemoryStore(tokens))
+        let api = AppBeatApi(baseUrl: base, transport: t, session: session, attest: Unsupported())
+        guard case .error(let e) = await api.track("b1", via: .space("s1")) else { return XCTFail() }
+        XCTAssertEqual(e.code, "attest_unsupported")
+        XCTAssertEqual(e.message, "This phone can't earn BEATs.")
+        XCTAssertTrue(t.requests.isEmpty)
+    }
+
+    func testSignedOutAnArcIsAskedWithoutAToken() async {
+        let t = FakeTransport()
+        t.on("/api/app/arcs/AB12") { _ in (200, ["kind": "beat", "beatId": "b1", "name": "Opening Night"]) }
+        let (api, _) = make(t, signedIn: false)
+        let r = await api.arc("AB12")
+        XCTAssertEqual(r, .ok(.beat(beatId: "b1", name: "Opening Night", card: nil)))
+        XCTAssertNil(t.requests[0].value(forHTTPHeaderField: "Authorization"))
+    }
 }

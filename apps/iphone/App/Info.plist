@@ -38,6 +38,8 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Virvi uses the camera to find ARCs and to show the space in this room.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Virvi checks you're at the event when you check in and claim a BEAT.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

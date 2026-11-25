@@ -44,6 +44,7 @@ targets:
           - CFBundleURLName: io.virvi.app
             CFBundleURLSchemes: [virvi]
         NSCameraUsageDescription: Virvi uses the camera to find ARCs and to show the space in this room.
+        NSLocationWhenInUseUsageDescription: Virvi checks you're at the event when you check in and claim a BEAT.
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false

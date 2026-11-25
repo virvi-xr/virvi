@@ -88,6 +88,8 @@ final class VisitorController {
     // MARK: parts
 
     @ObservationIgnored private let api: ArApi
+    /// The BEAT card's behaviour; nil where the app has none (tests of the space alone).
+    let beats: BeatModel?
     @ObservationIgnored private let view: SceneView
     @ObservationIgnored private let outline: OutlineView
     @ObservationIgnored private let analytics: VisitAnalytics
@@ -128,15 +130,22 @@ final class VisitorController {
     @ObservationIgnored private var trackingNormal = true
     @ObservationIgnored private var interrupted = false
 
+    /// The event ARCs whose card is open, and until when their ring isn't looked up again (the phone's uptime, ms).
+    @ObservationIgnored private var eventRingHeldUntil: [UInt32: Int64] = [:]
+
+    /// An event ARC stays scanned for this long: one scan opens its card, and only a scan after this opens it again.
+    static let eventHoldMs: Int64 = 5 * 60_000
+
     /// A camera frame older than this (the pipeline stalled or stopped) shows no rings.
     static let staleMs: Int64 = 500
 
-    init(api: ArApi, view: SceneView, outline: OutlineView, analytics: VisitAnalytics? = nil,
+    init(api: ArApi, view: SceneView, outline: OutlineView, analytics: VisitAnalytics? = nil, beats: BeatModel? = nil,
          clock: @escaping () -> Int64 = uptimeMs,
          wallClock: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) },
          feedSleep: @escaping ArFeed.Sleep = { try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
          flushIntervalS: Double = 10) {
         self.api = api
+        self.beats = beats
         self.view = view
         self.outline = outline
         self.analytics = analytics ?? VisitAnalytics(api: api)
@@ -159,6 +168,7 @@ final class VisitorController {
 
     /// The app is closing: stops the feed, the analytics timer and the scene.
     func stop() {
+        beats?.stop()
         flushTask?.cancel()
         stopSpace()
     }
@@ -201,7 +211,8 @@ final class VisitorController {
         if let e = unreadableWatch.onFrame(seen: !r.frame.unreadable.isEmpty, nowMs: now) { onUnreadable(e) }
         let tracked = tracker.update(r.frame.detections)
         // The flow drops rings it has no use for (another space's once one is chosen, unless a link's is pending).
-        for d in tracked { dispatch(.ringAgreed(ringId: d.id)) }
+        // An event's ARC has opened its card: it isn't looked up again while it stays in view
+        for d in tracked where (eventRingHeldUntil[d.id] ?? .min) <= now { dispatch(.ringAgreed(ringId: d.id)) }
         let steps = stepLocks(tracked, r, walls)
         gather = gatherStatus(steps, unreadableSeen: unreadableSince != nil)
         refreshUi()
@@ -247,7 +258,10 @@ final class VisitorController {
 
     // MARK: - From the visitor
 
-    func lookAgain() { dispatch(.lookAgain) }
+    func lookAgain() {
+        eventRingHeldUntil.removeAll()
+        dispatch(.lookAgain)
+    }
 
     /// Opens the space with `code` (from a link): shows its page and looks it up.
     func openSpace(code: String) { dispatch(.openSpace(code: code)) }
@@ -487,10 +501,23 @@ final class VisitorController {
         }
     }
 
+    /// Looks the code up. With the BEAT card the lookup is the app's (`/api/app/arcs`): a space's ARC goes on as ever, and
+    /// an event's opens that BEAT's card and nothing else (no feed, no space).
     private func lookup(_ code: String) {
         let api = api
         Task {
-            let r = await api.lookup(code: code)
+            let r: ApiResult<MarkerLookup>
+            if let beats = self.beats {
+                switch await beats.lookupArc(code) {
+                case .ok(.space(let found)): r = .ok(found)
+                case .ok(.beat(_, let name, let card)):
+                    self.openEvent(code: code, name: name, card: card)
+                    return
+                case .error(let e): r = Self.apiResult(e)
+                }
+            } else {
+                r = await api.lookup(code: code)
+            }
             self.dispatch(.lookup(code: code, result: r))
             // Only a lookup the flow took names the page; one it dropped as superseded doesn't.
             guard case .ok(let found) = r, case .loading(let c, let name) = self.flow.state, c == code, name != nil,
@@ -499,6 +526,24 @@ final class VisitorController {
             self.spacePage?.whereText = found.whereText
             self.refreshUi()
         }
+    }
+
+    private static func apiResult(_ e: AppBeatError) -> ApiResult<MarkerLookup> {
+        switch (e.status, e.code) {
+        case (404, _): return .notFound
+        case (429, _): return .rateLimited
+        case (0, _): return .offline
+        default: return .failed(e.status)
+        }
+    }
+
+    /// An event's ARC was looked up: the search for a space ends (the card is the answer) and the card opens.
+    private func openEvent(code: String, name: String, card: AppBeatCard?) {
+        // Only the lookup that is still being waited for ends the search; one a newer look has replaced does nothing
+        guard case .loading(let c, let spaceName) = flow.state, c == code, spaceName == nil else { return }
+        if let ring = RingCodec.parseCode(code) { eventRingHeldUntil[ring] = clock() + Self.eventHoldMs }
+        dispatch(.lookAgain)
+        beats?.openEvent(code: code, name: name, card: card)
     }
 
     private func refreshUi() {
@@ -514,6 +559,7 @@ final class VisitorController {
         if case .shown = st { set(\.sceneShown, true) } else { set(\.sceneShown, false) }
         set(\.menuButtonShown, VirviARKit.menuButtonShown(st, spaceChosen: flow.spaceChosen))
         set(\.reportSpaceId, flow.reportSpaceId)
+        if case .shown(let space, _) = st { beats?.spaceShown(space.id) } else { beats?.spaceShown(nil) }
     }
 
     /// Assigns only a change, so SwiftUI isn't woken every camera frame for nothing.
