@@ -11,6 +11,10 @@ The management HUD and all scene-changing messages now require a signed-in, veri
 - `not_found` — the requested scene or resource does not exist
 - `server_error` — the handler threw an unhandled exception
 
+## Update notice
+
+When a newer `@virvixr/dcl` is out than the one your scene runs (2.22.0 or later), hosts, co-hosts and editors see a line under the HUD's tabs, for example "Virvi 2.23.0 is out (this scene runs 2.22.0). Redeploy it from the Virvi dashboard to update." If you deploy the scene from your own project, it says to run `npm install @virvixr/dcl@latest` in the scene's folder and deploy it instead. Visitors and viewers don't see it. The scene's page in the dashboard shows the same warning, with what's new: see the [changelog](/docs/sdk/decentraland/changelog/).
+
 ## Moving things in-world
 
 Editors can move, rotate and resize placed models, images, screens and sounds without leaving Decentraland.

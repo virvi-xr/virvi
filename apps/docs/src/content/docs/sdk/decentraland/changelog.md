@@ -11,6 +11,10 @@ When a scene is behind, its page in the dashboard says which version it runs, li
 
 No release so far has needed changes to scene code, so none is marked as breaking.
 
+## 2.22.0 — 2026-11-25
+
+- **Update notice:** when a newer release is out, hosts, co-hosts and editors see a line under the HUD's tabs saying so, with how to update. Visitors and viewers don't see it.
+
 ## 2.21.1 — 2026-11-25
 
 - **Version reporting:** the scene reports its own version to Virvi. 2.20.0 and 2.21.0 reported the release before theirs, so the dashboard could show them one version behind.

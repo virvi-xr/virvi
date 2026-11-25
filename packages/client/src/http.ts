@@ -4,7 +4,8 @@ import { VirviAuth } from './auth.js'
 
 export type SetupStatus =
   | { state: 'eligible' }
-  | { state: 'member'; sceneId: string; role: 'host' | 'cohost' | 'editor' | 'viewer' }
+  /** `hudLatest`: the newest published @virvixr/dcl; `virviDeploys`: whether a Virvi redeploy can update it (LIV-13). */
+  | { state: 'member'; sceneId: string; role: 'host' | 'cohost' | 'editor' | 'viewer'; hudLatest?: string; virviDeploys?: boolean }
   | { state: 'taken'; host: string; sceneId?: string }
   /** `sceneId` is present when the location is set up — visitors connect content-only. */
   | { state: 'none'; sceneId?: string }

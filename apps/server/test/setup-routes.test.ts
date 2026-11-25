@@ -1,3 +1,4 @@
+import { DCL_HUD_LATEST } from '@virvixr/shared'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { count } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
@@ -68,7 +69,7 @@ describe('setup routes', () => {
     const res = await setup(OP)
     expect(res.statusCode).toBe(200)
     const { sceneId } = res.json()
-    expect((await status(OP)).json()).toEqual({ state: 'member', sceneId, role: 'host' })
+    expect((await status(OP)).json()).toEqual({ state: 'member', sceneId, role: 'host', hudLatest: DCL_HUD_LATEST, virviDeploys: false })
     expect((await status(OWNER)).json()).toEqual({ state: 'taken', host: '0x0000…00bb', sceneId })
     expect((await setup(OWNER)).statusCode).toBe(409)
   })
@@ -82,7 +83,7 @@ describe('setup routes', () => {
   it('a wallet with a scene role sees member with that role', async () => {
     const { sceneId } = (await setup(OWNER)).json()
     await db.insert(sceneRoles).values({ sceneId, walletAddress: VISITOR, role: 'editor' })
-    expect((await status(VISITOR)).json()).toEqual({ state: 'member', sceneId, role: 'editor' })
+    expect((await status(VISITOR)).json()).toEqual({ state: 'member', sceneId, role: 'editor', hudLatest: DCL_HUD_LATEST, virviDeploys: false })
   })
 
   it('two controllers pressing at once → exactly one setup', async () => {

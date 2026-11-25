@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { DCL_HUD_LATEST } from '@virvixr/shared'
+import { DCL_HUD_LATEST, DCL_HUD_VERSION } from '@virvixr/shared'
 import { hudBehindNote, hudMissing, hudMissingNote, hudRedeployHere } from './hud-version'
 import { DCL_CHANGELOG } from './dcl-changelog'
 
@@ -53,7 +53,11 @@ describe('what a scene that is behind is missing (LIV-13)', () => {
     expect(fromDocs.length).toBeGreaterThan(10)
     expect(DCL_CHANGELOG).toEqual(fromDocs)
   })
-  it('covers the latest release the server knows of', () => {
-    expect(DCL_CHANGELOG[0].version).toBe(DCL_HUD_LATEST)
+  it('covers the latest published release, and at most the one being cut', () => {
+    expect(DCL_CHANGELOG.map((r) => r.version)).toContain(DCL_HUD_LATEST)
+    expect([DCL_HUD_LATEST, DCL_HUD_VERSION]).toContain(DCL_CHANGELOG[0].version)
+  })
+  it('lists nothing from a release that isn\'t published yet', () => {
+    expect(hudMissing({ version: DCL_HUD_LATEST, latest: DCL_HUD_LATEST, seenAt: '', behind: true })).toBeNull()
   })
 })
