@@ -13,6 +13,7 @@ import { beatsExplainerFor, beatsNavVisible } from '@/lib/beats'
 import { GoToBeat } from '@/components/beats/GoToBeat'
 import { VerifyEmailBanner } from '@/components/VerifyEmailBanner'
 import { TermsGate } from '@/components/TermsGate'
+import { PrivacyGate } from '@/components/PrivacyGate'
 import Link from 'next/link'
 import { BrandMark } from '@/components/BrandMark'
 import { NotificationBell } from '@/components/NotificationBell'
@@ -65,6 +66,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [sceneTitle, setSceneTitle] = useState('this scene')
   const [signedIn, setSignedIn] = useState<string | null>(null)
   const [headsetMoved, setHeadsetMoved] = useState<string | null>(null)
+  // The account whose Terms agreement is known, so the privacy notice may follow it
+  const [termsAgreedFor, setTermsAgreedFor] = useState<string | null>(null)
   const router = useRouter()
   const pathname = usePathname()
 
@@ -242,7 +245,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         )}
         {!trial && !scenePass && user?.id && <VerifyEmailBanner userId={user.id} />}
-        {!trial && !scenePass && user?.id && <TermsGate key={user.id} onSignOut={signOut} />}
+        {!trial && !scenePass && user?.id && <TermsGate key={user.id} onSignOut={signOut} onAgreed={() => setTermsAgreedFor(user.id)} />}
+        {/* The privacy notice comes after the Terms, never on top of them */}
+        {!trial && !scenePass && user?.id && termsAgreedFor === user.id && <PrivacyGate key={user.id} userId={user.id} />}
         {signedIn && (
           <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-emerald-500/40 px-4 py-2 text-sm text-emerald-200" role="status">
             <span>{signedIn}</span>

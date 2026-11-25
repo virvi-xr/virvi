@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { ConfirmAction, PageHeader, Skeleton, tableHead } from '@/components/ui'
 import { StatCard } from '@/components/analytics/StatCard'
 import AssetReports from './AssetReports'
+import { adminPrivacyLabel, adminTermsLabel } from '@/lib/privacy'
 
 type Tab = 'users' | 'orgs'
 
@@ -306,6 +307,7 @@ export default function AdminPage() {
                       <th className="px-3 py-2">Email</th>
                       <th className="px-3 py-2">Role</th>
                       <th className="px-3 py-2">Created</th>
+                      <th className="px-3 py-2">Terms · Privacy</th>
                       <th className="px-3 py-2">Actions</th>
                     </tr>
                   </thead>
@@ -328,6 +330,10 @@ export default function AdminPage() {
                         <td className="px-3 py-2 text-gray-400">
                           {new Date(u.createdAt).toLocaleDateString()}
                         </td>
+                        <td className="px-3 py-2 text-xs text-gray-400">
+                          <div>{adminTermsLabel(u.terms)}</div>
+                          <div>{adminPrivacyLabel(u.privacy)}</div>
+                        </td>
                         <td className="px-3 py-2">
                           <ConfirmAction
                             prompt={`Delete user "${u.displayName}"? This cannot be undone.`}
@@ -344,7 +350,7 @@ export default function AdminPage() {
                     ))}
                     {users.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-3 py-8 text-center text-gray-500">
+                        <td colSpan={6} className="px-3 py-8 text-center text-gray-500">
                           No users found.
                         </td>
                       </tr>

@@ -1,6 +1,7 @@
 'use client'
 import { useApi } from '@/lib/api'
 import { ErrorPromptSetting } from './ErrorPromptSetting'
+import { PrivacySetting } from './PrivacySetting'
 import { AssistantActivity } from './AssistantActivity'
 import { memberLabel, type OrgMember, type OrgSummary } from '@/lib/orgs'
 import { useAuth } from '@/lib/auth'
@@ -326,6 +327,8 @@ export default function SettingsPage() {
           <LinkedWallets />
 
           <MoveBeats />
+
+          <PrivacySetting />
 
           <ErrorPromptSetting />
 
