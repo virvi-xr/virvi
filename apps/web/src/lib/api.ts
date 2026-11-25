@@ -474,6 +474,20 @@ function useRealApi() {
       apiFetch<PublicBeat>('/api/beats', { method: 'POST', userAction: true, body: JSON.stringify(body) }),
     updateBeat: (beatId: string, body: Partial<ReturnType<typeof beatEditBody>>) =>
       apiFetch<PublicBeat>(beatApiPath(beatId), { method: 'PATCH', userAction: true, body: JSON.stringify(body) }),
+    /** A suggested venue pin for an address; `pin` is null when the geocoder found nothing. */
+    suggestBeatPin: (parts: { venue?: string; address?: string; city?: string; country: string }) =>
+      apiFetch<{ pin: { lat: number; lng: number } | null }>('/api/beats/geocode', { method: 'POST', body: JSON.stringify(parts) }),
+    /** The in-person BEAT's printable ARC (PDF). `style`: normal (black on white) or inverted. */
+    downloadBeatArc: async (beatId: string, style: 'normal' | 'inverted'): Promise<{ blob: Blob; filename: string }> => {
+      const res = await fetch(`${API_URL}${beatApiPath(beatId, 'arc/files')}?style=${style}`, { headers: requestHeaders(token, {}) })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+        dropDeadSession(res.status, err)
+        throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
+      }
+      const m = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')
+      return { blob: await res.blob(), filename: m?.[1] ?? `virvi-arc-beat-${beatId}.pdf` }
+    },
     getBeatClaimants: (beatId: string) => apiFetch<BeatClaimant[]>(beatApiPath(beatId, 'claimants')),
     cancelBeat: (beatId: string) => apiFetch<PublicBeat>(beatApiPath(beatId, 'cancel'), { method: 'POST', userAction: true }),
     endBeatEarly: (beatId: string) => apiFetch<PublicBeat>(beatApiPath(beatId, 'end-early'), { method: 'POST', userAction: true }),

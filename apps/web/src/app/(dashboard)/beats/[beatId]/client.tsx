@@ -8,7 +8,7 @@ import { BEAT_RETIRED_NOTE, BEAT_SUPPLY_CAP_MAX } from '@virvixr/shared'
 import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import {
-  ACTION_LABELS, ART_FAILED, ART_PENDING, COUNT_LABELS, COUNTS_NOTE, PAYMENT_POLL_MS, PAYMENT_SLOW_MS, STATUS_HELP,
+  ACTION_LABELS, ART_FAILED, ART_PENDING, CLAIM_STATUS_LABELS, COUNT_LABELS, COUNTS_NOTE, PAYMENT_POLL_MS, PAYMENT_SLOW_MS, STATUS_HELP,
   beatActions, beatsPayable, beatCounts, beatEditBody, beatFieldError, beatLocked, beatToInput, beatWindow, cancelledNote, claimUntil, confirmBeatAction,
   formatWhen, locationLine, paymentNote, pollPayment, reviewSummary, topupKey,
   type BeatAction, type BeatAvailability, type BeatClaimant, type BeatInput, type FieldError, type PublicBeat,
@@ -19,6 +19,8 @@ import { BeatBadges, BeatsGate, FrozenNote } from '@/components/beats/BeatBits'
 import { BeatForm } from '@/components/beats/BeatForm'
 import { BeatReview } from '@/components/beats/BeatReview'
 import { Claimants } from '@/components/beats/Claimants'
+import { saveBlob } from '../../studio/[designId]/PaidRevisions'
+import { ARC_PRINT_COPY, ARC_STYLES, arcAvailable, type ArcStyle } from '@/lib/venue-pin'
 
 const SLOW_POLL_MS = 30_000
 const ALERT = 'rounded-md border border-red-700 bg-red-900/50 px-4 py-2 text-sm text-red-300'
@@ -274,11 +276,54 @@ function BeatDetail({ availability }: { availability: BeatAvailability }) {
             ))}
           </section>
           <p className="-mt-3 text-xs text-gray-400">{counts.used} of {counts.cap} used. {COUNTS_NOTE}</p>
+          {(beat.waitingCount > 0 || beat.location.type === 'in_person') && (
+            <div className="rounded-lg border border-gray-800 bg-gray-900 px-4 py-3 sm:w-max sm:min-w-[12rem]">
+              <div className="font-mono text-xs uppercase tracking-wider text-gray-400">{CLAIM_STATUS_LABELS.waiting}</div>
+              <div className="mt-1 text-2xl font-semibold text-white">{beat.waitingCount}</div>
+            </div>
+          )}
+
+          {arcAvailable(beat) && <ArcDownload beatId={beat.id} venue={beat.location.venue ?? 'the venue'} />}
 
           <Claimants claimants={claimants} beat={beat} error={claimantsError} busy={busy} onRetry={loadClaimants} onRemove={beat.mintsHeldUntil ? remove : undefined} />
         </>
       )}
     </div>
+  )
+}
+
+/** The in-person BEAT's printable ARC: the PDF in the chosen colours. */
+function ArcDownload({ beatId, venue }: { beatId: string; venue: string }) {
+  const api = useApi()
+  const [style, setStyle] = useState<ArcStyle>('normal')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const download = async () => {
+    setBusy(true); setError(null)
+    try {
+      const { blob, filename } = await api.downloadBeatArc(beatId, style)
+      saveBlob(blob, filename)
+    } catch (err) { setError(beatFieldError(err).message) }
+    setBusy(false)
+  }
+  return (
+    <section aria-labelledby="beat-arc-heading" className="space-y-3 rounded-lg border border-gray-800 bg-gray-900 p-6">
+      <h2 id="beat-arc-heading" className="text-sm font-medium text-gray-300">Event ARC</h2>
+      <p className="text-sm text-gray-400">{ARC_PRINT_COPY(venue)}</p>
+      {error && <p role="alert" className={ALERT}>{error}</p>}
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <label htmlFor="beat-arc-style" className="block text-xs text-gray-400">Style</label>
+          <select id="beat-arc-style" value={style} onChange={(e) => setStyle(e.target.value as ArcStyle)}
+            className="mt-1 rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-400">
+            {ARC_STYLES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+        <button type="button" disabled={busy} onClick={download} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50">
+          {busy ? 'Preparing…' : 'Download ARC'}
+        </button>
+      </div>
+    </section>
   )
 }
 

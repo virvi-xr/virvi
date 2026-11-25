@@ -8,7 +8,7 @@ import { walletLookupHref, beatsExplainerFor,
   BEAT_REFUND_NOTE, beatApiPath, fieldsOfPatch, pollPayment, sceneBeatsPath, shownFieldError, BEATS_NETWORK_UNAVAILABLE, beatsPayable,
   TRADEABLE_HINT, SUPPLY_HINT, PAID_SUPPLY_HINT, LOCATION_SCENE_ONLY, blankLocation, cancelledNote, claimantsHeading, locationBody, locationLine,
   reviewSummary, beatLocked, COUNT_LABELS, CLAIM_STATUS_LABELS, claimantHeld,
-  filterCollected, shortWallet, walletPageHref, walletFromPath, type CollectedFilter,
+  filterCollected, waitingNote, shortWallet, walletPageHref, walletFromPath, type CollectedFilter,
 } from './beats'
 
 const NOW = new Date('2026-11-14T12:00:00Z')
@@ -103,6 +103,9 @@ describe('form', () => {
     expect(locationBody({ ...hall, platform: 'stray', address: ' ' })).toEqual({ type: 'in_person', venue: 'Hall', city: 'Lisbon', country: 'Portugal' })
     expect(locationBody({ ...online, venue: 'stray' })).toEqual({ type: 'online', platform: 'Zoom', url: 'https://zoom.us/j/1' })
     expect(locationBody(blankLocation())).toEqual({ type: 'scene' })
+    // the venue pin goes only with an in-person place, with its radius clamped
+    expect(locationBody({ ...hall, pin: { lat: 48.8, lng: 2.3 }, radiusM: 5000 })).toEqual({ type: 'in_person', venue: 'Hall', city: 'Lisbon', country: 'Portugal', pin: { lat: 48.8, lng: 2.3, radiusM: 1000 } })
+    expect(locationBody({ ...online, pin: { lat: 1, lng: 2 } })).toEqual({ type: 'online', platform: 'Zoom', url: 'https://zoom.us/j/1' })
   })
   it('the location as a line, and the claim-in-Virvi note', () => {
     expect(locationLine(beat().location)).toBe('In Virvi: A')
@@ -407,6 +410,19 @@ describe('collected BEATs (LIV-185)', () => {
   })
   it('combines filters', () => {
     expect(ids({ wallet: W1, from: '2026-11-11', earnedOnly: true })).toEqual(['3'])
+  })
+  it('keeps waiting items, which have no wallet, unless one wallet is picked', () => {
+    const w = mk({ tokenId: '', contract: '', wallet: '', quantity: 0, earned: false, status: 'waiting', startsAt: '2026-11-11T00:00:00Z' })
+    const list = [...items, w]
+    const f = (over: Partial<CollectedFilter>) => filterCollected(list, { ...none, ...over })
+    expect(f({})).toContain(w)
+    expect(f({ wallet: W1 })).not.toContain(w)
+    expect(f({ from: '2026-11-12' })).not.toContain(w)
+    expect(f({ kind: 'custom' })).not.toContain(w)
+  })
+  it('says what a waiting item is waiting for', () => {
+    expect(waitingNote(mk({ status: 'waiting' }))).toBe("Saved for you. Link a wallet and it'll be sent.")
+    expect(waitingNote(mk({ status: 'waiting', reason: 'wallet_has_it' }))).toBe('That wallet already has this BEAT. Link another wallet to receive it.')
   })
   it('shortWallet and walletPageHref', () => {
     expect(shortWallet(W1)).toBe('0x5290…9EE7')

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import { beatFieldError, datesBackwards, filterCollected, shortWallet, walletPageHref, type BeatCollection, type BeatKind, type CollectedFilter } from '@/lib/beats'
+import { beatFieldError, datesBackwards, filterCollected, shortWallet, waitingNote, walletPageHref, type BeatCollection, type BeatKind, type CollectedFilter } from '@/lib/beats'
 import { EmptyState, Skeleton } from '@/components/ui'
 import { MedalIcon } from '@/components/icons'
 import { BeatMedal } from './BeatMedal'
@@ -29,6 +29,8 @@ export function CollectedBeats() {
   }, [token])
 
   const shown = useMemo(() => (data ? filterCollected(data.beats, filter) : []), [data, filter])
+  const held = shown.filter((b) => b.status !== 'waiting')
+  const waiting = shown.filter((b) => b.status === 'waiting')
 
   if (error) {
     return (
@@ -39,7 +41,8 @@ export function CollectedBeats() {
     )
   }
   if (!data) return <Skeleton />
-  if (data.wallets.length === 0) {
+  // BEATs saved for a wallet to be linked count as something collected, so an account with only those isn't shown as empty
+  if (data.wallets.length === 0 && data.beats.length === 0) {
     return <EmptyState icon={<MedalIcon size={28} />} title="No wallet yet" body="Sign in with a wallet to collect BEATs." />
   }
   if (data.beats.length === 0) {
@@ -82,9 +85,30 @@ export function CollectedBeats() {
       {shown.length === 0 ? (
         <p className="text-sm text-gray-400">No BEATs match these filters.</p>
       ) : (
-        <ul className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] items-start gap-3">
-          {shown.map((b) => <BeatMedal key={`${b.wallet}-${b.contract}-${b.tokenId}`} beat={b} showWallet />)}
-        </ul>
+        <>
+          {waiting.length > 0 && (
+            <section aria-labelledby="waiting-beats" className="mb-6">
+              <h2 id="waiting-beats" className="mb-2 text-sm font-medium text-gray-300">Waiting for a wallet</h2>
+              <ul className="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] items-start gap-3">
+                {waiting.map((b, i) => (
+                  <li key={`${b.name}-${b.startsAt}-${i}`} className="flex min-w-0 flex-col items-center gap-2 rounded-lg border border-dashed border-gray-700 bg-gray-900 p-4 text-center">
+                    <span className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border-4 border-gray-700 bg-gray-800 text-gray-600">
+                      {b.imageUrl ? <img src={b.imageUrl} alt="" className="h-full w-full object-cover opacity-70" /> : <MedalIcon size={28} />}
+                    </span>
+                    <span className="w-full break-words font-medium text-white">{b.name}</span>
+                    {b.place && <span className="w-full break-words text-xs text-gray-400">{b.place}</span>}
+                    <span className="text-xs text-gray-300">{waitingNote(b)}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {held.length > 0 && (
+            <ul className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] items-start gap-3">
+              {held.map((b) => <BeatMedal key={`${b.wallet}-${b.contract}-${b.tokenId}`} beat={b} showWallet />)}
+            </ul>
+          )}
+        </>
       )}
     </>
   )

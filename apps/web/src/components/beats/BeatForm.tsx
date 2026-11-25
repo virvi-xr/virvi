@@ -1,8 +1,9 @@
 'use client'
 // The BEAT create and edit form (LIV-11): the fields of the spec's Flow 1, with each server refusal beside its field.
 import { useEffect, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
 import {
-  BEAT_DESCRIPTION_MAX, BEAT_LOCATION_MAX, BEAT_MIN_PRESENT_MAX_MINUTES, BEAT_NAME_MAX, BEAT_SUPPLY_CAP_MAX, type PublicBeat,
+  BEAT_DESCRIPTION_MAX, BEAT_LOCATION_MAX, BEAT_MIN_PRESENT_MAX_MINUTES, BEAT_NAME_MAX, BEAT_PIN_RADIUS, BEAT_SUPPLY_CAP_MAX, type PublicBeat,
 } from '@virvixr/shared'
 import { useApi } from '@/lib/api'
 import {
@@ -11,6 +12,10 @@ import {
   type BeatField, type BeatInput, type BeatLocationType, type FieldError, type LocationInput,
 } from '@/lib/beats'
 import { MediaPicker } from '@/components/MediaPicker'
+import { PIN_COPY, clampRadius, shouldAutoSuggest, type LatLng } from '@/lib/venue-pin'
+
+// Leaflet reads `window`, so the map is client-only (the site is a static export)
+const VenuePin = dynamic(() => import('./VenuePin'), { ssr: false, loading: () => <div className="h-64 w-full rounded-md border border-gray-800 bg-gray-950" /> })
 
 const INPUT = 'rounded-md bg-gray-950 px-3 py-2 text-sm text-white outline-none border border-gray-800 focus:border-blue-400 disabled:opacity-60 aria-[invalid=true]:border-red-500'
 const LABEL = 'block text-xs text-gray-400'
@@ -70,6 +75,37 @@ export function BeatForm({ initial, editing, error, busy, submitLabel, busyLabel
     setF((cur) => ({ ...cur, ...patch }))
   }
   const setLoc = (patch: Partial<LocationInput>) => set({ location: { ...f.location, ...patch } })
+
+  // Venue pin: suggested from the address at most once on its own (when the address first becomes complete, checked as a
+  // field is left, not on every key), and never over a pin the host placed. The button suggests again on request.
+  const [pinNote, setPinNote] = useState<'suggested' | 'failed' | string | null>(null)
+  const [suggesting, setSuggesting] = useState(false)
+  const suggestedOnce = useRef(false)
+  const checkedLoc = useRef(initial.location)
+  const pinRef = useRef<LatLng | null>(f.location.pin)
+  pinRef.current = f.location.pin
+  const suggestPin = async (loc: LocationInput, auto: boolean) => {
+    const venue = loc.venue.trim(), address = loc.address.trim()
+    if (!venue && !address) { if (!auto) setPinNote('failed'); return }
+    if (auto) suggestedOnce.current = true
+    setSuggesting(true)
+    try {
+      const r = await api.suggestBeatPin({ ...(venue ? { venue } : {}), ...(address ? { address } : {}), ...(loc.city.trim() ? { city: loc.city.trim() } : {}), country: loc.country.trim() })
+      if (r.pin && !(auto && pinRef.current)) {
+        setF((cur) => ({ ...cur, location: { ...cur.location, pin: r.pin } }))
+        setPinNote('suggested')
+      } else if (!r.pin) setPinNote('failed')
+    } catch (err) {
+      setPinNote((err as { status?: number }).status === 429 ? (err as Error).message : 'failed')
+    }
+    setSuggesting(false)
+  }
+  const onAddressBlur = () => {
+    const next = f.location
+    if (shouldAutoSuggest(checkedLoc.current, next, suggestedOnce.current)) void suggestPin(next, true)
+    checkedLoc.current = next
+  }
+  const placePin = (p: LatLng) => { setLoc({ pin: p }); setPinNote(null) }
 
   useEffect(() => {
     let live = true
@@ -220,9 +256,31 @@ export function BeatForm({ initial, editing, error, busy, submitLabel, busyLabel
               <div key={k}>
                 <label htmlFor={`beat-loc-${k}`} className={LABEL}>{label}</label>
                 <input id={`beat-loc-${k}`} type={url ? 'url' : 'text'} placeholder={url ? 'https://' : undefined} className={`${INPUT} mt-1 block w-full`} maxLength={max}
-                  value={f.location[k]} aria-invalid={bad('location')} onChange={(e) => setLoc({ [k]: e.target.value } as Partial<LocationInput>)} />
+                  value={f.location[k]} aria-invalid={bad('location')} onBlur={onAddressBlur} onChange={(e) => setLoc({ [k]: e.target.value } as Partial<LocationInput>)} />
               </div>
             ))}
+          </div>
+        )}
+        {f.location.type === 'in_person' && (
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="button" onClick={() => void suggestPin(f.location, false)} disabled={suggesting}
+                className="rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-50">{PIN_COPY.button}</button>
+              {f.location.pin && (
+                <button type="button" onClick={() => { setLoc({ pin: null }); setPinNote(null) }}
+                  className="rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700">{PIN_COPY.clear}</button>
+              )}
+              <div>
+                <label htmlFor="beat-pin-radius" className={LABEL}>Radius (metres)</label>
+                <NumberInput id="beat-pin-radius" min={BEAT_PIN_RADIUS.minM} max={BEAT_PIN_RADIUS.maxM} value={f.location.radiusM} invalid={false}
+                  describedBy="beat-pin-radius-hint" onChange={(n) => setLoc({ radiusM: n })} />
+              </div>
+            </div>
+            <p id="beat-pin-radius-hint" className={HINT}>Visitors must be within this distance of the pin, from {BEAT_PIN_RADIUS.minM} to {BEAT_PIN_RADIUS.maxM} metres.</p>
+            <p role="status" className={pinNote && pinNote !== 'suggested' ? 'text-xs text-amber-300' : HINT}>
+              {pinNote === 'suggested' ? PIN_COPY.suggested : pinNote === 'failed' ? PIN_COPY.failed : (pinNote ?? '')}
+            </p>
+            <VenuePin pin={f.location.pin} radiusM={clampRadius(f.location.radiusM)} onPin={placePin} />
           </div>
         )}
         {f.location.type !== 'scene' && <p role="note" className="rounded-md border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-300">{LOCATION_SCENE_ONLY}</p>}

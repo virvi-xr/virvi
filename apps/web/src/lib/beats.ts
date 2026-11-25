@@ -1,12 +1,13 @@
 /** Dashboard BEATs (LIV-11): the shapes the host API returns, form rules, the review step, actions and plain-language errors. */
 import {
   BEAT_CARD_MIN_CENTS, BEAT_CLAIM_GRACE_MS, BEAT_DESCRIPTION_MAX, BEAT_IMAGE_MIN_PX, BEAT_LOCATION_MAX, BEAT_MIN_PRESENT_DEFAULT_MINUTES,
-  BEAT_MIN_PRESENT_MAX_MINUTES, BEAT_NAME_MAX, BEAT_SUPPLY_CAP_DEFAULT, BEAT_SUPPLY_CAP_MAX,
+  BEAT_MIN_PRESENT_MAX_MINUTES, BEAT_NAME_MAX, BEAT_PIN_RADIUS, BEAT_SUPPLY_CAP_DEFAULT, BEAT_SUPPLY_CAP_MAX,
   type BeatChain, type BeatClaimStatus, type BeatKind, type BeatCollection, type CollectedBeat, type WalletBeats, type BeatLocation, type BeatLocationType, type BeatStatus, type PublicBeat,
 } from '@virvixr/shared'
 import { keccak_256 } from '@noble/hashes/sha3'
 import { formatCredit } from './studio'
 import { shortWallet } from './studio-people'
+import { pinBody } from './venue-pin'
 
 export { shortWallet }
 export type { BeatKind, BeatCollection, CollectedBeat, WalletBeats }
@@ -123,15 +124,19 @@ export interface LocationInput {
   type: BeatLocationType
   platform: string; url: string
   venue: string; city: string; country: string; address: string; mapUrl: string
+  /** In person only: the venue pin the app checks against, and its radius in metres. */
+  pin: { lat: number; lng: number } | null
+  radiusM: number
 }
 
-export const blankLocation = (): LocationInput => ({ type: 'scene', platform: '', url: '', venue: '', city: '', country: '', address: '', mapUrl: '' })
+export const blankLocation = (): LocationInput => ({ type: 'scene', platform: '', url: '', venue: '', city: '', country: '', address: '', mapUrl: '', pin: null, radiusM: BEAT_PIN_RADIUS.defaultM })
 
 export function locationToInput(l: BeatLocation | null | undefined): LocationInput {
   if (!l) return blankLocation()
   return {
     type: l.type, platform: l.platform ?? '', url: l.url ?? '', venue: l.venue ?? '', city: l.city ?? '', country: l.country ?? '',
     address: l.address ?? '', mapUrl: l.mapUrl ?? '',
+    pin: l.pin ? { lat: l.pin.lat, lng: l.pin.lng } : null, radiusM: l.pin?.radiusM ?? BEAT_PIN_RADIUS.defaultM,
   }
 }
 
@@ -142,6 +147,7 @@ export function locationBody(l: LocationInput) {
     return {
       type: l.type, venue: l.venue.trim(), city: l.city.trim(), country: l.country.trim(),
       ...(l.address.trim() ? { address: l.address.trim() } : {}), ...(l.mapUrl.trim() ? { mapUrl: l.mapUrl.trim() } : {}),
+      ...(l.pin ? { pin: pinBody(l.pin, l.radiusM) } : {}),
     }
   }
   return { type: 'scene' as const }
@@ -532,10 +538,10 @@ export function datesBackwards(from: string | null, to: string | null): boolean 
 }
 
 export function filterCollected(items: CollectedBeat[], f: CollectedFilter): CollectedBeat[] {
-  // Claims waiting for a wallet aren't holdings (their own list comes with the website's waiting counts)
   return items.filter((b) => {
-    if (b.status === 'waiting') return false
-    if (f.wallet !== 'all' && b.wallet.toLowerCase() !== f.wallet.toLowerCase()) return false
+    // A claim waiting for a wallet has none yet, so it shows under "All wallets" only
+    if (b.status === 'waiting') { if (f.wallet !== 'all') return false }
+    else if (f.wallet !== 'all' && b.wallet.toLowerCase() !== f.wallet.toLowerCase()) return false
     if (f.kind !== 'all' && b.kind !== f.kind) return false
     if (f.earnedOnly && !b.earned) return false
     const day = b.startsAt.slice(0, 10)
@@ -543,6 +549,13 @@ export function filterCollected(items: CollectedBeat[], f: CollectedFilter): Col
     if (f.to && day > f.to) return false
     return true
   })
+}
+
+/** What a waiting item is waiting for, in the Collected tab. */
+export function waitingNote(b: Pick<CollectedBeat, 'reason'>): string {
+  return b.reason === 'wallet_has_it'
+    ? 'That wallet already has this BEAT. Link another wallet to receive it.'
+    : "Saved for you. Link a wallet and it'll be sent."
 }
 
 /** EIP-55 checksum of a 0x address (anything else comes back unchanged). */
