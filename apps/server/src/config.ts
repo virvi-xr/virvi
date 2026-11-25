@@ -206,6 +206,42 @@ function rpcUrlsFrom(e: Record<string, string | undefined>) {
 }
 
 /**
+ * Apple's App Attestation Root CA (https://www.apple.com/certificateauthority/Apple_App_Attestation_Root_CA.pem), the
+ * root every App Attest attestation chains to. SHA-256 fingerprint
+ * 1C:B9:82:3B:A2:8B:A6:AD:2D:33:A0:06:94:1D:E2:AE:4F:51:3E:F1:D4:E8:31:B9:F7:E0:FA:7B:62:42:C9:32; valid to 2045.
+ */
+export const APPLE_APP_ATTESTATION_ROOT_CA = `-----BEGIN CERTIFICATE-----
+MIICITCCAaegAwIBAgIQC/O+DvHN0uD7jG5yH2IXmDAKBggqhkjOPQQDAzBSMSYw
+JAYDVQQDDB1BcHBsZSBBcHAgQXR0ZXN0YXRpb24gUm9vdCBDQTETMBEGA1UECgwK
+QXBwbGUgSW5jLjETMBEGA1UECAwKQ2FsaWZvcm5pYTAeFw0yMDAzMTgxODMyNTNa
+Fw00NTAzMTUwMDAwMDBaMFIxJjAkBgNVBAMMHUFwcGxlIEFwcCBBdHRlc3RhdGlv
+biBSb290IENBMRMwEQYDVQQKDApBcHBsZSBJbmMuMRMwEQYDVQQIDApDYWxpZm9y
+bmlhMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAERTHhmLW07ATaFQIEVwTtT4dyctdh
+NbJhFs/Ii2FdCgAHGbpphY3+d8qjuDngIN3WVhQUBHAoMeQ/cLiP1sOUtgjqK9au
+Yen1mMEvRq9Sk3Jm5X8U62H+xTD3FE9TgS41o0IwQDAPBgNVHRMBAf8EBTADAQH/
+MB0GA1UdDgQWBBSskRBTM72+aEH/pwyp5frq5eWKoTAOBgNVHQ8BAf8EBAMCAQYw
+CgYIKoZIzj0EAwMDaAAwZQIwQgFGnByvsiVbpTKwSga0kP0e8EeDS4+sQmTvb7vn
+53O5+FRXgeLhpJ06ysC5PrOyAjEAp5U4xDgEgllF7En3VcE3iexZZtKeYnpqtijV
+oyFraWVIyd/dganmrduC1bmTBGwD
+-----END CERTIFICATE-----
+`
+
+/**
+ * App Attest (the Virvi app's BEAT claims): the app id the attestations are for (`<team id>.<bundle id>`), which App
+ * Attest environment the app is built for (`development` or `production`; it decides the aaguid) and the root CA
+ * (a PEM; `\n` escapes allowed). A bad environment refuses to start.
+ */
+export function appAttestFrom(e: Record<string, string | undefined>) {
+  const env = (e.APP_ATTEST_ENV || 'production') as 'development' | 'production'
+  if (env !== 'development' && env !== 'production') throw new Error('APP_ATTEST_ENV must be development or production')
+  return {
+    appId: e.APP_ATTEST_APP_ID || 'P22YGT64VU.io.virvi.app',
+    env,
+    rootCa: e.APP_ATTEST_ROOT_CA ? e.APP_ATTEST_ROOT_CA.replace(/\\n/g, '\n') : APPLE_APP_ATTESTATION_ROOT_CA,
+  }
+}
+
+/**
  * Automatic giveaway settings (LIV-194), checked once at startup. On only when GIVEAWAY_WALLET_SECRET (64 hex characters:
  * the key that seals each giveaway wallet's private key) is set. A malformed secret or gas key refuses to start; no
  * message ever includes the value.
@@ -545,6 +581,8 @@ export const config = {
   studioMana: manaSettingsFrom(process.env),
   // BEAT attendance tokens (LIV-11): dark unless BEAT_ENABLED=true
   beats: beatSettingsFrom(process.env),
+  // App Attest for the Virvi app's BEAT claims: only the genuine app on a real iPhone can track or claim
+  appAttest: appAttestFrom(process.env),
   // Automatic wearable giveaways (LIV-194): dark unless GIVEAWAY_WALLET_SECRET is set
   giveaways: giveawaysFrom(process.env),
   // The studio scene's parcels: each copy of the scene's base parcel, "x,y", separated by ";" or spaces

@@ -15,6 +15,7 @@ import { getSpace } from '../ar/spaces.js'
 import { lookupArc } from '../ar/arcs.js'
 import { AR_ANALYTICS_PLATFORMS, recordArBatch } from '../ar/analytics.js'
 import { AR_REPORT_REASONS, createArReport } from '../ar/reports.js'
+import { arLiveSince, markArLive } from '../beats/live.js'
 
 let holdMs: number = AR_FEED.holdMs
 
@@ -62,6 +63,20 @@ async function signInIfPresent(request: FastifyRequest, reply: FastifyReply): Pr
   if (!request.headers.authorization) return true
   await authenticate(request, reply)
   return !reply.sent
+}
+
+/**
+ * A signed-in visitor's poll marks them live in the space (beats/live.ts), keeping the first poll's time while the mark
+ * lives: what the app's BEAT check-ins credit. Only account sessions (the Virvi app, a signed-in Quest), not headset
+ * passes. Never fails or slows the feed beyond the mark: an error is logged.
+ */
+async function markPresent(request: FastifyRequest, spaceId: string): Promise<void> {
+  if (!request.headers.authorization || request.user?.kind !== 'account') return
+  try {
+    await markArLive(spaceId, request.user.id, (await arLiveSince(spaceId, request.user.id)) ?? Date.now())
+  } catch (err) {
+    request.log.warn({ err }, 'AR presence mark failed')
+  }
 }
 
 /** Whether the signed-in caller (if any) may build in the scene. */
@@ -123,6 +138,7 @@ export default async function arFeedRoutes(app: FastifyInstance) {
       const sceneId = await spaceScene(spaceId)
       if (!sceneId) return reply.status(404).send({ error: 'not_found' })
       const builder = await isBuilder(request, sceneId)
+      await markPresent(request, spaceId)
 
       return longPoll(
         request,

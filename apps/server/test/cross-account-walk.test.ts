@@ -372,6 +372,13 @@ const CASES: Case[] = [
   { route: 'GET /api/ar/markers/:id/files', url: (f) => `/api/ar/markers/${f.arMarker.id}/files?format=svg` },
   { route: 'GET /api/ar/markers/by-code/:code', url: () => `/api/ar/markers/by-code/${ringCodeOf(123456)}` },
   { route: 'GET /api/app/arcs/:code', url: () => `/api/app/arcs/${ringCodeOf(123456)}` },
+  // The Virvi app's BEATs: B's space is unpublished, so only its builders see its card; every write needs the install's
+  // App Attest assertion, which A has none of (401), and acts only on the caller's own claim
+  { route: 'GET /api/app/spaces/:spaceId/beat', url: (f) => `/api/app/spaces/${f.arSpace.id}/beat` },
+  { route: 'POST /api/app/beats/:beatId/track', url: (f) => `/api/app/beats/${f.beat.id}/track`, body: (f) => ({ consentVersion: 1, spaceId: f.arSpace.id }) },
+  { route: 'POST /api/app/beats/:beatId/checkin', url: (f) => `/api/app/beats/${f.beat.id}/checkin`, body: (f) => ({ spaceId: f.arSpace.id }) },
+  { route: 'POST /api/app/beats/:beatId/claim', url: (f) => `/api/app/beats/${f.beat.id}/claim`, body: () => ({}) },
+  { route: 'DELETE /api/app/beats/:beatId/track', url: (f) => `/api/app/beats/${f.beat.id}/track` },
   { route: 'POST /api/ar/spaces/:id/analytics', url: (f) => `/api/ar/spaces/${f.arSpace.id}/analytics`, body: () => ({ v: 1, platform: 'ar-quest', events: [{ type: 'enter', playerId: 'p1', t: Date.now() }] }) },
   { route: 'POST /api/ar/spaces/:id/report', url: (f) => `/api/ar/spaces/${f.arSpace.id}/report`, body: () => ({ reason: 'spam', platform: 'ar-quest' }) },
   { route: 'GET /api/ar/spaces/:id/feed', url: (f) => `/api/ar/spaces/${f.arSpace.id}/feed` },

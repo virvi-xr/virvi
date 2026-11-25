@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from 'node:crypto'
-import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm'
 import {
   BEAT_CARD_LEAD_MS, BEAT_CLAIM_GRACE_MS, BEAT_CONSENT_VERSION, BEAT_FINAL_FAIL_REASONS, beatTxUrl, cleanDisplayName,
   type AvailableBeat, type BeatClaimStatus, type BeatStatus, type VisitorBeat,
@@ -64,11 +64,29 @@ async function checkNewWallet(ip: string | null | undefined, wallet: string, now
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export const VISIBLE: BeatStatus[] = ['paid', 'live', 'ended']
-/** The claims that take a token from the supply. */
-const TAKEN: BeatClaimStatus[] = ['claimed', 'minting', 'minted', 'failed']
+/** The claims that take a token from the supply: a claim waiting for a wallet holds its copy too. */
+const TAKEN: BeatClaimStatus[] = ['claimed', 'minting', 'minted', 'failed', 'waiting']
 
 const notFound = () => new BeatError(404, 'not_found', 'BEAT not found.')
 const notTracking = () => new BeatError(404, 'not_tracking', "You're not tracking this BEAT.")
+const noWallet = () => new BeatError(403, 'no_wallet', "Sign in to Decentraland with a wallet to earn this BEAT. Guests can't.")
+const walletHasIt = () => new BeatError(409, 'wallet_has_it', 'This wallet already has this BEAT.')
+
+/**
+ * A claim the Virvi app started has no wallet until it is claimed. Tracked or claimed in-world, it takes the pass's
+ * wallet, so the in-world claim path always has one; a wallet another claim of this BEAT holds can't be taken.
+ */
+async function fillAppClaimWallet(q: Pick<Tx, 'select' | 'update'>, claim: ClaimRow, wallet: string): Promise<void> {
+  const [other] = await q.select({ id: beatClaims.id }).from(beatClaims).where(and(eq(beatClaims.beatId, claim.beatId), eq(beatClaims.wallet, wallet)))
+  if (other && other.id !== claim.id) throw walletHasIt()
+  try {
+    await q.update(beatClaims).set({ wallet }).where(and(eq(beatClaims.id, claim.id), isNull(beatClaims.wallet)))
+  } catch (e) {
+    if ((e as { code?: string }).code === '23505') throw walletHasIt()
+    throw e
+  }
+}
+
 export const claimUntil = (b: BeatRow) => new Date(b.endsAt.getTime() + BEAT_CLAIM_GRACE_MS)
 /** Test BEATs (Amoy) left over once the server runs on mainnet aren't shown to visitors. */
 // Test BEATs on mainnet, and retired ones (on a replaced contract: Virvi would never send a claim), aren't shown or claimable
@@ -94,13 +112,13 @@ async function cancelledOnScene(sceneId: string, beatId: string): Promise<boolea
 }
 
 /** The user's claim on the BEAT (one that isn't being deleted), locked when inside a transaction that asks for it. */
-async function myClaimRow(q: Pick<Tx, 'select'>, beatId: string, userId: string, lock = false): Promise<ClaimRow | null> {
+export async function myClaimRow(q: Pick<Tx, 'select'>, beatId: string, userId: string, lock = false): Promise<ClaimRow | null> {
   const base = q.select().from(beatClaims).where(and(eq(beatClaims.beatId, beatId), eq(beatClaims.userId, userId), eq(beatClaims.deleteRequested, false)))
   const [row] = lock ? await base.for('update') : await base
   return row ?? null
 }
 
-async function takenCount(q: Pick<Tx, 'select'>, beatId: string): Promise<number> {
+export async function takenCount(q: Pick<Tx, 'select'>, beatId: string): Promise<number> {
   const [r] = await q.select({ n: sql<number>`count(*)::int` }).from(beatClaims).where(and(eq(beatClaims.beatId, beatId), inArray(beatClaims.status, TAKEN)))
   return r?.n ?? 0
 }
@@ -142,7 +160,7 @@ async function sceneBeat(sceneId: string, now: Date, statuses: BeatStatus[], aft
 }
 
 /** Every BEAT `sceneBeat` could pick, best first. */
-async function sceneBeats(sceneId: string, now: Date, statuses: BeatStatus[], afterEndMs: number): Promise<BeatRow[]> {
+export async function sceneBeats(sceneId: string, now: Date, statuses: BeatStatus[], afterEndMs: number): Promise<BeatRow[]> {
   const t = now.toISOString()
   const rows = await db.select({ b: beats }).from(beats)
     .innerJoin(beatScenes, eq(beatScenes.beatId, beats.id))
@@ -188,7 +206,7 @@ export async function availableBeat(sceneId: string, now = new Date()): Promise<
 export async function trackBeat(sceneId: string, beatId: string, c: VisitorCaller, consentVersion: unknown, now = new Date()): Promise<{ beat: VisitorBeat }> {
   const b = await beatOnScene(sceneId, beatId)
   if (consentVersion !== BEAT_CONSENT_VERSION) throw new BeatError(400, 'bad_consent', 'This scene needs an update before visitors can claim BEATs. Ask the host to update it.')
-  if (!c.wallet) throw new BeatError(403, 'no_wallet', "Sign in to Decentraland with a wallet to earn this BEAT. Guests can't.")
+  if (!c.wallet) throw noWallet()
   if (now.getTime() > b.endsAt.getTime()) throw new BeatError(409, 'too_late', 'This BEAT has ended.')
   if (now.getTime() < b.startsAt.getTime() - BEAT_CARD_LEAD_MS) throw new BeatError(409, 'too_early', "This BEAT hasn't opened yet.")
   // Checked before tracking starts too, so a wallet that can't claim learns it now rather than after its time
@@ -205,6 +223,7 @@ export async function trackBeat(sceneId: string, beatId: string, c: VisitorCalle
     const [mine] = await tx.select().from(beatClaims).where(and(eq(beatClaims.beatId, b.id), eq(beatClaims.userId, c.userId))).for('update')
     // Being deleted, or the wallet's row belongs to no one now (its data was removed): not brought back
     if (!mine || mine.deleteRequested) throw new BeatError(409, 'not_available', "You stopped tracking this BEAT, so you can't start again.")
+    if (mine.status === 'present' && !mine.wallet) await fillAppClaimWallet(tx, mine, wallet)
     if (mine.status === 'present' && mine.consentVersion !== BEAT_CONSENT_VERSION) {
       await tx.update(beatClaims).set({ consentVersion: BEAT_CONSENT_VERSION, consentedAt: now }).where(eq(beatClaims.id, mine.id))
     }
@@ -213,7 +232,7 @@ export async function trackBeat(sceneId: string, beatId: string, c: VisitorCalle
 }
 
 /** The seconds of [now - addSeconds, now] that fall inside the BEAT's window. */
-function inWindowSeconds(b: BeatRow, now: Date, addSeconds: number): number {
+export function inWindowSeconds(b: BeatRow, now: Date, addSeconds: number): number {
   const from = Math.max(now.getTime() - addSeconds * 1000, b.startsAt.getTime())
   const to = Math.min(now.getTime(), b.endsAt.getTime())
   return to > from ? Math.floor((to - from) / 1000) : 0
@@ -248,15 +267,19 @@ export async function checkInBeat(sceneId: string, beatId: string, userId: strin
  * A claim already further along is returned as it is.
  */
 export async function claimBeat(
-  sceneId: string, beatId: string, c: Pick<VisitorCaller, 'userId' | 'platform' | 'ip'>, now = new Date(),
+  sceneId: string, beatId: string, c: Pick<VisitorCaller, 'userId' | 'platform' | 'ip'> & { wallet?: string | null }, now = new Date(),
 ): Promise<{ beat: VisitorBeat }> {
   const userId = c.userId
   const seen = await beatOnScene(sceneId, beatId)
   const pre = await myClaimRow(db, seen.id, userId)
   if (pre?.status === 'present') {
-    if (!(await platformCheck(c.platform ?? 'decentraland', pre.wallet!, now))) throw profileRequired()
-    await checkNewWallet(c.ip, pre.wallet!, now)
-    if (await isWalletBlocked(pre.wallet!)) throw beatsBlocked()
+    // An app-started claim claimed here goes to the pass's wallet (checked below like any other)
+    const wallet = pre.wallet ?? c.wallet?.toLowerCase() ?? null
+    if (!wallet) throw noWallet()
+    if (!(await platformCheck(c.platform ?? 'decentraland', wallet, now))) throw profileRequired()
+    await checkNewWallet(c.ip, wallet, now)
+    if (await isWalletBlocked(wallet)) throw beatsBlocked()
+    if (!pre.wallet) await fillAppClaimWallet(db, pre, wallet)
   }
   await db.transaction(async (tx) => {
     const [b] = await tx.select().from(beats).where(eq(beats.id, seen.id)).for('update')

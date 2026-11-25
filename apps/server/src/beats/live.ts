@@ -46,3 +46,30 @@ export async function beatLiveSince(sceneId: string, userId: string): Promise<nu
   if (!hit || hit.until < Date.now()) return null
   return hit.since
 }
+
+/**
+ * Presence in an AR space (the Virvi app, iPhone or Quest): the space's feed marks `ar-live:<spaceId>:<userId>` on each
+ * poll from a signed-in visitor, with the time of the first poll while the mark lives, in the same store and with the
+ * same TTL as the room marks above. It lapses BEAT_LIVE_TTL_S after the polls stop. An app's check-in credits time only
+ * since then, so the app's own word that the space is in view never counts alone.
+ */
+const arKey = (spaceId: string, userId: string) => `ar-live:${spaceId}:${userId}`
+
+/** The user's app is polling this space's feed, since `sinceMs`. */
+export async function markArLive(spaceId: string, userId: string, sinceMs: number): Promise<void> {
+  const kv = busKeyValue()
+  if (kv) await kv.setex(arKey(spaceId, userId), String(sinceMs), beatLiveTiming.ttlS)
+  else local.set(arKey(spaceId, userId), { since: sinceMs, until: Date.now() + beatLiveTiming.ttlS * 1000 })
+}
+
+/** Since when (ms) the user's app has polled this space's feed without a break, or null when it hasn't lately. */
+export async function arLiveSince(spaceId: string, userId: string): Promise<number | null> {
+  const kv = busKeyValue()
+  if (kv) {
+    const v = Number(await kv.get(arKey(spaceId, userId)))
+    return Number.isFinite(v) && v > 0 ? v : null
+  }
+  const hit = local.get(arKey(spaceId, userId))
+  if (!hit || hit.until < Date.now()) return null
+  return hit.since
+}

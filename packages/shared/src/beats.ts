@@ -201,6 +201,23 @@ export interface VisitorBeat {
   myClaim: { status: BeatClaimStatus; secondsPresent: number; txUrl: string | null; final: boolean; heldUntil: string | null } | null
 }
 
+/**
+ * A BEAT as the Virvi app shows it (in an AR space, at an event's ARC, or in My BEATs). `claim` is the caller's own:
+ * `wallet` is the wallet it goes (or went) to, null until one is chosen or while it waits for one; `checkedInAt` is when
+ * tracking started. `wallets` are the caller's verified wallets that can collect BEATs (checksummed), to choose from at claim.
+ */
+export interface AppBeatCard {
+  beatId: string
+  name: string
+  imageUrl: string
+  minMinutes: number
+  startsAt: string
+  endsAt: string
+  location: { type: BeatLocationType; venue?: string }
+  claim: null | { status: BeatClaimStatus; secondsPresent: number; wallet: string | null; checkedInAt: string | null }
+  wallets: string[]
+}
+
 // ── Reissue (LIV-11): a BEAT sent again to a new wallet when the old one was compromised ────────────────────────────
 
 /**

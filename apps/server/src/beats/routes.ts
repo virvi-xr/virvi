@@ -288,7 +288,8 @@ export default async function beatRoutes(app: FastifyInstance) {
     const { sceneId, beatId } = request.params
     if (!inScene(request, sceneId)) return sceneOnly(reply)
     try {
-      return reply.send(await claimBeat(sceneId, beatId, { userId: request.user.id, platform: platformOf(request), ip: request.ip }))
+      const { wallet, verified } = request.user
+      return reply.send(await claimBeat(sceneId, beatId, { userId: request.user.id, platform: platformOf(request), ip: request.ip, wallet: wallet && verified === true ? wallet : null }))
     } catch (e) {
       return fail(reply, e)
     }

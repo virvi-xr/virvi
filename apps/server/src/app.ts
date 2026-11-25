@@ -69,6 +69,7 @@ import brandingRoutes from './routes/branding.js'
 import presetScheduleRoutes from './routes/preset-schedules.js'
 import raffleRoutes from './raffles/routes.js'
 import beatRoutes from './beats/routes.js'
+import appBeatRoutes from './beats/app-routes.js'
 import { registerDeletedSceneGuard } from './auth/deleted-scene-guard.js'
 import sceneDeleteRoutes from './routes/scene-delete.js'
 import showingRoutes from './routes/showings.js'
@@ -243,6 +244,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(presetScheduleRoutes)
   await app.register(raffleRoutes)
   await app.register(beatRoutes)
+  // The Virvi app's BEAT writes carry an App Attest assertion over the exact body, so they keep request.rawBody
+  await app.register(async (scope) => {
+    withRawJson(scope)
+    await scope.register(appBeatRoutes)
+  })
   await app.register(showingRoutes)
   if (opts.backfill !== false) {
     // Then move 3D models still in Images & Video to 3D Models (LIV-132): every boot, a no-op once none are left

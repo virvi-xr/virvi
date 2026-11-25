@@ -571,9 +571,10 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE TABLE IF NOT EXISTS beat_arcs (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), beat_id UUID NOT NULL CONSTRAINT beat_arcs_beat_id_unique UNIQUE CONSTRAINT beat_arcs_beat_id_beats_id_fk REFERENCES beats(id) ON DELETE CASCADE, ring_id BIGINT NOT NULL CONSTRAINT beat_arcs_ring_id_unique UNIQUE, code TEXT NOT NULL CONSTRAINT beat_arcs_code_unique UNIQUE, kind TEXT NOT NULL DEFAULT 'printed', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
         console.log('[virvi-server] BEAT tables ensured');
       } catch(e) { console.log('[virvi-server] BEAT tables:', e.message); }
-      // BEAT app: the Virvi app's BEAT claims: App Attest keys and the visitor purpose of a paired device (matches appAttestKeys and arDevices.purpose in src/db/schema.ts; ar_devices is made by drizzle-kit push, so its column is added only where the table exists)
+      // BEAT app: the Virvi app's BEAT claims: App Attest keys and challenges, and the visitor purpose of a paired device (matches appAttestKeys, appAttestChallenges and arDevices.purpose in src/db/schema.ts; ar_devices is made by drizzle-kit push, so its column is added only where the table exists)
       try {
         await sql\`CREATE TABLE IF NOT EXISTS app_attest_keys (key_id TEXT PRIMARY KEY, public_key TEXT NOT NULL, counter BIGINT NOT NULL DEFAULT 0, user_id UUID CONSTRAINT app_attest_keys_user_id_users_id_fk REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE TABLE IF NOT EXISTS app_attest_challenges (challenge TEXT PRIMARY KEY, user_id UUID NOT NULL CONSTRAINT app_attest_challenges_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL)\`;
         await sql\`DO \$\$ BEGIN IF to_regclass('ar_devices') IS NOT NULL THEN ALTER TABLE ar_devices ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'builder'; END IF; END \$\$\`;
         console.log('[virvi-server] BEAT app tables ensured');
       } catch(e) { console.log('[virvi-server] BEAT app tables:', e.message); }

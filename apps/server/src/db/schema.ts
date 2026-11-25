@@ -3012,6 +3012,13 @@ export const appAttestKeys = pgTable('app_attest_keys', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+// Single-use App Attest challenges (5 minutes), bound to the signed-in account that asked for one
+export const appAttestChallenges = pgTable('app_attest_challenges', {
+  challenge: text('challenge').primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+})
+
 // Who holds each BEAT, built from the contract's ERC-1155 transfer logs (LIV-185). Wallet and contract are lower case;
 // a balance of 0 is not stored.
 export const beatHoldings = pgTable('beat_holdings', {
