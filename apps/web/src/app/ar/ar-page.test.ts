@@ -30,11 +30,12 @@ describe('the AR page', () => {
     expect(html).toContain('Not in the store yet')
   })
 
-  it('presents one app, Virvi AR, on three platforms, with no old app names', () => {
+  it('presents Virvi AR on the headsets and the Virvi app on iPhone, with no old app names', () => {
     expect(html).toContain('One app, three platforms')
-    for (const platform of ['Meta Quest', 'Apple Vision Pro', 'iPhone']) expect(html).toContain(`Virvi AR for ${platform}`)
+    for (const platform of ['Meta Quest', 'Apple Vision Pro']) expect(html).toContain(`Virvi AR for ${platform}`)
+    expect(html).toContain('Virvi for iPhone')
+    expect(html).not.toContain('Virvi AR for iPhone')
     expect(html).not.toContain('Virvi Builder')
-    expect(html).not.toContain('Virvi for iPhone')
   })
 
   it('tells venue owners how to set up a space, with the docs, and says the apps are open source', () => {

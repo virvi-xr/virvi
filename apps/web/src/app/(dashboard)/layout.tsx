@@ -40,7 +40,7 @@ const baseNavSections: NavSection[] = [
       { href: '/sync', label: 'Sync', icon: SyncIcon, description: 'Where each scene runs and its deploys' },
       { href: '/events', label: 'Events', icon: CalendarIcon },
       { href: '/drops', label: 'Drops', icon: GiftIcon, description: 'Giveaways and other rewards' },
-      { href: '/ar-apps', label: 'AR', icon: CubeIcon, description: 'AR Spaces and the Virvi AR apps' },
+      { href: '/ar-apps', label: 'AR', icon: CubeIcon, description: 'AR Spaces and the Virvi apps' },
       { href: '/virvi-cities', label: 'Cities', icon: CityIcon, description: 'Virvi cities to visit' },
     ],
   },

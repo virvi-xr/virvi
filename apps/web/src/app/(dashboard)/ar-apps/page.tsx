@@ -1,5 +1,5 @@
 'use client'
-// The dashboard's AR tab: the Virvi AR apps, and the way into each scene's AR spaces (set up on the scene's own page).
+// The dashboard's AR tab: the Virvi apps, and the way into each scene's AR spaces (set up on the scene's own page).
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useApi } from '@/lib/api'
@@ -29,7 +29,7 @@ export default function ArAppsPage() {
       <PageHeader title="AR" subtitle="Put your scene in a real place, life-size, with an ARC by the door." />
 
       <section aria-labelledby="ar-apps">
-        <h2 id="ar-apps" className="mb-3 text-lg font-semibold">Virvi AR: one app, three platforms</h2>
+        <h2 id="ar-apps" className="mb-3 text-lg font-semibold">The Virvi apps: the same spaces, three platforms</h2>
         <ArAppCards />
         <p className="mt-3 text-sm text-gray-400"><a href="/ar/" className="underline underline-offset-2 hover:text-white">The AR page</a> has more, for anyone to read.</p>
       </section>

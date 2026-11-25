@@ -1,14 +1,14 @@
 /**
- * Virvi AR, one app on three platforms, in one place: virvi.io/ar, the dashboard's AR tab, the ring's fallback page (/s/<code>) and the
+ * The Virvi AR apps (Quest and Vision Pro) and the Virvi app on iPhone, in one place: virvi.io/ar, the dashboard's AR tab, the ring's fallback page (/s/<code>) and the
  * docs read these. When an app reaches a store, set its `storeUrl` and `status: 'store'`, and every page links there.
  */
 export type ArAppStatus = 'store' | 'preview' | 'prototype' | 'coming'
 
 export interface ArApp {
   id: 'quest' | 'vision-pro' | 'iphone'
-  /** Always 'Virvi AR': the same app on every platform. */
+  /** 'Virvi AR' on the headsets; the iPhone app is just 'Virvi'. */
   name: string
-  /** The platform, as cards title it: "Virvi AR for Meta Quest". */
+  /** The platform, as cards title it: "Virvi AR for Meta Quest", "Virvi for iPhone". */
   platform: string
   device: string
   role: string
@@ -43,7 +43,7 @@ export const AR_APPS: readonly ArApp[] = [
   {
     // apps/iphone is the real app; apps/ar-spike is its old prototype (LIV-197)
     id: 'iphone',
-    name: 'Virvi AR',
+    name: 'Virvi',
     platform: 'iPhone',
     device: 'iPhone, iOS 18 or later',
     role: 'See AR Spaces, and earn BEATs by being there',

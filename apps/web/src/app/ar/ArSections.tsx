@@ -21,7 +21,7 @@ export function ArSections() {
 
       <section aria-labelledby="ar-apps" className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
         <h2 id="ar-apps" className="text-2xl font-semibold tracking-tight text-white">One app, three platforms</h2>
-        <p className="mt-2 max-w-2xl text-gray-400">Virvi AR is the same app, with the same spaces, on Meta Quest, Apple Vision Pro and iPhone. It isn’t in a store yet, so for now you build it from the source.</p>
+        <p className="mt-2 max-w-2xl text-gray-400">The same spaces, on Meta Quest, Apple Vision Pro and iPhone: Virvi AR on the headsets, and the Virvi app on your phone. They aren’t in a store yet, so for now you build them from the source.</p>
         <div className="mt-6"><ArAppCards /></div>
       </section>
 
