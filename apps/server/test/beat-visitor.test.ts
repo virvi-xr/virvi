@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm'
 import { BEAT_CARD_LEAD_MS, BEAT_CLAIM_GRACE_MS, BEAT_CONSENT_VERSION } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { beatClaims, beats, beatScenes, hyperfyPairings, hyperfyWorlds, mediaAssets, walletBlocks } from '../src/db/schema.js'
+import { beatClaims, beatNetworkClaims, beats, beatScenes, hyperfyPairings, hyperfyWorlds, mediaAssets, walletBlocks } from '../src/db/schema.js'
 import { issueHyperfyPass, issueScenePass, sceneClaims } from '../src/auth/scene-pass.js'
 import { markBeatLive } from '../src/beats/live.js'
 import { setBeatPlatformCheckForTests } from '../src/beats/platform-checks.js'
@@ -376,6 +376,186 @@ describe('BEAT visitor routes (LIV-11)', () => {
       const again = await track(v, b)
       expect(again.statusCode).toBe(409)
       expect((await claimRow(b.id, v.user.id)).deleteRequested).toBe(true)
+    })
+  })
+
+  describe('auto-claim (LIV-180)', () => {
+    /** A tracked visitor (consent v3) just short of the minimum, last seen 30 s ago: the next check-in crosses it. */
+    async function nearly(b: { id: string; minPresentSeconds: number }, v?: Visitor, sceneId = sceneA) {
+      const who = v ?? (await visitor())
+      const res = await track(who, b, sceneId)
+      expect(res.statusCode, res.body).toBe(200)
+      await setClaim(b.id, who.user.id, { secondsPresent: b.minPresentSeconds - 10, lastSeenAt: at(-30_000) })
+      return who
+    }
+    const networkClaims = async (beatId: string) =>
+      (await db.select().from(beatNetworkClaims).where(eq(beatNetworkClaims.beatId, beatId))).reduce((n, r) => n + r.claims, 0)
+
+    it('is on by default and shown on the visitor view', async () => {
+      const b = await seed()
+      expect(b.autoClaim).toBe(true)
+      expect((await current(await visitor())).json().beat.autoClaim).toBe(true)
+      const off = await seed({ autoClaim: false }, [sceneB])
+      expect((await current(await visitor(), sceneB)).json().beat.autoClaim).toBe(false)
+      expect(off.autoClaim).toBe(false)
+    })
+
+    it('the check-in that crosses the minimum claims, exactly once', async () => {
+      const b = await seed({ minPresentSeconds: 300 })
+      const v = await nearly(b)
+      const res = await checkin(v, b)
+      expect(res.statusCode, res.body).toBe(200)
+      expect(res.json().beat.myClaim.status).toBe('claimed')
+      const row = await claimRow(b.id, v.user.id)
+      expect(row.status).toBe('claimed')
+      expect(Date.now() - row.claimedAt!.getTime()).toBeLessThan(10_000)
+      // Later check-ins and a manual Claim change nothing
+      await setClaim(b.id, v.user.id, { lastSeenAt: at(-30_000) })
+      const again = await checkin(v, b)
+      expect([again.statusCode, again.json().beat.myClaim.status]).toEqual([200, 'claimed'])
+      expect((await claim(v, b)).json().beat.myClaim.status).toBe('claimed')
+      expect((await claimRow(b.id, v.user.id)).claimedAt!.getTime()).toBe(row.claimedAt!.getTime())
+      expect(await networkClaims(b.id)).toBe(1)
+    })
+
+    it('a check-in still short of the minimum leaves the claim present', async () => {
+      const b = await seed({ minPresentSeconds: 300 })
+      const v = await visitor()
+      await track(v, b)
+      await setClaim(b.id, v.user.id, { secondsPresent: 100, lastSeenAt: at(-30_000) })
+      const res = await checkin(v, b)
+      expect([res.statusCode, res.json().beat.myClaim.status]).toEqual([200, 'present'])
+    })
+
+    it("concurrent check-ins from two scenes don't double-claim", async () => {
+      const b = await seed({ minPresentSeconds: 300 }, [sceneA, sceneB])
+      const v = await nearly(b)
+      const [r1, r2, r3] = await Promise.all([checkin(v, b, sceneA), checkin(v, b, sceneB), checkin(v, b, sceneA)])
+      expect([r1.statusCode, r2.statusCode, r3.statusCode]).toEqual([200, 200, 200])
+      const rows = await db.select().from(beatClaims).where(eq(beatClaims.beatId, b.id))
+      expect(rows.map((r) => r.status)).toEqual(['claimed'])
+      expect(await networkClaims(b.id)).toBe(1)
+    })
+
+    it('with cap 1, two visitors crossing at once: one claimed, the other present and shown sold out', async () => {
+      const b = await seed({ minPresentSeconds: 300, supplyCap: 1 })
+      const v1 = await nearly(b)
+      const v2 = await nearly(b)
+      const [r1, r2] = await Promise.all([checkin(v1, b), checkin(v2, b)])
+      expect([r1.statusCode, r2.statusCode]).toEqual([200, 200])
+      expect([r1.json().beat.myClaim.status, r2.json().beat.myClaim.status].sort()).toEqual(['claimed', 'present'])
+      expect(r1.json().beat.soldOut && r2.json().beat.soldOut).toBe(true)
+    })
+
+    it('no claim before the start: a minimum of 0 waits for the first check-in after it', async () => {
+      const b = await seed({ status: 'paid', startsAt: at(10 * M), endsAt: at(2 * H), minPresentSeconds: 0 })
+      const v = await visitor()
+      const res = await track(v, b)
+      expect([res.statusCode, res.json().beat.myClaim.status]).toEqual([200, 'present'])
+      await setClaim(b.id, v.user.id, { lastSeenAt: at(-30_000) })
+      const early = await checkin(v, b)
+      expect([early.statusCode, early.json().beat.myClaim.status]).toEqual([200, 'present'])
+      await db.update(beats).set({ status: 'live', startsAt: at(-1000) }).where(eq(beats.id, b.id))
+      await setClaim(b.id, v.user.id, { lastSeenAt: at(-30_000) })
+      const started = await checkin(v, b)
+      expect([started.statusCode, started.json().beat.myClaim.status]).toEqual([200, 'claimed'])
+    })
+
+    it('tracking a started BEAT with a minimum of 0 claims at once', async () => {
+      const b = await seed({ minPresentSeconds: 0 })
+      const v = await visitor()
+      const res = await track(v, b)
+      expect([res.statusCode, res.json().beat.myClaim.status]).toEqual([200, 'claimed'])
+      // Tracking again returns it as it is
+      expect((await track(v, b)).json().beat.myClaim.status).toBe('claimed')
+      expect(await networkClaims(b.id)).toBe(1)
+    })
+
+    it('no claim after the claim window', async () => {
+      const b = await seed({ status: 'ended', startsAt: at(-28 * H), endsAt: at(-25 * H), minPresentSeconds: 300 })
+      const v = await visitor()
+      await db.insert(beatClaims).values({ beatId: b.id, userId: v.user.id, wallet: v.wallet, displayName: 'V', consentVersion: 3, secondsPresent: 600, lastSeenAt: at(-30_000) })
+      const res = await checkin(v, b)
+      expect([res.statusCode, res.json().beat.myClaim.status]).toEqual([200, 'present'])
+    })
+
+    it('no claim when the supply is used up: the check-in succeeds and shows sold out', async () => {
+      const b = await seed({ minPresentSeconds: 300, supplyCap: 1 })
+      const taker = await present(b, 600)
+      await setClaim(b.id, taker.user.id, { status: 'minted' })
+      const v = await nearly(b)
+      const res = await checkin(v, b)
+      expect(res.statusCode, res.body).toBe(200)
+      expect(res.json().beat).toMatchObject({ soldOut: true, myClaim: { status: 'present' } })
+    })
+
+    it('a refused wallet check is swallowed: the check-in succeeds and the claim stays present', async () => {
+      const b = await seed({ minPresentSeconds: 300 })
+      const v = await nearly(b)
+      const blocked = await nearly(b)
+      setBeatPlatformCheckForTests('decentraland', async () => false)
+      const res = await checkin(v, b)
+      expect([res.statusCode, res.json().beat.myClaim.status]).toEqual([200, 'present'])
+      setBeatPlatformCheckForTests('decentraland', async () => true)
+      // Blocked for BEATs everywhere (the block is on another account, so the pass still works): beats_blocked, swallowed
+      await db.insert(walletBlocks).values({ wallet: blocked.wallet.toLowerCase(), userId: host.id, reason: 'reissue' })
+      const res2 = await checkin(blocked, b)
+      expect(res2.statusCode, res2.body).toBe(200)
+      expect(res2.json().beat.myClaim.status).toBe('present')
+    })
+
+    it('no auto-claim when the BEAT has it off: the visitor presses Claim', async () => {
+      const b = await seed({ minPresentSeconds: 300, autoClaim: false })
+      const v = await nearly(b)
+      const res = await checkin(v, b)
+      expect([res.statusCode, res.json().beat.myClaim.status]).toEqual([200, 'present'])
+      expect(res.json().beat.myClaim.secondsPresent).toBeGreaterThanOrEqual(300)
+      expect((await claim(v, b)).json().beat.myClaim.status).toBe('claimed')
+      const zero = await seed({ minPresentSeconds: 0, autoClaim: false }, [sceneB])
+      expect((await track(v, zero, sceneB)).json().beat.myClaim.status).toBe('present')
+    })
+
+    it('no auto-claim for a v2 claim (an older scene): tracking with v3 upgrades it and the next check-in claims', async () => {
+      const b = await seed({ minPresentSeconds: 300 })
+      const v = await visitor()
+      const old = await track(v, b, sceneA, 2)
+      expect(old.statusCode, old.body).toBe(200)
+      expect((await claimRow(b.id, v.user.id)).consentVersion).toBe(2)
+      await setClaim(b.id, v.user.id, { secondsPresent: 290, lastSeenAt: at(-30_000) })
+      const res = await checkin(v, b)
+      expect([res.statusCode, res.json().beat.myClaim.status]).toEqual([200, 'present'])
+      // A v2 track with a minimum of 0 doesn't claim either
+      const zero = await seed({ minPresentSeconds: 0 }, [sceneB])
+      expect((await track(v, zero, sceneB, 2)).json().beat.myClaim.status).toBe('present')
+      // Tracking again with v3 upgrades the consent; v2 again doesn't take it back
+      expect((await track(v, b, sceneA, 3)).statusCode).toBe(200)
+      expect((await claimRow(b.id, v.user.id)).consentVersion).toBe(3)
+      expect((await track(v, b, sceneA, 2)).statusCode).toBe(200)
+      expect((await claimRow(b.id, v.user.id)).consentVersion).toBe(3)
+      await setClaim(b.id, v.user.id, { lastSeenAt: at(-30_000) })
+      expect((await checkin(v, b)).json().beat.myClaim.status).toBe('claimed')
+    })
+
+    it('tracking with v2 still works; an unknown version is bad_consent', async () => {
+      const b = await seed()
+      const v = await visitor()
+      expect((await track(v, b, sceneA, 2)).statusCode).toBe(200)
+      for (const bad of [4, '3', null, 2.5]) {
+        const res = await track(await visitor(), b, sceneA, bad)
+        expect([res.statusCode, res.json().error], String(bad)).toEqual([400, 'bad_consent'])
+      }
+      expect(await db.select().from(beatClaims)).toHaveLength(1)
+    })
+
+    it('a guest (no wallet) still gets no_wallet, with either version', async () => {
+      const b = await seed({ minPresentSeconds: 0 })
+      const u = await createUser()
+      const pass = app.jwt.sign(sceneClaims(u as any, null, { sceneId: sceneA, locationId: null }))
+      for (const consentVersion of [2, 3]) {
+        const res = await go('POST', `${base(sceneA, b.id)}/track`, pass, { consentVersion })
+        expect([res.statusCode, res.json().error]).toEqual([403, 'no_wallet'])
+      }
+      expect(await db.select().from(beatClaims)).toHaveLength(0)
     })
   })
 

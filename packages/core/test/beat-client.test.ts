@@ -4,7 +4,7 @@ import { Virvi } from '../src/Virvi.js'
 
 const BEAT: VisitorBeat = {
   id: 'b1', name: 'Launch', imageUrl: 'https://img.example/b1.png', startsAt: '2026-11-14T10:00:00.000Z', endsAt: '2026-11-14T12:00:00.000Z',
-  minPresentSeconds: 600, status: 'live', soldOut: false, claimUntil: '2026-11-15T12:00:00.000Z', test: false, myClaim: null,
+  minPresentSeconds: 600, status: 'live', soldOut: false, claimUntil: '2026-11-15T12:00:00.000Z', test: false, autoClaim: false, myClaim: null,
 }
 
 function setup(respond: () => Response = () => new Response(JSON.stringify({ beat: BEAT }), { status: 200 })) {
@@ -38,6 +38,8 @@ describe('BEAT client calls (LIV-11)', () => {
     const { virvi, last } = setup()
     expect(await virvi.trackBeat('b1')).toEqual({ beat: BEAT })
     expect(last()).toEqual({ url: 'https://api.example/api/scenes/scene%201/beat/b1/track', method: 'POST', body: { consentVersion: BEAT_CONSENT_VERSION } })
+    // LIV-180: v3, the consent that can say agreeing also claims
+    expect(BEAT_CONSENT_VERSION).toBe(3)
   })
 
   it('beatCheckIn and claimBeat post to their routes and return the beat', async () => {

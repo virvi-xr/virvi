@@ -529,6 +529,7 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TABLE beat_claims ALTER COLUMN consented_at DROP NOT NULL\`;
         await sql\`ALTER TABLE beat_claims ALTER COLUMN seconds_present DROP NOT NULL\`;
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS hold_mints BOOLEAN NOT NULL DEFAULT false\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS auto_claim BOOLEAN NOT NULL DEFAULT true\`;
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS mints_released_at TIMESTAMPTZ\`;
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS max_batch INTEGER\`;
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS scheduled_ends_at TIMESTAMPTZ\`;

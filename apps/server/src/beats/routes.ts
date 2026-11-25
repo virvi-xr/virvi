@@ -236,7 +236,8 @@ export default async function beatRoutes(app: FastifyInstance) {
     const { sceneId, beatId } = request.params
     if (!inScene(request, sceneId)) return sceneOnly(reply)
     try {
-      return reply.send(await checkInBeat(sceneId, beatId, request.user.id))
+      // Platform and address as for a claim: a check-in may claim on its own (auto-claim, LIV-180)
+      return reply.send(await checkInBeat(sceneId, beatId, { userId: request.user.id, platform: platformOf(request), ip: request.ip }))
     } catch (e) {
       return fail(reply, e)
     }

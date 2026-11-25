@@ -250,6 +250,19 @@ describe('BEAT host API (LIV-11)', () => {
       expect(off.json()).toMatchObject({ holdMints: false, mintsHeldUntil: null, mintsReleasedAt: null, scheduledEndsAt: null })
     })
 
+    it('LIV-180: autoClaim is on by default, can be turned off on create and changed by an edit before go-live', async () => {
+      const on = await create()
+      expect([on.statusCode, on.json().autoClaim]).toEqual([201, true])
+      const off = await create({ autoClaim: false, startsAt: iso(30 * H), endsAt: iso(31 * H) })
+      expect([off.statusCode, off.json().autoClaim]).toEqual([201, false])
+      const ed = await call('PATCH', `/api/beats/${off.json().id}`, host, { autoClaim: true })
+      expect([ed.statusCode, ed.json().autoClaim]).toEqual([200, true])
+      const bad = await call('PATCH', `/api/beats/${off.json().id}`, host, { autoClaim: 'no' })
+      expect([bad.statusCode, bad.json().error]).toEqual([400, 'bad_request'])
+      const live = await seed({ status: 'live', imageUrl: 'https://cdn.example/frozen.png', tokenId: 31, frozenAt: new Date(), startsAt: new Date(Date.now() - H), endsAt: new Date(Date.now() + H) }, [sceneB])
+      expect((await call('PATCH', `/api/beats/${live.id}`, host, { autoClaim: false })).json().error).toBe('locked')
+    })
+
     it('fix round I-3: an image change on a paid BEAT clears the stale copy and freezes the new one at once; the edit stands if the copy fails', async () => {
       const b = await seed({ status: 'paid', imageUrl: 'https://cdn.example/frozen.png', tokenId: 20 })
       const next = await media(host, 700, 700)

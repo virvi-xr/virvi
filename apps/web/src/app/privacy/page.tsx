@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { beatClaimsPerNetworkText, beatConsentText } from '@virvixr/shared'
+import { BEAT_AUTO_CLAIM_CONSENT, beatClaimsPerNetworkText, beatConsentText } from '@virvixr/shared'
 
 export const metadata: Metadata = {
   title: 'Privacy',
@@ -129,6 +129,10 @@ export default function PrivacyPage() {
           agree to this, while signed in with a verified wallet inside the event's scene:
         </p>
         <blockquote className="my-3 border-l-2 border-gray-700 pl-4 text-gray-400">{beatConsentText('{name}')}</blockquote>
+        <p>
+          Most hosts leave <strong>Claim automatically</strong> on. Then the text also says &ldquo;{BEAT_AUTO_CLAIM_CONSENT}&rdquo;, and agreeing
+          also claims the BEAT for you as soon as you&rsquo;ve been there long enough, so your wallet is recorded on Polygon without a second step.
+        </p>
         <ul className="list-disc pl-5">
           <li>
             <strong>What's stored:</strong> your wallet address, your display name, and how long you were present at the event (from a check-in every 30 seconds while you're in the scene; time only counts while the scene is connected to Virvi's live room). To check that your wallet has a Decentraland profile, Virvi asks Decentraland's public profile server about your wallet address when you track and when you claim; only whether a profile exists is kept, for up to a day. To allow only {beatClaimsPerNetworkText()}, Virvi keeps a count per BEAT under a scrambled code (a keyed hash) of your network, never your internet address and not linked to your claim; the counts are deleted once the BEAT's claims are over.

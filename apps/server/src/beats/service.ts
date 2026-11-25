@@ -139,6 +139,7 @@ async function toPublic(rows: BeatRow[]): Promise<PublicBeat[]> {
       frozen: r.frozenAt !== null,
       test: isAmoy(r.chain),
       holdMints: r.holdMints,
+      autoClaim: r.autoClaim,
       mintsReleasedAt: r.mintsReleasedAt?.toISOString() ?? null,
       mintsHeldUntil: holdActive(r, now) ? new Date(r.endsAt.getTime() + BEAT_CLAIM_GRACE_MS).toISOString() : null,
       heldClaims: holdActive(r, now) ? held.get(r.id) ?? 0 : 0,
@@ -294,6 +295,12 @@ function parseTradeable(v: unknown): boolean {
   return v
 }
 
+function parseAutoClaim(v: unknown): boolean {
+  if (v === undefined) return true
+  if (typeof v !== 'boolean') throw new BeatError(400, 'bad_request', 'Claim automatically must be true or false.')
+  return v
+}
+
 function parseHold(v: unknown): boolean {
   if (v === undefined) return false
   if (typeof v !== 'boolean') throw new BeatError(400, 'bad_request', 'Hold for review must be true or false.')
@@ -443,6 +450,7 @@ export async function createBeat(c: BeatCaller, body: Body, now = new Date()): P
   const supplyCap = has(body, 'supplyCap') ? parseCap(body.supplyCap) : BEAT_SUPPLY_CAP_DEFAULT
   const tradeable = parseTradeable(body.tradeable)
   const holdMints = parseHold(body.holdMints)
+  const autoClaim = parseAutoClaim(body.autoClaim)
   const location = parseLocation(body.location)
   const imageMediaId = await checkImage(c, body.imageMediaId)
 
@@ -450,7 +458,7 @@ export async function createBeat(c: BeatCaller, body: Body, now = new Date()): P
     await lockScenes(tx, sceneIds)
     await checkOverlap(tx, sceneIds, startsAt, endsAt)
     const [created] = await tx.insert(beats).values({
-      chain, ownerUserId: c.userId, name, description, imageMediaId, startsAt, endsAt, minPresentSeconds: minutes * 60, supplyCap, tradeable, holdMints,
+      chain, ownerUserId: c.userId, name, description, imageMediaId, startsAt, endsAt, minPresentSeconds: minutes * 60, supplyCap, tradeable, holdMints, autoClaim,
       ...location, locationLabel: await locationLabel(tx, location, sceneIds),
     }).returning()
     await tx.insert(beatScenes).values(sceneIds.map((sceneId) => ({ beatId: created.id, sceneId })))
@@ -493,7 +501,7 @@ async function editScope(tx: Pick<typeof db, 'select'>, row: BeatRow, now: Date)
 
 /**
  * Before payment anything changes. After payment and before the start (go-live), the name, description, image,
- * tradeable, hold for review, window, scenes and minimum time change; the cap can't (a cap raise is a top-up). From
+ * tradeable, hold for review, auto-claim, window, scenes and minimum time change; the cap can't (a cap raise is a top-up). From
  * go-live everything is locked (409 `locked`), since the BEAT then goes on chain with its tradeable flag: except the
  * image, while the BEAT isn't on chain yet, so a host can replace art that couldn't be frozen (fix round I-3). Once a
  * create batch exists, or the BEAT is on chain (the old flow created it at payment), nothing changes (M-1, M-2). All
@@ -524,7 +532,7 @@ export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now?
       const iso = (d: Date) => d.toISOString()
       const same: Record<string, (v: unknown) => boolean> = {
         name: (v) => v === row.name, description: (v) => (v ?? '') === row.description, tradeable: (v) => v === row.tradeable,
-        holdMints: (v) => v === row.holdMints, supplyCap: (v) => v === row.supplyCap, minPresentMinutes: (v) => v === row.minPresentSeconds / 60,
+        holdMints: (v) => v === row.holdMints, autoClaim: (v) => v === row.autoClaim, supplyCap: (v) => v === row.supplyCap, minPresentMinutes: (v) => v === row.minPresentSeconds / 60,
         startsAt: (v) => typeof v === 'string' && !Number.isNaN(Date.parse(v)) && iso(new Date(v)) === iso(row.startsAt),
         endsAt: (v) => typeof v === 'string' && !Number.isNaN(Date.parse(v)) && iso(new Date(v)) === iso(row.endsAt),
       }
@@ -553,6 +561,7 @@ export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now?
     const supplyCap = has(body, 'supplyCap') ? parseCap(body.supplyCap) : row.supplyCap
     const tradeable = has(body, 'tradeable') ? parseTradeable(body.tradeable) : row.tradeable
     const holdMints = has(body, 'holdMints') ? parseHold(body.holdMints) : row.holdMints
+    const autoClaim = has(body, 'autoClaim') ? parseAutoClaim(body.autoClaim) : row.autoClaim
     const location: LocationFields = has(body, 'location') ? parseLocation(body.location) : {
       locationType: row.locationType, locationPlatform: row.locationPlatform, locationUrl: row.locationUrl, locationVenue: row.locationVenue,
       locationCity: row.locationCity, locationCountry: row.locationCountry, locationAddress: row.locationAddress, locationMapUrl: row.locationMapUrl,
@@ -564,7 +573,7 @@ export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now?
     await lockScenes(tx, sceneIds)
     await checkOverlap(tx, sceneIds, startsAt, endsAt, row.id)
     const [updated] = await tx.update(beats).set({
-      name, description, imageMediaId, startsAt, endsAt, minPresentSeconds: Math.round(minutes * 60), supplyCap, tradeable, holdMints, updatedAt: t,
+      name, description, imageMediaId, startsAt, endsAt, minPresentSeconds: Math.round(minutes * 60), supplyCap, tradeable, holdMints, autoClaim, updatedAt: t,
       ...location, locationLabel: await locationLabel(tx, location, sceneIds),
       // A stale copy (of the old image) never stands for the new one; it is frozen again right after the commit
       ...(imageChanged ? { imageUrl: null, artFailedAt: null, artAttempts: 0, artNextAttemptAt: null } : {}),

@@ -1,7 +1,7 @@
 import { createHmac, randomBytes } from 'node:crypto'
 import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm'
 import {
-  BEAT_CARD_LEAD_MS, BEAT_CLAIM_GRACE_MS, BEAT_CONSENT_VERSION, BEAT_FINAL_FAIL_REASONS, beatTxUrl, cleanDisplayName,
+  BEAT_CARD_LEAD_MS, BEAT_CLAIM_GRACE_MS, BEAT_CONSENT_VERSIONS_ACCEPTED, BEAT_FINAL_FAIL_REASONS, beatTxUrl, cleanDisplayName,
   type AvailableBeat, type BeatClaimStatus, type BeatStatus, type VisitorBeat,
 } from '@virvixr/shared'
 import { config } from '../config.js'
@@ -118,6 +118,7 @@ async function toVisitor(b: BeatRow, claim: ClaimRow | null): Promise<VisitorBea
     soldOut: (await takenCount(db, b.id)) >= b.supplyCap,
     claimUntil: claimUntil(b).toISOString(),
     test: b.chain === 'polygon-amoy',
+    autoClaim: b.autoClaim,
     myClaim: claim ? {
       status: claim.status, secondsPresent: claim.secondsPresent ?? 0, txUrl: claim.mintTx ? beatTxUrl(b.chain, claim.mintTx) : null,
       final: claim.status === 'failed' && (BEAT_FINAL_FAIL_REASONS as readonly string[]).includes(claim.failReason ?? ''),
@@ -182,12 +183,17 @@ export async function availableBeat(sceneId: string, now = new Date()): Promise<
 }
 
 /**
- * Opt in: the consent must be the current version and the caller needs a verified wallet. Allowed from the card's lead
- * time until the end. Idempotent: tracking again keeps the time present.
+ * Opt in: the consent must be a version the server accepts (BEAT_CONSENT_VERSIONS_ACCEPTED; the claim stores the one
+ * sent) and the caller needs a verified wallet. Allowed from the card's lead time until the end. Idempotent: tracking
+ * again keeps the time present, and a newer version sent over a present claim's older one replaces it. On a BEAT that
+ * has started with a minimum of 0, an auto-claim (LIV-180) follows at once.
  */
 export async function trackBeat(sceneId: string, beatId: string, c: VisitorCaller, consentVersion: unknown, now = new Date()): Promise<{ beat: VisitorBeat }> {
   const b = await beatOnScene(sceneId, beatId)
-  if (consentVersion !== BEAT_CONSENT_VERSION) throw new BeatError(400, 'bad_consent', 'This scene needs an update before visitors can claim BEATs. Ask the host to update it.')
+  if (typeof consentVersion !== 'number' || !BEAT_CONSENT_VERSIONS_ACCEPTED.includes(consentVersion)) {
+    throw new BeatError(400, 'bad_consent', 'This scene needs an update before visitors can claim BEATs. Ask the host to update it.')
+  }
+  const version = consentVersion
   if (!c.wallet) throw new BeatError(403, 'no_wallet', "Sign in to Decentraland with a wallet to earn this BEAT. Guests can't.")
   if (now.getTime() > b.endsAt.getTime()) throw new BeatError(409, 'too_late', 'This BEAT has ended.')
   if (now.getTime() < b.startsAt.getTime() - BEAT_CARD_LEAD_MS) throw new BeatError(409, 'too_early', "This BEAT hasn't opened yet.")
@@ -197,19 +203,42 @@ export async function trackBeat(sceneId: string, beatId: string, c: VisitorCalle
   if (await isWalletBlocked(c.wallet)) throw beatsBlocked()
   const wallet = c.wallet.toLowerCase()
   const displayName = cleanDisplayName(c.signInName, wallet)
-  await db.transaction(async (tx) => {
+  const claim = await db.transaction(async (tx) => {
     // The user's row, or the wallet's (unique per BEAT): either may already exist
     await tx.insert(beatClaims).values({
-      beatId: b.id, userId: c.userId, wallet, displayName, consentVersion: BEAT_CONSENT_VERSION, consentedAt: now, lastSeenAt: now, createdAt: now,
+      beatId: b.id, userId: c.userId, wallet, displayName, consentVersion: version, consentedAt: now, lastSeenAt: now, createdAt: now,
     }).onConflictDoNothing()
     const [mine] = await tx.select().from(beatClaims).where(and(eq(beatClaims.beatId, b.id), eq(beatClaims.userId, c.userId))).for('update')
     // Being deleted, or the wallet's row belongs to no one now (its data was removed): not brought back
     if (!mine || mine.deleteRequested) throw new BeatError(409, 'not_available', "You stopped tracking this BEAT, so you can't start again.")
-    if (mine.status === 'present' && mine.consentVersion !== BEAT_CONSENT_VERSION) {
-      await tx.update(beatClaims).set({ consentVersion: BEAT_CONSENT_VERSION, consentedAt: now }).where(eq(beatClaims.id, mine.id))
+    // Only ever upgraded: a scene on an older runtime doesn't take back wording the visitor agreed to elsewhere
+    if (mine.status === 'present' && mine.consentVersion < version) {
+      await tx.update(beatClaims).set({ consentVersion: version, consentedAt: now }).where(eq(beatClaims.id, mine.id))
+      return { ...mine, consentVersion: version }
     }
+    return mine
   })
+  if (now.getTime() >= b.startsAt.getTime() && b.minPresentSeconds === 0) await autoClaim(sceneId, b, claim, c, now)
   return visitorView(b.id, c.userId)
+}
+
+/** The first consent version whose text tells the visitor that agreeing claims the BEAT for them. */
+const AUTO_CLAIM_CONSENT = 3
+
+/**
+ * Auto-claim (LIV-180): when the BEAT has it on, the claim is present, its visitor agreed to a consent that says so
+ * (v3+) and has the time, claims through claimBeat (its locks and every check). A refusal (not yet, too late, all
+ * claimed, the network, the wallet checks) is swallowed: the caller returns the visitor view, whose card then shows the
+ * state as before (sold out, or the Claim button).
+ */
+async function autoClaim(sceneId: string, b: BeatRow, claim: ClaimRow, c: Pick<VisitorCaller, 'userId' | 'platform' | 'ip'>, now: Date): Promise<void> {
+  if (!b.autoClaim || claim.status !== 'present' || claim.consentVersion < AUTO_CLAIM_CONSENT) return
+  if ((claim.secondsPresent ?? 0) < b.minPresentSeconds) return
+  try {
+    await claimBeat(sceneId, b.id, c, now)
+  } catch (e) {
+    if (!(e instanceof BeatError)) throw e
+  }
 }
 
 /** The seconds of [now - addSeconds, now] that fall inside the BEAT's window. */
@@ -223,21 +252,26 @@ function inWindowSeconds(b: BeatRow, now: Date, addSeconds: number): number {
  * A check-in: the time since the last (checkInDelta, capped) counts, but only the part inside [starts_at, ends_at], and
  * only while the user held a live room connection from this scene (live.ts): the part since that connection opened. With
  * none the check-in is accepted (its time moves on) and credits nothing. A check-in too soon after the last (another
- * scene of the same BEAT, say) changes nothing and returns the claim as it is.
+ * scene of the same BEAT, say) changes nothing and returns the claim as it is. A check-in that moved the time on may
+ * auto-claim (LIV-180).
  */
-export async function checkInBeat(sceneId: string, beatId: string, userId: string, now = new Date()): Promise<{ beat: VisitorBeat }> {
+export async function checkInBeat(sceneId: string, beatId: string, c: Pick<VisitorCaller, 'userId' | 'platform' | 'ip'>, now = new Date()): Promise<{ beat: VisitorBeat }> {
+  const userId = c.userId
   const b = await beatOnScene(sceneId, beatId)
   const liveSince = await beatLiveSince(sceneId, userId)
-  await db.transaction(async (tx) => {
+  const after = await db.transaction(async (tx) => {
     const claim = await myClaimRow(tx, b.id, userId, true)
     if (!claim) throw notTracking()
-    if (claim.status !== 'present') return
+    if (claim.status !== 'present') return null
     const { accepted, addSeconds } = checkInDelta(claim.lastSeenAt, now)
-    if (!accepted) return
+    if (!accepted) return null
     const live = liveSince === null ? 0 : Math.max(0, Math.min(addSeconds, Math.floor((now.getTime() - liveSince) / 1000)))
     const add = inWindowSeconds(b, now, live)
-    await tx.update(beatClaims).set({ lastSeenAt: now, secondsPresent: sql`${beatClaims.secondsPresent} + ${add}` }).where(eq(beatClaims.id, claim.id))
+    const [updated] = await tx.update(beatClaims).set({ lastSeenAt: now, secondsPresent: sql`${beatClaims.secondsPresent} + ${add}` }).where(eq(beatClaims.id, claim.id)).returning()
+    return updated ?? null
   })
+  // Only after a check-in that updated the time; claimBeat takes its own locks and checks again
+  if (after) await autoClaim(sceneId, b, after, c, now)
   return visitorView(b.id, userId)
 }
 

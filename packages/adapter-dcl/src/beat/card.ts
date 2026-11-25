@@ -62,6 +62,9 @@ export const GUEST_LINE = "Sign in to Decentraland with a wallet to earn this BE
 export const WORKING_LINE = 'Working…'
 export const PRACTICE_LINE = 'This is a practice BEAT.'
 export const STORED_LINE = 'Your wallet and name are still saved for this BEAT. Stop tracking to delete them.'
+/** Auto-claim (LIV-180): added to the tracking line, and the start of the pending line. */
+export const AUTO_CLAIM_TRACKING_LINE = "It's claimed for you once you've been here long enough."
+export const AUTO_CLAIM_PENDING_LINE = 'Your BEAT is on its way.'
 
 /** What the card can be given: the visitor's BEAT (HTTP), or for a guest the room's `beat_available` (name and test flag). */
 export type CardBeat = VisitorBeat | AvailableBeat
@@ -142,14 +145,14 @@ function view(beat: VisitorBeat, state: BeatCardState, now: number, base: BeatVi
     case 'offer':
       return { ...base, line: offerLine(beat, now), actions: [{ id: 'track', label: 'Track my attendance' }] }
     case 'consent':
-      return { ...base, body: beatConsentText(beat.name), actions: [{ id: 'confirm', label: 'I agree' }, { id: 'cancel', label: 'Cancel' }] }
+      return { ...base, body: beatConsentText(beat.name, { autoClaim: !!beat.autoClaim }), actions: [{ id: 'confirm', label: 'I agree' }, { id: 'cancel', label: 'Cancel' }] }
     case 'tracking': {
       const seconds = c?.secondsPresent ?? 0
       const progress = { fraction: Math.min(1, seconds / Math.max(1, beat.minPresentSeconds)), label: `${Math.floor(seconds / 60)} of ${minutes(minMinutes(beat))}` }
       const line = now < Date.parse(beat.startsAt)
         ? `This BEAT starts at ${cardTime(beat.startsAt)}. Your time counts once it starts.`
         : 'Time counts while the event is running.'
-      return { ...base, line, progress, actions: [] }
+      return { ...base, line: beat.autoClaim ? `${line} ${AUTO_CLAIM_TRACKING_LINE}` : line, progress, actions: [] }
     }
     case 'claimable': {
       const closing = Date.parse(beat.claimUntil) - now < CLOSING_SOON_MS ? ` Claiming closes at ${cardTime(beat.claimUntil)}.` : ''
@@ -159,13 +162,14 @@ function view(beat: VisitorBeat, state: BeatCardState, now: number, base: BeatVi
         actions: [{ id: 'claim', label: 'Claim your BEAT' }],
       }
     }
-    case 'pending':
-      return {
-        ...base,
-        line: c?.heldUntil
-          ? `The host checks claims before they're sent. Your BEAT is sent once they do, by ${cardDateTime(c.heldUntil)} at the latest. You can leave the scene.`
-          : 'Sending your BEAT. This usually takes a few minutes, and you can leave the scene.',
-      }
+    case 'pending': {
+      const held = c?.heldUntil
+        ? `The host checks claims before they're sent. Your BEAT is sent once they do, by ${cardDateTime(c.heldUntil)} at the latest. You can leave the scene.`
+        : null
+      // On an auto-claim BEAT the claim may have happened on its own, so the card says so first
+      if (beat.autoClaim) return { ...base, line: `${AUTO_CLAIM_PENDING_LINE} ${held ?? 'This usually takes a few minutes, and you can leave the scene.'}` }
+      return { ...base, line: held ?? 'Sending your BEAT. This usually takes a few minutes, and you can leave the scene.' }
+    }
     case 'minted': {
       const txUrl = c?.txUrl ?? null
       return { ...base, line: `Your ${beat.name} BEAT is in your wallet`, txUrl, actions: txUrl ? [{ id: 'view_tx', label: 'See it on Polygonscan' }] : [] }

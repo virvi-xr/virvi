@@ -255,6 +255,7 @@ function BeatDetail({ availability }: { availability: BeatAvailability }) {
               </dd>
               <dt className="text-gray-400">Tradeable</dt><dd className="text-gray-200">{beat.tradeable ? 'Yes' : 'No'}</dd>
               <dt className="text-gray-400">Check claims first</dt><dd className="text-gray-200">{beat.holdMints ? 'Yes' : 'No'}</dd>
+              <dt className="text-gray-400">Claim automatically</dt><dd className="text-gray-200">{beat.autoClaim ? 'Yes' : 'No'}</dd>
             </dl>
           </section>
 

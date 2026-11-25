@@ -10,7 +10,7 @@ const AFTER = END + 60_000
 
 const beat = (over: Partial<VisitorBeat> = {}): VisitorBeat => ({
   id: 'b1', name: 'Launch', imageUrl: 'https://img.example/b1.png', startsAt: new Date(START).toISOString(), endsAt: new Date(END).toISOString(),
-  minPresentSeconds: 300, status: 'live', soldOut: false, claimUntil: new Date(CLAIM_UNTIL).toISOString(), test: false, myClaim: null, ...over,
+  minPresentSeconds: 300, status: 'live', soldOut: false, claimUntil: new Date(CLAIM_UNTIL).toISOString(), test: false, autoClaim: false, myClaim: null, ...over,
 })
 const claim = (status: NonNullable<VisitorBeat['myClaim']>['status'], secondsPresent = 0, txUrl: string | null = null, more: { final?: boolean; heldUntil?: string | null } = {}) =>
   ({ myClaim: { status, secondsPresent, txUrl, final: more.final ?? false, heldUntil: more.heldUntil ?? null } })
@@ -88,6 +88,32 @@ describe('BEAT card', () => {
     expect(cardView(beat({ soldOut: true, ...claim('claimed', 300) }), DURING, ui()).state).toBe('pending')
     expect(cardView(beat(claim('claimed', 300, null, { heldUntil: new Date(CLAIM_UNTIL).toISOString() })), DURING, ui()).line)
       .toBe("The host checks claims before they're sent. Your BEAT is sent once they do, by Nov 15, 12:00 PM UTC at the latest. You can leave the scene.")
+  })
+
+  describe('auto-claim (LIV-180)', () => {
+    const auto = (over: Partial<VisitorBeat> = {}) => beat({ autoClaim: true, ...over })
+    it('consent: the body says agreeing also claims, only when the BEAT has auto-claim on', () => {
+      expect(cardView(auto(), DURING, ui({ view: 'consent' })).body).toBe(beatConsentText('Launch', { autoClaim: true }))
+      expect(cardView(auto(), DURING, ui({ view: 'consent' })).body).toContain("Agreeing also claims this BEAT to your wallet once you've been here long enough.")
+      expect(cardView(beat(), DURING, ui({ view: 'consent' })).body).toBe(beatConsentText('Launch'))
+      expect(cardView(beat(), DURING, ui({ view: 'consent' })).body).not.toContain('Agreeing also claims')
+    })
+    it('tracking: the line adds that it is claimed for you; off, it does not', () => {
+      expect(cardView(auto(claim('present', 130)), DURING, ui()).line)
+        .toBe("Time counts while the event is running. It's claimed for you once you've been here long enough.")
+      expect(cardView(auto(claim('present', 0)), START - 60_000, ui()).line)
+        .toBe("This BEAT starts at 10:00 AM UTC. Your time counts once it starts. It's claimed for you once you've been here long enough.")
+      expect(cardView(beat(claim('present', 130)), DURING, ui()).line).toBe('Time counts while the event is running.')
+    })
+    it('pending: starts with "Your BEAT is on its way." and keeps the sending or held detail', () => {
+      expect(cardView(auto(claim('claimed', 300)), DURING, ui()).line)
+        .toBe('Your BEAT is on its way. This usually takes a few minutes, and you can leave the scene.')
+      expect(cardView(auto(claim('claimed', 300, null, { heldUntil: new Date(CLAIM_UNTIL).toISOString() })), DURING, ui()).line)
+        .toBe("Your BEAT is on its way. The host checks claims before they're sent. Your BEAT is sent once they do, by Nov 15, 12:00 PM UTC at the latest. You can leave the scene.")
+    })
+    it('claimable keeps the manual Claim button as a fallback (a v2 claim, or a refused auto attempt)', () => {
+      expect(actions(cardView(auto(claim('present', 300)), DURING, ui()))).toEqual(['claim:Claim your BEAT', 'stop:Stop tracking'])
+    })
   })
 
   it('minted: in your wallet, with the tx link when there is one', () => {

@@ -2886,6 +2886,8 @@ export const beats = pgTable('beats', {
   paymentId: uuid('payment_id').references((): AnyPgColumn => beatPayments.id, { onDelete: 'set null' }),
   // Host review: nothing is minted until the host sends (mints_released_at) or the claim grace after ends_at runs out
   holdMints: boolean('hold_mints').notNull().default(false),
+  // Auto-claim (LIV-180): a visitor who agreed to tracking (consent v3+) is claimed for as soon as they meet the rules
+  autoClaim: boolean('auto_claim').notNull().default(true),
   mintsReleasedAt: timestamp('mints_released_at', { withTimezone: true }),
   // The most wallets the job puts in this BEAT's next mint (halved after a revert, grows back); null is BEAT_MAX_BATCH
   maxBatch: integer('max_batch'),
