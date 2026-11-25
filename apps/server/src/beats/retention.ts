@@ -19,11 +19,12 @@ import { deleteMyReissueRequests, scrubReissueRequests } from './reissue.js'
 const DAY_MS = 86_400_000
 
 /**
- * What unlinking a minted claim clears (privacy M1): its account, its display name, its time present, the consent
- * and claim times, and a reissued claim's old wallet (reissue_tx and reissued_at stay, as on chain). On chain only the wallet remains, so the row keeps the wallet, its status and the mint.
+ * What unlinking a minted claim clears (privacy M1): its account, its display name, its time present, the consent,
+ * event check-in and claim times, and a reissued claim's old wallet (reissue_tx and reissued_at stay, as on chain). On chain only the wallet remains, so the row keeps the wallet, its status and the mint.
  */
 export const UNLINKED_CLAIM = {
   userId: null, displayName: null, secondsPresent: null, lastSeenAt: null, consentedAt: null, claimedAt: null, replacedWallet: null,
+  eventCheckedInAt: null, secondsAtEventScan: null,
 } as const
 
 /** One transaction (or the caller's, so account deletion can include it). Only this user's claims are touched. */

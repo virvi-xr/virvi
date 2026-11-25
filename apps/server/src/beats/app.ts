@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
 import { getAddress } from 'ethers'
 import {
   BEAT_APP_CONSENT_VERSION, BEAT_CARD_LEAD_MS, BEAT_CLAIM_GRACE_MS, cleanDisplayName, parseRingCode, BEAT_PIN_RADIUS, type BeatPin, type AppBeatCard, type BeatClaimStatus,
@@ -86,16 +86,25 @@ async function collectingWallets(userId: string): Promise<string[]> {
 }
 
 /**
- * The seconds an event claim (source `app_event`) has: wall-clock time since the check-in, inside the BEAT's window, and
- * never less than it already has. Any other claim keeps the time it has (minutes elsewhere are not credited for waiting).
+ * The seconds a claim has. An event claim (source `app_event`): wall-clock time since the check-in, inside the BEAT's
+ * window, and never less than it already has. A claim started elsewhere that scanned the event ARC: the seconds it had
+ * at the scan plus wall-clock time since the scan, inside the window, and never less than it has (time earned elsewhere
+ * since the scan counts once: the larger wins). Any other claim keeps the time it has.
  */
 function eventSeconds(b: BeatRow, claim: ClaimRow, now: Date): number {
   const had = claim.secondsPresent ?? 0
-  if (claim.source !== 'app_event' || !claim.consentedAt) return had
-  const from = Math.max(claim.consentedAt.getTime(), b.startsAt.getTime())
-  const to = Math.min(now.getTime(), b.endsAt.getTime())
-  return Math.max(had, to > from ? Math.floor((to - from) / 1000) : 0)
+  const since = (at: Date) => {
+    const from = Math.max(at.getTime(), b.startsAt.getTime())
+    const to = Math.min(now.getTime(), b.endsAt.getTime())
+    return to > from ? Math.floor((to - from) / 1000) : 0
+  }
+  if (claim.source === 'app_event') return claim.consentedAt ? Math.max(had, since(claim.consentedAt)) : had
+  if (claim.eventCheckedInAt) return Math.max(had, (claim.secondsAtEventScan ?? 0) + since(claim.eventCheckedInAt))
+  return had
 }
+
+/** Whether the claim checked in at the event (started there, or scanned its ARC later): its claim re-checks the pin. */
+const checkedInAtEvent = (claim: ClaimRow) => claim.source === 'app_event' || !!claim.eventCheckedInAt
 
 /** The BEAT's venue pin, when it has one (the radius defaults to 150 m). */
 function pinOf(b: BeatRow): BeatPin | null {
@@ -227,6 +236,12 @@ export async function appTrack(beatId: string, t: AppTrack, now = new Date()): P
         if (await keyTaken(mine.id)) throw thisDevice()
         await tx.update(beatClaims).set({ installKeyId: t.installKeyId }).where(eq(beatClaims.id, mine.id))
       }
+      // A claim started elsewhere scanning the event ARC: its first scan is its check-in here, and from then its time
+      // also counts by the wall clock (eventSeconds). A later scan keeps the first
+      if (source === 'app_event' && mine.source !== 'app_event' && mine.status === 'present' && !mine.eventCheckedInAt) {
+        await tx.update(beatClaims).set({ eventCheckedInAt: now, secondsAtEventScan: mine.secondsPresent ?? 0 })
+          .where(and(eq(beatClaims.id, mine.id), isNull(beatClaims.eventCheckedInAt)))
+      }
     })
   } catch (e) {
     throw uniqueRefusal(e)
@@ -262,7 +277,7 @@ export async function appCheckIn(beatId: string, c: { userId: string; spaceId: s
 
 /** The time rules of a claim: after the start, before the grace runs out, with enough time present. */
 function checkClaimTime(b: BeatRow, claim: ClaimRow, now: Date): void {
-  // An event claim's time is the wall clock since its check-in (eventSeconds); any other claim has what it has
+  // A claim checked in at the event also counts the wall clock since that check-in (eventSeconds); any other has what it has
   // Tracking opens before the start, so with a minimum of 0 the time alone would allow it
   if (now.getTime() < b.startsAt.getTime()) throw new BeatError(409, 'not_started', "This event hasn't started yet.")
   if (now.getTime() > claimUntil(b).getTime()) throw new BeatError(409, 'too_late', 'The time to claim this BEAT is over.')
@@ -298,7 +313,7 @@ export async function appClaim(beatId: string, c: AppClaim, now = new Date()): P
     // Before asking which wallet: a claim that can't go yet says so first (checked again under the lock)
     checkClaimTime(seen, pre, now)
     if (pre.source === 'app_event' && (isQuestKey(c.installKeyId) || isQuestKey(pre.installKeyId))) throw phoneOnly()
-    if (pre.source === 'app_event') requireAtVenue(seen, c.location, `Come back to ${venueOf(seen)} to claim this BEAT.`)
+    if (checkedInAtEvent(pre)) requireAtVenue(seen, c.location, `Come back to ${venueOf(seen)} to claim this BEAT.`)
     if ((await takenCount(db, seen.id)) >= seen.supplyCap) throw allClaimed()
     if (c.wallet !== undefined && c.wallet !== null) {
       const mine = typeof c.wallet === 'string' ? (await walletsOf(c.userId)).find((w) => w.toLowerCase() === (c.wallet as string).toLowerCase()) : undefined
@@ -323,7 +338,7 @@ export async function appClaim(beatId: string, c: AppClaim, now = new Date()): P
       checkClaimTime(b, claim, now)
       const quest = isQuestKey(c.installKeyId) || isQuestKey(claim.installKeyId)
       if (claim.source === 'app_event' && quest) throw phoneOnly()
-      if (claim.source === 'app_event') requireAtVenue(b, c.location, `Come back to ${venueOf(b)} to claim this BEAT.`)
+      if (checkedInAtEvent(claim)) requireAtVenue(b, c.location, `Come back to ${venueOf(b)} to claim this BEAT.`)
       if ((await takenCount(tx, b.id)) >= b.supplyCap) throw allClaimed()
       if (wallet) {
         const [other] = await tx.select({ id: beatClaims.id }).from(beatClaims).where(and(eq(beatClaims.beatId, b.id), eq(beatClaims.wallet, wallet), ne(beatClaims.id, claim.id)))

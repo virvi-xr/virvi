@@ -189,7 +189,7 @@ describe('in-person BEATs with the event ARC', () => {
     expect(await rowOf(b.id, q.user.id)).toBeUndefined()
   })
 
-  it('does not credit wall-clock time to a claim that started elsewhere', async () => {
+  it('credits a claim that started elsewhere from its ARC scan only, never from its first check-in', async () => {
     const { b, code } = await seed()
     const p = await phone()
     await db.insert(beatClaims).values({ beatId: b.id, userId: p.user.id, wallet: null, consentVersion: 1, consentedAt: at(-30 * M), lastSeenAt: at(-30 * M), createdAt: at(-30 * M), source: 'app_space', secondsPresent: 0 })
@@ -197,6 +197,51 @@ describe('in-person BEATs with the event ARC', () => {
     const row = await rowOf(b.id, p.user.id)
     expect(row.source).toBe('app_space')
     await expect(appClaim(b.id, { userId: p.user.id, installKeyId: p.device.keyId, location: north(10) })).rejects.toMatchObject({ status: 409, code: 'not_yet' })
+  })
+
+  it('adds in-person minutes to time earned in Decentraland: 2 of 5 minutes, a scan at t, claimable at the venue at t+3', async () => {
+    const { b, code } = await seed()
+    const p = await phone()
+    await db.insert(beatClaims).values({
+      beatId: b.id, userId: p.user.id, wallet: p.user.wallet!, displayName: 'Visitor', consentVersion: 1, consentedAt: at(-40 * M), lastSeenAt: at(-20 * M),
+      createdAt: at(-40 * M), source: 'decentraland', secondsPresent: 120,
+    })
+    const scan = await trackReq(p, b, code, north(10))
+    expect(scan.statusCode, scan.body).toBe(200)
+    expect(scan.json().beat.claim).toMatchObject({ status: 'present' })
+    expect(scan.json().beat.claim.secondsPresent).toBeGreaterThanOrEqual(120)
+    expect(scan.json().beat.claim.secondsPresent).toBeLessThan(130)
+    const row = await rowOf(b.id, p.user.id)
+    expect(row.source).toBe('decentraland')
+    expect(row.secondsAtEventScan).toBe(120)
+    const t = row.eventCheckedInAt!.getTime()
+    expect(Math.abs(t - Date.now())).toBeLessThan(10_000)
+    // A second scan keeps the first check-in
+    expect((await trackReq(p, b, code, north(10))).statusCode).toBe(200)
+    expect((await rowOf(b.id, p.user.id)).eventCheckedInAt!.getTime()).toBe(t)
+    const claim = (ms: number, location?: ReturnType<typeof north>) =>
+      appClaim(b.id, { userId: p.user.id, installKeyId: p.device.keyId, location, ip: '203.0.113.9' }, new Date(t + ms))
+    await expect(claim(2 * M, north(10))).rejects.toMatchObject({ status: 409, code: 'not_yet' })
+    await expect(claim(3 * M, north(600))).rejects.toMatchObject({ status: 403, code: 'outside', message: 'Come back to The Hall to claim this BEAT.' })
+    await expect(claim(3 * M)).rejects.toMatchObject({ status: 400, code: 'location_needed' })
+    const done = await claim(3 * M, north(10))
+    expect(done.claim?.status).toBe('claimed')
+    expect((await rowOf(b.id, p.user.id)).secondsPresent).toBeGreaterThanOrEqual(300)
+  })
+
+  it('shows the live seconds of a claim with an ARC scan on its card, and never fewer than it earned elsewhere', async () => {
+    const { b, code } = await seed()
+    const p = await phone()
+    await db.insert(beatClaims).values({ beatId: b.id, userId: p.user.id, wallet: null, consentVersion: 1, consentedAt: at(-40 * M), createdAt: at(-40 * M), source: 'app_space', secondsPresent: 60 })
+    expect((await trackReq(p, b, code, north(10))).statusCode).toBe(200)
+    await db.update(beatClaims).set({ eventCheckedInAt: at(-3 * M) }).where(eq(beatClaims.beatId, b.id))
+    const card = (await app.inject({ method: 'GET', url: `/api/app/arcs/${code}`, headers: { authorization: `Bearer ${tokenFor(p.user)}` } })).json().card
+    expect(card.claim.secondsPresent).toBeGreaterThanOrEqual(240)
+    expect(card.claim.secondsPresent).toBeLessThan(250)
+    // More time earned in the space since the scan than the wall clock gives: that counts
+    await db.update(beatClaims).set({ secondsPresent: 900 }).where(eq(beatClaims.beatId, b.id))
+    const later = (await app.inject({ method: 'GET', url: `/api/app/arcs/${code}`, headers: { authorization: `Bearer ${tokenFor(p.user)}` } })).json().card
+    expect(later.claim.secondsPresent).toBe(900)
   })
 
   it('is idempotent and never stores the location', async () => {

@@ -2972,6 +2972,10 @@ export const beatClaims = pgTable('beat_claims', {
   source: text('source').$type<BeatClaimSource>().notNull().default('decentraland'),
   // The App Attest key of the phone that started an app claim: one claim per key per BEAT
   installKeyId: text('install_key_id'),
+  // A claim started elsewhere (Decentraland, an AR space) that scanned the BEAT's event ARC: when, and the seconds it had
+  // then. From the scan its time also counts by the wall clock, as an event claim's does (beats/app.ts eventSeconds)
+  eventCheckedInAt: timestamp('event_checked_in_at', { withTimezone: true }),
+  secondsAtEventScan: integer('seconds_at_event_scan'),
   deleteRequested: boolean('delete_requested').notNull().default(false),
   batchId: uuid('batch_id').references(() => beatMintBatches.id, { onDelete: 'set null' }),
   mintTx: text('mint_tx'),

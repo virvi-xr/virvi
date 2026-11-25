@@ -82,7 +82,7 @@ describe('BEAT privacy and retention (LIV-11)', () => {
         const out: Record<string, typeof beatClaims.$inferSelect> = {}
         for (const s of ['present', 'claimed', 'failed', 'minted', 'minting'] as const) {
           const b = await seedBeat()
-          out[s] = await claim(b.id, me, s, s === 'minted' ? { mintTx: null, mintedAt: at(-H) } : {})
+          out[s] = await claim(b.id, me, s, s === 'minted' ? { mintTx: null, mintedAt: at(-H), eventCheckedInAt: at(-2 * H), secondsAtEventScan: 60 } : {})
         }
         return out
       }
@@ -99,6 +99,7 @@ describe('BEAT privacy and retention (LIV-11)', () => {
       // M1: only the wallet stays (it is on chain); time present and the consent and claim times go with the link
       expect(await byId(mine.minted.id)).toMatchObject({
         userId: null, displayName: null, wallet: me.wallet, status: 'minted', secondsPresent: null, lastSeenAt: null, consentedAt: null, claimedAt: null,
+        eventCheckedInAt: null, secondsAtEventScan: null,
       })
       expect(await byId(mine.minting.id)).toMatchObject({ userId: me.id, deleteRequested: true, status: 'minting' })
       for (const st of Object.keys(theirs)) {
