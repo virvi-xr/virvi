@@ -40,7 +40,8 @@ class Reporter {
   private readonly gate = new ReportingGate({
     add: (e) => this.queue.add(e),
     crash: (e) => { void this.post([e], { keepalive: false, bearer: false }).catch(() => {}) },
-    forget: () => { this.crumbs.clear(); this.last = null },
+    // Off: what's queued goes too, so the pagehide flush sends nothing
+    forget: () => { this.queue.clear(); this.crumbs.clear(); this.last = null },
   })
 
   /** Hold, send or switch off (the account's privacy decision). */

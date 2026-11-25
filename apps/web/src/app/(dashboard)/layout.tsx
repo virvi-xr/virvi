@@ -247,7 +247,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {!trial && !scenePass && user?.id && <VerifyEmailBanner userId={user.id} />}
         {!trial && !scenePass && user?.id && <TermsGate key={user.id} onSignOut={signOut} onAgreed={() => setTermsAgreedFor(user.id)} />}
         {/* The privacy notice comes after the Terms, never on top of them */}
-        {!trial && !scenePass && user?.id && termsAgreedFor === user.id && <PrivacyGate key={user.id} userId={user.id} />}
+        {!trial && !scenePass && user?.id && termsAgreedFor === user.id && <PrivacyGate key={user.id} userId={user.id} onSignOut={signOut} />}
         {signedIn && (
           <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-emerald-500/40 px-4 py-2 text-sm text-emerald-200" role="status">
             <span>{signedIn}</span>

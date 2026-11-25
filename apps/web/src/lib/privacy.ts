@@ -21,6 +21,14 @@ export function privacyChoiceLabel(status: PrivacyStatus | null): string {
     : `Off: you declined browser error reporting${when}.`
 }
 
+/** The prompt's error line when a decision didn't save (the prompt keeps Sign out as its way out). */
+export function privacyDecisionError(err: unknown): string {
+  const code = (err as { body?: { error?: unknown } } | null)?.body?.error
+  return code === 'stale_version'
+    ? 'This notice changed while the page was open. Reload the page to see it.'
+    : "That didn't save. Try again, or sign out and come back later."
+}
+
 /** The other choice, for the Settings row's button. */
 export const otherDecision = (d: PrivacyDecision | null): PrivacyDecision => (d === 'accept' ? 'decline' : 'accept')
 

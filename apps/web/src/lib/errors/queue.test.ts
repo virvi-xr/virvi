@@ -141,3 +141,26 @@ describe('ErrorQueue: sizes, failures and retries (I4)', () => {
     expect(h.calls.map((c) => c.keepalive)).toEqual([false, true])
   })
 })
+
+describe('ErrorQueue: clear (error reporting turned off)', () => {
+  it('drops what is waiting, so the pagehide flush sends nothing', async () => {
+    const h = harness()
+    h.q.add(crash('ma'))
+    h.q.add(crash('mb'))
+    h.q.clear()
+    expect(h.q.size).toBe(0)
+    expect(h.hasTimer()).toBe(false)
+    await h.q.flush({ keepalive: true })
+    expect(h.sent).toHaveLength(0)
+  })
+
+  it('a send that fails after the clear puts nothing back for a retry', async () => {
+    const h = harness({ fail: true })
+    h.q.add(crash('ma'))
+    const out = h.q.flush()
+    h.q.clear()
+    await out
+    expect(h.q.size).toBe(0)
+    expect(h.hasTimer()).toBe(false)
+  })
+})

@@ -41,3 +41,12 @@ describe('admin labels', () => {
     expect(adminPrivacyLabel(status({ decision: 'accept', decidedAt: null }))).toBe('Privacy: accepted')
   })
 })
+
+describe('privacyDecisionError', () => {
+  it('says to reload for a changed notice, and otherwise to retry or sign out', async () => {
+    const { privacyDecisionError } = await import('./privacy')
+    expect(privacyDecisionError({ body: { error: 'stale_version' } })).toMatch(/Reload the page/)
+    expect(privacyDecisionError(new Error('offline'))).toMatch(/sign out/)
+    expect(privacyDecisionError(null)).toMatch(/Try again/)
+  })
+})
