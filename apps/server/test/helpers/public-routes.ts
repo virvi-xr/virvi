@@ -38,6 +38,8 @@ export const PUBLIC_EXACT = [
   'GET /.well-known/apple-app-site-association', // public: the iOS universal links file, nothing of ours in it
   'GET /.well-known/assetlinks.json', // public: the Android app links file, nothing of ours in it
   'POST /api/ingest', // DCL signed fetch / ingest key
+  'GET /api/analytics/consent', // a visitor's analytics decision: signed fetch or visitor id, as /api/ingest
+  'POST /api/analytics/consent',
   'POST /api/analytics/claims/check-signed', // DCL signed fetch
   'POST /api/ads/serve', // DCL signed fetch (ads for the signed scene's spaces)
   'POST /api/ads/events', // DCL signed fetch (ad views from the signed scene)
