@@ -425,6 +425,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     const appIDs = config.appleAppIds
     return reply.type('application/json').send({
       applinks: { details: appIDs.length === 0 ? [] : [{ appIDs, components: [{ '/': '/s/*' }, { '/': '/app-signed-in' }, { '/': '/app-signed-in/' }] }] },
+      // The app's sign-in sheet (ASWebAuthenticationSession's https callback) is only given its callback for a domain
+      // the app holds as webcredentials
+      webcredentials: { apps: appIDs },
     })
   })
 

@@ -140,6 +140,8 @@ describe('AR static pages', () => {
             components: [{ '/': '/s/*' }, { '/': '/app-signed-in' }, { '/': '/app-signed-in/' }],
           }],
         },
+        // The app's sign-in sheet catches its https callback only for a domain it holds as webcredentials
+        webcredentials: { apps: ['P22YGT64VU.io.virvi.app', 'P22YGT64VU.io.virvi.ar'] },
       })
     })
 
@@ -147,7 +149,7 @@ describe('AR static pages', () => {
       ;(config as any).appleAppIds = []
       const res = await get()
       expect(res.statusCode).toBe(200)
-      expect(res.json()).toEqual({ applinks: { details: [] } })
+      expect(res.json()).toEqual({ applinks: { details: [] }, webcredentials: { apps: [] } })
     })
   })
 

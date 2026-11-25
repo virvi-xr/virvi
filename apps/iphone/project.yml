@@ -32,7 +32,8 @@ targets:
     entitlements:
       path: App/VirviAR.entitlements
       properties:
-        com.apple.developer.associated-domains: [applinks:virvi.io]
+        # webcredentials: the sign-in sheet's https callback (`.https(host:path:)`) needs it as well as applinks.
+        com.apple.developer.associated-domains: [applinks:virvi.io, webcredentials:virvi.io]
         # `development` in every configuration: Apple ignores the value for TestFlight and App Store builds (always
         # production), and a development-signed Run needs it.
         com.apple.developer.devicecheck.appattest-environment: development
@@ -40,9 +41,6 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: Virvi
-        CFBundleURLTypes:
-          - CFBundleURLName: io.virvi.app
-            CFBundleURLSchemes: [virvi]
         NSCameraUsageDescription: Virvi uses the camera to find ARCs and to show the space in this room.
         NSLocationWhenInUseUsageDescription: Virvi checks you're at the event when you check in and claim a BEAT.
         UILaunchScreen: {}

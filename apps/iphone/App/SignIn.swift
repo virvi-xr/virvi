@@ -3,12 +3,21 @@ import Observation
 import SwiftUI
 import VirviARKit
 
-/// The one-time code in the website's `virvi://signed-in?code=<code>` hand-off, or nil for anything else: another
-/// scheme or host, no code, or a code that isn't 43 base64url characters (32 random bytes).
-func handoffCode(fromCallback url: URL) -> String? {
-    guard url.scheme?.lowercased() == "virvi", url.host?.lowercased() == "signed-in",
-          let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
-          let code = items.first(where: { $0.name == "code" })?.value, code.utf8.count == 43,
+/// The path virvi.io sends the one-time code back to (`/app-sign-in` redirects there; the app-site-association claims it).
+let APP_SIGNED_IN_PATH = "/app-signed-in"
+
+/// The host the sign-in sheet's https callback is caught on: the configured site's own (virvi.io in release builds).
+var appSignInHost: String { AppConfig.baseUrl.host?.lowercased() ?? "virvi.io" }
+
+/// The one-time code in the website's `https://<host>/app-signed-in?code=<code>` hand-off, or nil for anything else:
+/// another scheme, host, port or path, anything but exactly one `code`, or a code that isn't 43 base64url characters
+/// (32 random bytes).
+func handoffCode(fromCallback url: URL, host: String = appSignInHost) -> String? {
+    guard url.scheme?.lowercased() == "https", url.host?.lowercased() == host.lowercased(), url.port == nil,
+          url.user == nil, url.fragment == nil,
+          let parts = URLComponents(url: url, resolvingAgainstBaseURL: false), parts.path == APP_SIGNED_IN_PATH,
+          let items = parts.queryItems, items.count == 1, items[0].name == "code",
+          let code = items[0].value, code.utf8.count == 43,
           code.utf8.allSatisfy({ ($0 >= 0x41 && $0 <= 0x5A) || ($0 >= 0x61 && $0 <= 0x7A) || ($0 >= 0x30 && $0 <= 0x39) || $0 == 0x2D || $0 == 0x5F })
     else { return nil }
     return code
@@ -25,11 +34,22 @@ final class SignInModel: NSObject, ASWebAuthenticationPresentationContextProvidi
     private(set) var message: String?
     /// Bumped when the session changes, so views re-read the name.
     private(set) var changes = 0
-    /// Called after the visitor has signed in or out.
+    /// Called after the visitor has signed in or out, whichever way: here, with a code, or by the server refusing a refresh.
     var onChange: (() -> Void)?
     private var web: ASWebAuthenticationSession?
 
-    init(session: AppSession) { self.session = session }
+    init(session: AppSession) {
+        self.session = session
+        super.init()
+        session.onChange = { [weak self] in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.sessionChanged() } }
+        }
+    }
+
+    private func sessionChanged() {
+        changes += 1
+        onChange?()
+    }
 
     var signedIn: Bool { _ = changes; return session.signedIn }
     var userName: String? { _ = changes; return session.userName }
@@ -38,7 +58,7 @@ final class SignInModel: NSObject, ASWebAuthenticationPresentationContextProvidi
         guard web == nil else { return }
         message = nil
         let url = AppConfig.baseUrl.appendingPathComponent("app-sign-in")
-        let web = ASWebAuthenticationSession(url: url, callbackURLScheme: "virvi") { [weak self] callback, error in
+        let web = ASWebAuthenticationSession(url: url, callback: .https(host: appSignInHost, path: APP_SIGNED_IN_PATH)) { [weak self] callback, error in
             Task { @MainActor in await self?.finish(callback: callback, error: error) }
         }
         web.presentationContextProvider = self
@@ -51,8 +71,6 @@ final class SignInModel: NSObject, ASWebAuthenticationPresentationContextProvidi
     func signOut() {
         session.signOut()
         message = nil
-        changes += 1
-        onChange?()
     }
 
     private func finish(callback: URL?, error: Error?) async {
@@ -62,8 +80,6 @@ final class SignInModel: NSObject, ASWebAuthenticationPresentationContextProvidi
             message = Self.FAILED
             return
         }
-        changes += 1
-        onChange?()
     }
 
     nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {

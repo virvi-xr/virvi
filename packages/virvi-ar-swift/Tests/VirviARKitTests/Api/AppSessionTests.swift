@@ -201,4 +201,36 @@ final class AppSessionTests: XCTestCase {
             XCTAssertTrue(s.signedIn)
         }
     }
+
+    // MARK: telling the app
+
+    func testTheAppIsToldWhenTheServerSignsTheVisitorOut() async throws {
+        let t = FakeTransport()
+        t.on("/api/auth/refresh") { _ in (401, ["error": "Invalid or expired refresh token"]) }
+        t.on("/api/x") { _ in (401, nil) }
+        let s = session(t, MemoryStore(signedInTokens))
+        let told = Counter()
+        s.onChange = { _ = told.next() }
+        _ = try await call(s, t)
+        XCTAssertFalse(s.signedIn)
+        XCTAssertEqual(told.next(), 1, "told once")
+    }
+
+    func testTheAppIsToldOfASignInAndASignOutButNotOfANewAccessToken() async throws {
+        let t = FakeTransport()
+        t.on("/api/auth/refresh") { _ in (200, ["accessToken": "new"]) }
+        t.on("/api/x") { req in req.value(forHTTPHeaderField: "Authorization") == "Bearer new" ? (200, [:]) : (401, nil) }
+        t.on("/exchange") { _ in (200, ["user": ["displayName": "Ana"], "accessToken": "a1", "refreshToken": "r1"]) }
+        let s = session(t, MemoryStore())
+        let told = Counter()
+        s.onChange = { _ = told.next() }
+        _ = await s.signIn(exchanging: "ABCD")
+        s.signIn(AppTokens(accessToken: "old", refreshToken: "r2", userName: "Bo"))
+        XCTAssertEqual(s.userName, "Bo")
+        _ = try await call(s, t)
+        let bearer = await s.bearer()
+        XCTAssertEqual(bearer, "new")
+        s.signOut()
+        XCTAssertEqual(told.next(), 3, "sign-in, sign-in, sign-out; the refresh isn't a change of account")
+    }
 }

@@ -17,8 +17,8 @@ struct MenuButton: View {
     }
 }
 
-/// The only settings a visitor sees: look at the ring again, hide behind people and things (LiDAR phones only),
-/// report this space, close.
+/// The only settings a visitor sees: look at the ARC again, hide behind people and things (LiDAR phones only), report
+/// this space, the account (sign in, or with a code; signed in: My BEATs, sign a headset in, sign out), close.
 struct VisitorMenu: View {
     let controller: VisitorController
     let signIn: SignInModel
@@ -31,6 +31,7 @@ struct VisitorMenu: View {
     @State private var reporting = false
     @State private var signingHeadsetIn = false
     @State private var showingMyBeats = false
+    @State private var signingInWithCode = false
 
     /// The spec's words for the iPhone's one occlusion mode (ARKit scene depth, people occlusion and the scanned mesh).
     static let HIDE_BEHIND = "Hide behind people and things"
@@ -61,6 +62,7 @@ struct VisitorMenu: View {
                 wide(Self.SIGN_OUT) { signIn.signOut() }
             } else {
                 wide(Self.SIGN_IN) { signIn.signIn() }
+                wide(CodeSignInModel.TITLE) { signingInWithCode = true }
             }
             if let message = signIn.message {
                 Text(message).font(.footnote).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
@@ -73,7 +75,14 @@ struct VisitorMenu: View {
         .padding(16)
         .onDisappear { controller.menuNote = nil }
         .sheet(isPresented: $showingMyBeats) {
-            MyBeatsView(model: myBeats) { showingMyBeats = false }
+            MyBeatsView(model: myBeats, close: { showingMyBeats = false }, opened: {
+                showingMyBeats = false
+                close()
+            })
+        }
+        .sheet(isPresented: $signingInWithCode) {
+            CodeSignInView(model: CodeSignInModel(session: signIn.session)) { signingInWithCode = false }
+                .presentationDetents([.medium])
         }
         .sheet(isPresented: $signingHeadsetIn) {
             HeadsetSignInView(model: HeadsetSignInModel(session: signIn.session)) { signingHeadsetIn = false }

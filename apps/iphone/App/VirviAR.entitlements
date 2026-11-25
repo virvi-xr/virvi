@@ -5,6 +5,7 @@
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:virvi.io</string>
+		<string>webcredentials:virvi.io</string>
 	</array>
 	<key>com.apple.developer.devicecheck.appattest-environment</key>
 	<string>development</string>

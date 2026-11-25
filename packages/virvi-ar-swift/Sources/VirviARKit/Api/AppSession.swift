@@ -28,6 +28,14 @@ public final class AppSession: @unchecked Sendable {
     private let lock = NSLock()
     private var tokens: AppTokens?
     private var refreshing: Task<String?, Never>?
+    private var changed: (@Sendable () -> Void)?
+
+    /// Told, on whatever thread made the change, each time the visitor is signed in or out: by the app, or by the
+    /// server refusing a refresh. A new access token for the same sign-in isn't a change.
+    public var onChange: (@Sendable () -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return changed }
+        set { lock.lock(); changed = newValue; lock.unlock() }
+    }
 
     public init(baseUrl: URL, transport: HttpTransport, store: SessionStore) {
         var b = baseUrl.absoluteString.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -60,6 +68,9 @@ public final class AppSession: @unchecked Sendable {
         set(AppTokens(accessToken: access, refreshToken: refresh, userName: name))
         return true
     }
+
+    /// Signs in with a session the server gave some other way (a sign-in code approved at virvi.io/pair).
+    public func signIn(_ t: AppTokens) { set(t) }
 
     public func signOut() { set(nil) }
 
@@ -129,7 +140,7 @@ public final class AppSession: @unchecked Sendable {
             if let refresh = o["refreshToken"] as? String, !refresh.isEmpty { t.refreshToken = refresh }
             return replace(used, with: t) ? access : nil
         case 400, 401, 403:
-            _ = replace(used, with: nil)
+            if replace(used, with: nil) { onChange?() }
             return nil
         default:
             return nil
@@ -152,8 +163,11 @@ public final class AppSession: @unchecked Sendable {
     }
 
     private func set(_ t: AppTokens?) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
         tokens = t
         store.save(t)
+        let tell = changed
+        lock.unlock()
+        tell?()
     }
 }
