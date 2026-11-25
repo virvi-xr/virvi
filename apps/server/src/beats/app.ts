@@ -13,7 +13,8 @@ import { locationCheck, type Fix } from './geo.js'
 import { arLiveSince } from './live.js'
 import { beatImageUrl } from './metadata.js'
 import { walletsOf } from './collection.js'
-import { VISIBLE, chargeClaimNetwork, checkNewWallet, claimUntil, hidden, inWindowSeconds, myClaimRow, sceneBeats, takenCount } from './visitor.js'
+import { platformCheck } from './platform-checks.js'
+import { VISIBLE, chargeClaimNetwork, checkNewWallet, claimUntil, hidden, inWindowSeconds, myClaimRow, profileRequired, sceneBeats, takenCount } from './visitor.js'
 
 /**
  * BEATs in the Virvi app (iPhone, and a signed-in Quest): the card for an AR space, tracking, check-ins, claiming with a
@@ -309,7 +310,8 @@ export interface AppClaim {
  * else the claim's own (one started in Decentraland), else the account's only wallet that can collect BEATs; several
  * → 409 `choose_wallet` with them; none → the claim waits for one (`waiting`, holding its copy). A blocked wallet, or
  * one another claim of this BEAT holds, is refused. A claim started in the app has no per-network limits; one started
- * in Decentraland keeps them (BEAT_CLAIMS_PER_IP and the new-wallet limit, as claimBeat), and so does a claim with a
+ * in Decentraland keeps them (BEAT_CLAIMS_PER_IP and the new-wallet limit, as claimBeat) and the Decentraland profile
+ * check (when it has a wallet), and so does a claim with a
  * Quest's key (`quest:`, no App Attest behind it). An event BEAT refuses a Quest key (403 `phone_only`). A claim already further along
  * is returned as it is.
  */
@@ -336,6 +338,10 @@ export async function appClaim(beatId: string, c: AppClaim, now = new Date()): P
       wallet = usable[0]?.toLowerCase() ?? null
     }
     if (wallet && (await isWalletBlocked(wallet))) throw beatsBlocked()
+    // A claim started in Decentraland (or from a Quest) keeps the in-world checks: the network limits under the lock
+    // below, and the Decentraland profile check here, before it, as claimBeat runs it (a network call, never under the lock)
+    const quest = isQuestKey(c.installKeyId) || isQuestKey(pre.installKeyId)
+    if (wallet && (!pre.source.startsWith('app_') || quest) && !(await platformCheck('decentraland', wallet, now))) throw profileRequired()
   }
   try {
     await db.transaction(async (tx) => {

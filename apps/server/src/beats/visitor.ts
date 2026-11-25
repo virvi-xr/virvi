@@ -42,7 +42,7 @@ export interface VisitorCaller {
 
 /** A wallet blocked by a reissue or an admin unlink (LIV-11) never earns another BEAT, on any account. */
 const beatsBlocked = () => new BeatError(403, 'beats_blocked', "This wallet can't collect BEATs any more.")
-const profileRequired = () => new BeatError(403, 'profile_required', 'Set up your Decentraland profile (an avatar) first, then come back to collect this BEAT.')
+export const profileRequired = () => new BeatError(403, 'profile_required', 'Set up your Decentraland profile (an avatar) first, then come back to collect this BEAT.')
 
 const tooManyNewWallets = () => new BeatError(429, 'too_many_new_wallets', 'Too many new wallets have collected BEATs from your network. Try again later.')
 

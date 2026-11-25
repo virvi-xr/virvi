@@ -495,6 +495,23 @@ describe('BEATs in AR spaces with the Virvi app', () => {
     expect(ok.json().beat.claim.status).toBe('claimed')
   })
 
+  it('a claim started in Decentraland keeps the Decentraland profile check when claimed in the app; one started in the app does not', async () => {
+    const b = await seed()
+    const viaApp = await phone()
+    expect((await inWorld(viaApp, b, 'track', '198.51.100.40')).statusCode).toBe(200)
+    await db.update(beatClaims).set({ secondsPresent: 300 }).where(eq(beatClaims.userId, viaApp.user.id))
+    const appOnly = await phone()
+    expect((await track(appOnly, b)).statusCode).toBe(200)
+    await db.update(beatClaims).set({ secondsPresent: 300 }).where(eq(beatClaims.userId, appOnly.user.id))
+    setBeatPlatformCheckForTests('decentraland', async () => false)
+    const refused = await claim(viaApp, b)
+    expect([refused.statusCode, refused.json().error]).toEqual([403, 'profile_required'])
+    expect((await rowOf(b.id, viaApp.user.id)).status).toBe('present')
+    const ok = await claim(appOnly, b)
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect(ok.json().beat.claim.status).toBe('claimed')
+  })
+
   it('an app-started claim refused in-world (too early) keeps no wallet and costs its network no new wallet', async () => {
     ;(config as any).beats = { ...config.beats, newWalletsPerIpHour: 1 }
     const ip = '198.51.100.30'
