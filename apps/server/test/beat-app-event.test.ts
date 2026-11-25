@@ -294,6 +294,18 @@ describe('in-person BEATs with the event ARC', () => {
     expect(res.json()).toMatchObject({ kind: 'beat', beatId: b.id, name: 'Opening night', card: { beatId: b.id, minMinutes: 5, location: { type: 'in_person', venue: 'The Hall' }, claim: null } })
   })
 
+  it('says on the card whether the BEAT has a venue pin, never where it is', async () => {
+    const p = await phone()
+    const card = async (code: string) => (await app.inject({ method: 'GET', url: `/api/app/arcs/${code}`, headers: { authorization: `Bearer ${tokenFor(p.user)}` } })).json().card
+    const pinned = await seed()
+    const open = await seed({}, false)
+    const withPin = await card(pinned.code)
+    expect(withPin.pinned).toBe(true)
+    expect(JSON.stringify(withPin)).not.toContain(String(PIN.lat))
+    expect(JSON.stringify(withPin)).not.toContain(String(PIN.lng))
+    expect((await card(open.code)).pinned).toBe(false)
+  })
+
   it('an event ARC opens nothing while BEATs are off, or for a BEAT that is not in person', async () => {
     const { b, code } = await seed()
     const p = await phone()

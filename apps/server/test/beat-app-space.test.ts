@@ -116,7 +116,7 @@ describe('BEATs in AR spaces with the Virvi app', () => {
     expect(res.statusCode, res.body).toBe(200)
     expect(res.json().beat).toEqual({
       beatId: b.id, name: 'Opening night', imageUrl: 'https://cdn.example/frozen.png', minMinutes: 5,
-      startsAt: b.startsAt.toISOString(), endsAt: b.endsAt.toISOString(), location: { type: 'in_person', venue: 'The Hall' },
+      startsAt: b.startsAt.toISOString(), endsAt: b.endsAt.toISOString(), location: { type: 'in_person', venue: 'The Hall' }, pinned: false,
       claim: null, wallets: [getAddress(p.user.wallet!)],
     })
     // No BEAT on the scene: no card; an unpublished space is hidden from visitors; a bad id is 404

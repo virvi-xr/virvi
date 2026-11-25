@@ -139,6 +139,7 @@ async function toCard(b: BeatRow, claim: ClaimRow | null, wallets: string[]): Pr
     startsAt: b.startsAt.toISOString(),
     endsAt: b.endsAt.toISOString(),
     location: b.locationType === 'in_person' && b.locationVenue ? { type: b.locationType, venue: b.locationVenue } : { type: b.locationType },
+    pinned: pinOf(b) !== null,
     claim: claim ? {
       status: claim.status,
       secondsPresent: claim.status === 'present' ? eventSeconds(b, claim, new Date()) : claim.secondsPresent ?? 0,

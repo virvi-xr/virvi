@@ -216,6 +216,8 @@ export interface AppBeatCard {
   startsAt: string
   endsAt: string
   location: { type: BeatLocationType; venue?: string }
+  /** True when the BEAT has a venue pin, so check-in and claim need the phone's location (the pin itself is never sent). */
+  pinned: boolean
   claim: null | { status: BeatClaimStatus; secondsPresent: number; wallet: string | null; checkedInAt: string | null }
   wallets: string[]
 }
