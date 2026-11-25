@@ -14,6 +14,7 @@ import { beatArcPdf, ensureBeatArc } from './arc.js'
 import { MARKER_STYLES, type MarkerStyle } from '../ar/printfiles.js'
 import { checkInBeat, claimBeat, currentBeat, stopTrackingBeat, trackBeat } from './visitor.js'
 import walletBeatsRoutes, { WALLET_BEATS_ROUTE, collectionFor, walletsOf } from './collection.js'
+import { fulfilOnRead } from './waiting.js'
 import beatMetadataRoutes, { BEAT_METADATA_ROUTE } from './metadata.js'
 import { cancelMyReissueRequest, createReissueRequest, listMyReissueRequests, type ReissueCaller } from './reissue.js'
 import { signInOf } from '../auth/wallet-blocks.js'
@@ -232,6 +233,8 @@ export default async function beatRoutes(app: FastifyInstance) {
   app.get('/api/beats/collection', async (request, reply) => {
     const c = reissueCaller(request, reply)
     if (!c) return reply
+    // A claim still waiting for a wallet that is already linked goes out now (best effort)
+    await fulfilOnRead(c.userId)
     const wallets = await walletsOf(c.userId)
     return reply.send({ wallets, beats: await collectionFor(wallets, { includeClaimTimes: true, waitingFor: c.userId }) })
   })

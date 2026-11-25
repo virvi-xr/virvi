@@ -88,8 +88,8 @@ async function absorbVisitor(shellId: string, userId: string, methodId: string, 
 export async function linkVerifiedWallet(userId: string, wallet: string, linkedBy: LinkedBy = { method: 'unknown', how: 'link' }): Promise<'linked' | 'already' | 'conflict'> {
   const result = await attachVerifiedWallet(userId, wallet, linkedBy)
   // The BEATs the account earned in the Virvi app before it had a wallet are sent to it now, once the link is done
-  // (outside its writes); a failure there is logged, never the link's
-  if (result === 'linked') await fulfilAfterLink(userId, wallet)
+  // (outside its writes); a failure there is logged, never the link's. A re-link of a wallet already there tries again
+  if (result === 'linked' || result === 'already') await fulfilAfterLink(userId, wallet)
   return result
 }
 

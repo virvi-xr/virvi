@@ -1,6 +1,6 @@
-import { and, eq, inArray, ne, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, lte, ne, or, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { beatClaims, beats } from '../db/schema.js'
+import { beatClaims, beats, userAuthMethods } from '../db/schema.js'
 import { isWalletBlocked } from '../auth/wallet-blocks.js'
 
 /**
@@ -23,13 +23,14 @@ const lc = (s: string) => s.toLowerCase()
  * the unique index only catches it at the write. `sent` counts claims moved, `kept` the claims still waiting.
  */
 export async function fulfilWaitingClaims(userId: string, wallet: string, now: Date = new Date()): Promise<{ sent: number; kept: number }> {
-  void now // the claim is stamped by the database's clock, as claimBeat and a host's Send are
+  // `now` only says whether a paid BEAT has started; the claim is stamped by the database's clock, as claimBeat and a host's Send are
   const w = lc(wallet)
   const waiting = await db.select({ id: beatClaims.id, beatId: beatClaims.beatId }).from(beatClaims)
     .innerJoin(beats, eq(beats.id, beatClaims.beatId))
     .where(and(
       eq(beatClaims.userId, userId), eq(beatClaims.status, 'waiting'), eq(beatClaims.deleteRequested, false),
-      inArray(beats.status, ['live', 'ended']),
+      // A BEAT that is live or ended, or paid and past its start (its go-live tick may not have run yet)
+      or(inArray(beats.status, ['live', 'ended']), and(eq(beats.status, 'paid'), lte(beats.startsAt, now))),
     ))
   if (waiting.length === 0) return { sent: 0, kept: 0 }
   if (await isWalletBlocked(w)) return { sent: 0, kept: waiting.length }
@@ -59,10 +60,33 @@ export async function fulfilWaitingClaims(userId: string, wallet: string, now: D
   return { sent, kept }
 }
 
-/** After a wallet link: sends the account's waiting claims. Errors are logged and never reach the link's response. */
+/** After a wallet link (or a re-link of one already there): sends the account's waiting claims. Errors are logged and never reach the link's response. */
 export async function fulfilAfterLink(userId: string, wallet: string): Promise<void> {
   try {
     await fulfilWaitingClaims(userId, wallet)
+  } catch (e) {
+    console.error('[beats] sending waiting claims failed:', e instanceof Error ? e.message : 'error')
+  }
+}
+
+/**
+ * When the account reads its BEATs (the collection, the app's My BEATs): a claim still waiting although a verified
+ * wallet is linked (its send at link time failed, say) is sent now, to the wallets in the order they were linked (first
+ * linked wins). Best effort: errors are logged and never reach the read.
+ */
+export async function fulfilOnRead(userId: string): Promise<void> {
+  try {
+    const [one] = await db.select({ id: beatClaims.id }).from(beatClaims)
+      .where(and(eq(beatClaims.userId, userId), eq(beatClaims.status, 'waiting'), eq(beatClaims.deleteRequested, false))).limit(1)
+    if (!one) return
+    const wallets = await db.select({ identifier: userAuthMethods.identifier, metadata: userAuthMethods.metadata }).from(userAuthMethods)
+      .where(and(eq(userAuthMethods.userId, userId), eq(userAuthMethods.type, 'wallet')))
+      .orderBy(asc(sql`coalesce(${userAuthMethods.linkedAt}, ${userAuthMethods.createdAt})`), asc(userAuthMethods.id))
+    for (const w of wallets) {
+      if ((w.metadata as { verified?: unknown } | null)?.verified === false) continue
+      const { sent, kept } = await fulfilWaitingClaims(userId, w.identifier)
+      if (sent + kept === 0) return // nothing left waiting
+    }
   } catch (e) {
     console.error('[beats] sending waiting claims failed:', e instanceof Error ? e.message : 'error')
   }

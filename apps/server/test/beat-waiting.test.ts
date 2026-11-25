@@ -4,7 +4,7 @@ import { Wallet, parseEther, getAddress } from 'ethers'
 import { BEAT_CLAIM_GRACE_MS, type BeatChain } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { beatClaims, beatPayments, beats, walletBlocks } from '../src/db/schema.js'
+import { beatClaims, beatPayments, beats, userAuthMethods, walletBlocks } from '../src/db/schema.js'
 import { setBeatChainClientForTests } from '../src/beats/chain.js'
 import { resetBeatJobState, runBeatTick } from '../src/beats/job.js'
 import { fulfilWaitingClaims } from '../src/beats/waiting.js'
@@ -16,7 +16,7 @@ import { takenCount } from '../src/beats/visitor.js'
 import { linkVerifiedWallet } from '../src/auth/wallet-users.js'
 import { recordJobFailure } from '../src/errors/record.js'
 import { resetDb } from './helpers/db.js'
-import { createUser } from './helpers/factories.js'
+import { createUser, testApp, tokenFor } from './helpers/factories.js'
 import { fakeBeatChain, type FakeBeatChain } from './helpers/fake-beat-chain.js'
 
 vi.mock('../src/errors/record.js', async (orig) => ({
@@ -223,6 +223,63 @@ describe('claims waiting for a wallet (Task 9)', () => {
     const list = await listClaimants(host, b.id)
     expect(list).toHaveLength(1)
     expect(list[0]).toMatchObject({ id: claim.id, wallet: null, status: 'waiting' })
+  })
+
+  it('a failed first send is retried when the same wallet is linked again', async () => {
+    const b = await seed()
+    const { user, claim } = await waiter(b.id)
+    const w = wallet()
+    const errs = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const spy = vi.spyOn(db, 'select').mockImplementationOnce(() => { throw new Error('db down') })
+    expect(await linkVerifiedWallet(user.id, w)).toBe('linked')
+    spy.mockRestore()
+    errs.mockRestore()
+    expect((await rowOf(claim.id)).status).toBe('waiting')
+    expect(await linkVerifiedWallet(user.id, w)).toBe('already')
+    expect([(await rowOf(claim.id)).status, (await rowOf(claim.id)).wallet]).toEqual(['claimed', lc(w)])
+  })
+
+  it('reading the collection or My BEATs sends a waiting claim to a wallet already linked', async () => {
+    const app = await testApp()
+    try {
+      for (const url of ['/api/beats/collection', '/api/app/beats/mine']) {
+        const b = await seed()
+        const { user, claim } = await waiter(b.id)
+        const w = wallet()
+        // Linked while the send failed: the wallet is there, the claim still waits
+        await db.insert(userAuthMethods).values({ userId: user.id, type: 'wallet', identifier: lc(w), metadata: { verified: true } })
+        const res = await app.inject({ method: 'GET', url, headers: { authorization: `Bearer ${tokenFor({ ...user, wallet: null })}` } })
+        expect(res.statusCode, url).toBe(200)
+        expect([(await rowOf(claim.id)).status, (await rowOf(claim.id)).wallet], url).toEqual(['claimed', lc(w)])
+      }
+      // A failure there is logged, never the read's
+      const b = await seed()
+      const { user } = await waiter(b.id)
+      await db.insert(userAuthMethods).values({ userId: user.id, type: 'wallet', identifier: lc(wallet()), metadata: { verified: true } })
+      const errs = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const spy = vi.spyOn(db, 'update').mockImplementationOnce(() => { throw new Error('db down') })
+      const res = await app.inject({ method: 'GET', url: '/api/beats/collection', headers: { authorization: `Bearer ${tokenFor({ ...user, wallet: null })}` } })
+      spy.mockRestore()
+      expect(res.statusCode).toBe(200)
+      expect(errs).toHaveBeenCalled()
+      errs.mockRestore()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('a paid BEAT whose start has passed sends its waiting claims; one not started yet keeps them', async () => {
+    const started = await seed({ status: 'paid', startsAt: at(-MIN), endsAt: at(H) })
+    const later = await seed({ status: 'paid', startsAt: at(H), endsAt: at(2 * H) })
+    const user = await createUser({ wallet: null })
+    const mk = async (beatId: string) => (await db.insert(beatClaims).values({
+      beatId, userId: user.id, wallet: null, displayName: 'Visitor', consentVersion: 1, status: 'waiting', source: 'app_event', claimedAt: at(-MIN), secondsPresent: 0,
+    }).returning())[0]
+    const now = await mk(started.id)
+    const soon = await mk(later.id)
+    expect(await fulfilWaitingClaims(user.id, wallet(), T0)).toEqual({ sent: 1, kept: 0 })
+    expect((await rowOf(now.id)).status).toBe('claimed')
+    expect((await rowOf(soon.id)).status).toBe('waiting')
   })
 
   it("the signed-in collection lists the account's waiting claims, with the reason; the public page never does", async () => {

@@ -7,6 +7,7 @@ import { mayBuild } from '../ar/access.js'
 import { issueChallenge, registerKey, requireAssertion } from '../app-attest/verify.js'
 import { BeatError } from './errors.js'
 import { parseFix } from './geo.js'
+import { fulfilOnRead } from './waiting.js'
 import { appCheckIn, appClaim, appMyBeats, appSpaceBeat, appStopTracking, appTrack, type AppVia, type MayBuild } from './app.js'
 
 const SPACE_BEAT_URL = '/api/app/spaces/:spaceId/beat'
@@ -109,5 +110,9 @@ export default async function appBeatRoutes(app: FastifyInstance) {
     }
   })
 
-  app.get('/api/app/beats/mine', async (request, reply) => reply.send({ beats: await appMyBeats(request.user.id) }))
+  app.get('/api/app/beats/mine', async (request, reply) => {
+    // A claim still waiting for a wallet that is already linked goes out now (best effort)
+    await fulfilOnRead(request.user.id)
+    return reply.send({ beats: await appMyBeats(request.user.id) })
+  })
 }
