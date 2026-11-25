@@ -146,7 +146,10 @@ export default function PrivacyPage() {
             <strong>App Attest:</strong> Apple's device check proves a request comes from the genuine Virvi app. Virvi stores a key made for that install of the app, not your Apple ID or a device identifier. While you have an account, the key is linked to it. If you delete your BEAT data or your account, the key itself stays, and once your account is deleted it has no account linked. A BEAT that was already sent keeps the key's id next to its public wallet, so one install can't claim the same BEAT twice.
           </li>
           <li>
-            <strong>Waiting claims:</strong> if you have no wallet linked, your BEAT is saved and holds one of the limited copies. It is sent when you link a wallet. It is kept until it is sent, the host removes it, or you delete your account, and it is never lost to the 30-day clean-up.
+            <strong>Waiting claims:</strong> if you have no wallet linked, your BEAT is saved and holds one of the limited copies. It is sent when you link a wallet, and sent again if the first try failed, when you link the wallet again or open your collection. It is kept until it's sent, the host removes it, or you delete your data or your account, and it is never lost to the 30-day clean-up.
+          </li>
+          <li>
+            <strong>Venue maps (for hosts):</strong> when you set a venue pin for an in-person BEAT, your browser loads the map's tiles from OpenStreetMap, which sees your IP address and the area you are looking at. When you choose Suggest from address, Virvi sends the venue address to OpenStreetMap's Nominatim service to suggest a pin. Visitors' locations are never sent to OpenStreetMap.
           </li>
           <li>
             <strong>Quest headsets:</strong> you sign a headset in by entering its code at virvi.io/pair or in the Virvi app on your phone. On a Quest you can earn BEATs in AR spaces; in-person BEATs are phone-only. The headset's sign-in tokens are stored encrypted on the headset.

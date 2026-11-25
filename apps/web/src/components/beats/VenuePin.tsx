@@ -5,10 +5,9 @@
 import { useEffect, useRef } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import type { LatLng } from '@/lib/venue-pin'
+import { OSM_ATTRIBUTION, type LatLng } from '@/lib/venue-pin'
 
 const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
-const ATTRIBUTION = '&copy; OpenStreetMap contributors'
 const PIN_ICON = L.divIcon({
   className: '',
   html: '<span style="display:block;width:20px;height:20px;border-radius:50%;background:#3b82f6;border:3px solid #fff;box-shadow:0 0 0 1px #1d4ed8,0 1px 4px rgba(0,0,0,.5)"></span>',
@@ -29,7 +28,7 @@ export default function VenuePin({ pin, radiusM, onPin }: { pin: LatLng | null; 
   useEffect(() => {
     if (!box.current) return
     const m = L.map(box.current, { center: pin ? [pin.lat, pin.lng] : [20, 0], zoom: pin ? 16 : 2 })
-    L.tileLayer(TILES, { attribution: ATTRIBUTION, maxZoom: 19 }).addTo(m)
+    L.tileLayer(TILES, { attribution: OSM_ATTRIBUTION, maxZoom: 19 }).addTo(m)
     m.on('click', (e: L.LeafletMouseEvent) => {
       const w = e.latlng.wrap()
       const p = { lat: w.lat, lng: w.lng }

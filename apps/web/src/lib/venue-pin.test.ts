@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addressComplete, clampRadius, pinBody, shouldAutoSuggest, arcAvailable, ARC_PRINT_COPY, PIN_COPY, ARC_STYLES } from './venue-pin'
+import { addressComplete, clampRadius, pinBody, shouldAutoSuggest, arcAvailable, ARC_PRINT_COPY, PIN_COPY, ARC_STYLES, OSM_ATTRIBUTION } from './venue-pin'
 
 const loc = (over: object = {}) => ({ venue: '', address: '', city: '', country: '', pin: null, ...over })
 
@@ -48,6 +48,8 @@ describe('radius and body', () => {
   })
   it('uses the exact copy', () => {
     expect(PIN_COPY.suggested).toBe("Suggested from the address. Drag it to the entrance if it's off.")
+    expect(PIN_COPY.optional).toBe('The pin is optional. With no pin, anyone who has the ARC can check in from anywhere.')
+    expect(OSM_ATTRIBUTION).toBe('&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors')
     expect(PIN_COPY.failed).toBe("Couldn't find that address on the map. Drop the pin yourself.")
     expect(ARC_STYLES).toEqual([{ value: 'normal', label: 'Black on white' }, { value: 'inverted', label: 'White on black' }])
   })

@@ -74,7 +74,12 @@ export function BeatForm({ initial, editing, error, busy, submitLabel, busyLabel
     setEdited((cur) => new Set([...cur, ...fieldsOfPatch(patch)]))
     setF((cur) => ({ ...cur, ...patch }))
   }
-  const setLoc = (patch: Partial<LocationInput>) => set({ location: { ...f.location, ...patch } })
+  // Merges into the latest location, so a suggestion that arrives after more typing keeps it; like `set`, it clears a stale location error
+  const setLoc = (patch: Partial<LocationInput>) => {
+    setLocal(null)
+    setEdited((cur) => new Set([...cur, ...fieldsOfPatch({ location: f.location })]))
+    setF((cur) => ({ ...cur, location: { ...cur.location, ...patch } }))
+  }
 
   // Venue pin: suggested from the address at most once on its own (when the address first becomes complete, checked as a
   // field is left, not on every key), and never over a pin the host placed. The button suggests again on request.
@@ -92,7 +97,7 @@ export function BeatForm({ initial, editing, error, busy, submitLabel, busyLabel
     try {
       const r = await api.suggestBeatPin({ ...(venue ? { venue } : {}), ...(address ? { address } : {}), ...(loc.city.trim() ? { city: loc.city.trim() } : {}), country: loc.country.trim() })
       if (r.pin && !(auto && pinRef.current)) {
-        setF((cur) => ({ ...cur, location: { ...cur.location, pin: r.pin } }))
+        setLoc({ pin: r.pin })
         setPinNote('suggested')
       } else if (!r.pin && !(auto && pinRef.current)) setPinNote('failed')
     } catch (err) {
@@ -278,6 +283,7 @@ export function BeatForm({ initial, editing, error, busy, submitLabel, busyLabel
               </div>
             </div>
             <p id="beat-pin-radius-hint" className={HINT}>Visitors must be within this distance of the pin, from {BEAT_PIN_RADIUS.minM} to {BEAT_PIN_RADIUS.maxM} metres.</p>
+            <p id="beat-pin-optional-hint" className={HINT}>{PIN_COPY.optional}</p>
             <p role="status" className={pinNote && pinNote !== 'suggested' ? 'text-xs text-amber-300' : HINT}>
               {pinNote === 'suggested' ? PIN_COPY.suggested : pinNote === 'failed' ? PIN_COPY.failed : (pinNote ?? '')}
             </p>

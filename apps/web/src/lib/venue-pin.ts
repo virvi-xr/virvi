@@ -8,9 +8,13 @@ export type AddressWithPin = AddressParts & { pin: LatLng | null }
 export const PIN_COPY = {
   suggested: "Suggested from the address. Drag it to the entrance if it's off.",
   failed: "Couldn't find that address on the map. Drop the pin yourself.",
+  optional: 'The pin is optional. With no pin, anyone who has the ARC can check in from anywhere.',
   button: 'Suggest from address',
   clear: 'Clear pin',
 } as const
+
+/** The map's attribution, linked to OpenStreetMap's copyright page as its licence asks. */
+export const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors'
 
 export const ARC_PRINT_COPY = (venue: string) =>
   `Print this ARC and put it up at ${venue}. Visitors scan it with the Virvi app to earn this BEAT.`
