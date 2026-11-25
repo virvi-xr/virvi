@@ -1,4 +1,4 @@
-# Virvi AR for iPhone
+# Virvi for iPhone
 
 Visitor mode on iPhone (phase 1; iOS 18+, iPhone only, portrait): point the camera at an ARC (Augmented Reality Code) and the space appears,
 placed from the ARC's saved pose. Built on the shared Swift package `packages/virvi-ar-swift` (module `VirviARKit`):
@@ -37,7 +37,7 @@ Release builds talk to `https://virvi.io`. Debug builds take `-baseUrl <url>` as
 `AppConfig`), so use it from a Debug test run or switch the scheme's Run configuration to Debug for a local server.
 
 Universal links (`https://virvi.io/s/<code>`) need the server's `/.well-known/apple-app-site-association`, which
-lists `P22YGT64VU.io.virvi.ar`.
+lists `P22YGT64VU.io.virvi.app`.
 
 ## Test
 

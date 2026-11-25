@@ -33,11 +33,16 @@ targets:
       path: App/VirviAR.entitlements
       properties:
         com.apple.developer.associated-domains: [applinks:virvi.io]
+        # Development in Debug, production in Release (set per configuration below).
+        com.apple.developer.devicecheck.appattest-environment: $(APP_ATTEST_ENVIRONMENT)
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: Virvi AR
-        NSCameraUsageDescription: Virvi AR uses the camera to find ARCs and to show the space in this room.
+        CFBundleDisplayName: Virvi
+        CFBundleURLTypes:
+          - CFBundleURLName: io.virvi.app
+            CFBundleURLSchemes: [virvi]
+        NSCameraUsageDescription: Virvi uses the camera to find ARCs and to show the space in this room.
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
@@ -47,8 +52,13 @@ targets:
           NSAllowsArbitraryLoadsForMedia: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.virvi.ar
+        PRODUCT_BUNDLE_IDENTIFIER: io.virvi.app
         TARGETED_DEVICE_FAMILY: "1"
+      configs:
+        Debug:
+          APP_ATTEST_ENVIRONMENT: development
+        Release:
+          APP_ATTEST_ENVIRONMENT: production
 
   VirviARTests:
     type: bundle.unit-test
@@ -59,7 +69,7 @@ targets:
       - package: VirviARKit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.virvi.ar.tests
+        PRODUCT_BUNDLE_IDENTIFIER: io.virvi.app.tests
         GENERATE_INFOPLIST_FILE: YES
 
 schemes:

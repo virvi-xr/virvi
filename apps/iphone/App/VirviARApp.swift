@@ -19,6 +19,8 @@ final class AppModel {
     let arView: ARView
     let controller: VisitorController
     let driver: ArSessionDriver
+    let signIn: SignInModel
+    let session: AppSession
     private let network = NWPathMonitor()
 
     init() {
@@ -26,7 +28,10 @@ final class AppModel {
                             automaticallyConfigureSession: false)
         self.arView = arView
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
-        let api = ArApi(baseUrl: AppConfig.baseUrl, transport: URLSessionTransport(), appVersion: version)
+        let session = AppSession(baseUrl: AppConfig.baseUrl, transport: URLSessionTransport(), store: KeychainSessionStore())
+        self.session = session
+        signIn = SignInModel(session: session)
+        let api = ArApi(baseUrl: AppConfig.baseUrl, transport: URLSessionTransport(), appVersion: version, session: session)
         controller = VisitorController(api: api, view: RealitySceneView(arView: arView), outline: RingOutline(arView: arView))
         driver = ArSessionDriver(arView: arView, controller: controller)
         let controller = controller
@@ -90,7 +95,7 @@ struct VisitorScreen: View {
             }
         }
         .sheet(isPresented: $menuOpen) {
-            VisitorMenu(controller: controller, occlusionSupported: ArSessionDriver.supportsOcclusion,
+            VisitorMenu(controller: controller, signIn: model.signIn, occlusionSupported: ArSessionDriver.supportsOcclusion,
                         occlusionOn: $occlusionOn) { menuOpen = false }
                 .fixedSize(horizontal: false, vertical: true)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { menuHeight = $0 }
