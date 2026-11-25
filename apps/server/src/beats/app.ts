@@ -3,6 +3,7 @@ import { getAddress } from 'ethers'
 import {
   BEAT_APP_CONSENT_VERSION, BEAT_CARD_LEAD_MS, BEAT_CLAIM_GRACE_MS, cleanDisplayName, parseRingCode, BEAT_PIN_RADIUS, type BeatPin, type AppBeatCard, type BeatClaimStatus,
 } from '@virvixr/shared'
+import { config } from '../config.js'
 import { db } from '../db/connection.js'
 import { arSpaces, beatArcs, beatClaims, beats, beatScenes, mediaAssets, scenes, users } from '../db/schema.js'
 import { liveScene } from '../scenes/live.js'
@@ -185,8 +186,10 @@ export interface AppTrack {
   ip?: string | null
 }
 
-/** The code must be this BEAT's own ARC (any other code, or a BEAT without one, is a 400). */
-async function requireBeatArc(beatId: string, code: string): Promise<void> {
+/** The code must be this BEAT's own ARC, on an in-person BEAT while BEATs are on (any other code, or a BEAT without one, is a 400). */
+async function requireBeatArc(b: BeatRow, code: string): Promise<void> {
+  if (!config.beats.enabled || b.locationType !== 'in_person') throw new BeatError(400, 'bad_request', "Scan this BEAT's ARC again.")
+  const beatId = b.id
   const ringId = parseRingCode(code)
   const [arc] = ringId === null ? [] : await db.select({ id: beatArcs.id }).from(beatArcs).where(and(eq(beatArcs.beatId, beatId), eq(beatArcs.ringId, ringId)))
   if (!arc) throw new BeatError(400, 'bad_request', "Scan this BEAT's ARC again.")
@@ -208,7 +211,7 @@ export async function appTrack(beatId: string, t: AppTrack, now = new Date()): P
     b = await visibleBeat(beatId)
     source = 'app_event'
     if (isQuestKey(t.installKeyId)) throw phoneOnly()
-    await requireBeatArc(b.id, t.via.arcCode)
+    await requireBeatArc(b, t.via.arcCode)
   }
   if (t.consentVersion !== BEAT_APP_CONSENT_VERSION) throw new BeatError(400, 'bad_consent', 'Update the Virvi app to earn this BEAT.')
   const [u] = await db.select({ displayName: users.displayName, emailVerifiedAt: users.emailVerifiedAt }).from(users).where(eq(users.id, t.userId))

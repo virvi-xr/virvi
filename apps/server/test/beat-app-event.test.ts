@@ -5,6 +5,7 @@ import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
 import { beatArcs, beatClaims, beats, mediaAssets, userAuthMethods } from '../src/db/schema.js'
 import { appClaim, appTrack } from '../src/beats/app.js'
+import { lookupArc } from '../src/ar/arcs.js'
 import { distanceM, locationCheck } from '../src/beats/geo.js'
 import { setBeatPlatformCheckForTests } from '../src/beats/platform-checks.js'
 import { resetNewWallets } from '../src/beats/new-wallet-limit.js'
@@ -291,6 +292,22 @@ describe('in-person BEATs with the event ARC', () => {
     expect(anon.json()).toEqual({ kind: 'beat', beatId: b.id, name: 'Opening night' })
     const res = await app.inject({ method: 'GET', url: `/api/app/arcs/${code}`, headers: { authorization: `Bearer ${tokenFor(p.user)}` } })
     expect(res.json()).toMatchObject({ kind: 'beat', beatId: b.id, name: 'Opening night', card: { beatId: b.id, minMinutes: 5, location: { type: 'in_person', venue: 'The Hall' }, claim: null } })
+  })
+
+  it('an event ARC opens nothing while BEATs are off, or for a BEAT that is not in person', async () => {
+    const { b, code } = await seed()
+    const p = await phone()
+    const lookup = () => app.inject({ method: 'GET', url: `/api/app/arcs/${code}`, headers: { authorization: `Bearer ${tokenFor(p.user)}` } })
+    expect((await lookup()).statusCode).toBe(200)
+    ;(config as any).beats = { ...config.beats, enabled: false }
+    expect((await lookup()).statusCode).toBe(404)
+    expect(await lookupArc(code)).toBeNull()
+    ;(config as any).beats = { ...config.beats, enabled: true }
+    await db.update(beats).set({ locationType: 'scene' }).where(eq(beats.id, b.id))
+    expect((await lookup()).statusCode).toBe(404)
+    const res = await trackReq(p, b, code, north(10))
+    expect(res.statusCode).toBe(400)
+    expect(await rowOf(b.id, p.user.id)).toBeUndefined()
   })
 
   it('service: appTrack refuses an ARC code that is not the BEAT\'s', async () => {

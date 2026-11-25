@@ -1,5 +1,6 @@
 import { randomRingId, parseRingCode, type AppArc, type ArMarkerLookup } from '@virvixr/shared'
 import { eq } from 'drizzle-orm'
+import { config } from '../config.js'
 import { db } from '../db/connection.js'
 import { arMarkers, beatArcs, beats } from '../db/schema.js'
 import { claimUntil, hidden, VISIBLE } from '../beats/visitor.js'
@@ -22,7 +23,8 @@ export async function allocateRingId(tx: Reader): Promise<number> {
 
 /**
  * What an ARC code opens in the app. A space ARC follows by-code's rule (`mayOpenSpace` says whether the caller may
- * see an unpublished space); a BEAT ARC answers only while its BEAT is paid, live or within the claim grace, and not hidden.
+ * see an unpublished space); a BEAT ARC answers only while BEATs are on (BEAT_ENABLED), its BEAT is in person, paid, live
+ * or within the claim grace, and not hidden.
  */
 export async function lookupArc(code: string, mayOpenSpace: (sceneId: string) => Promise<boolean> = async () => false): Promise<AppArc | null> {
   const marker = await markerByCode(code)
@@ -33,9 +35,11 @@ export async function lookupArc(code: string, mayOpenSpace: (sceneId: string) =>
     }
     return { kind: 'space', lookup }
   }
+  // BEAT ARCs are dark unless BEAT_ENABLED, and only an in-person BEAT's ARC opens it
+  if (!config.beats.enabled) return null
   const ringId = parseRingCode(code)
   if (ringId === null) return null
   const [hit] = await db.select({ b: beats }).from(beatArcs).innerJoin(beats, eq(beats.id, beatArcs.beatId)).where(eq(beatArcs.ringId, ringId))
-  if (!hit || !VISIBLE.includes(hit.b.status) || hidden(hit.b) || claimUntil(hit.b).getTime() < Date.now()) return null
+  if (!hit || hit.b.locationType !== 'in_person' || !VISIBLE.includes(hit.b.status) || hidden(hit.b) || claimUntil(hit.b).getTime() < Date.now()) return null
   return { kind: 'beat', beatId: hit.b.id, name: hit.b.name }
 }

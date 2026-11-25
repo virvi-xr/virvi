@@ -50,7 +50,7 @@ describe('one ARC id space and the app lookup', () => {
     const [b] = await db.insert(beats).values({
       chain: 'polygon', ownerUserId: owner.id, name: 'Opening night', description: 'Thanks', imageMediaId: imageId,
       imageUrl: 'https://cdn.example/frozen.png', tokenId: tokenSeq++, status: 'live', minPresentSeconds: 300, supplyCap: 100,
-      startsAt: at(-H), endsAt: at(H), ...over,
+      startsAt: at(-H), endsAt: at(H), locationType: 'in_person', locationVenue: 'The Hall', ...over,
     }).returning()
     await db.insert(beatArcs).values({ beatId: b.id, ringId, code: ringCodeOf(ringId) })
     return { beat: b, code: ringCodeOf(ringId) }
