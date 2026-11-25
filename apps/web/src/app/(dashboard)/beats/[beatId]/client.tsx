@@ -285,7 +285,7 @@ function BeatDetail({ availability }: { availability: BeatAvailability }) {
 
           {arcAvailable(beat) && <ArcDownload beatId={beat.id} venue={beat.location.venue ?? 'the venue'} />}
 
-          <Claimants claimants={claimants} beat={beat} error={claimantsError} busy={busy} onRetry={loadClaimants} onRemove={beat.mintsHeldUntil ? remove : undefined} />
+          <Claimants claimants={claimants} beat={beat} error={claimantsError} busy={busy} onRetry={loadClaimants} onRemove={remove} />
         </>
       )}
     </div>

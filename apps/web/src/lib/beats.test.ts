@@ -7,7 +7,7 @@ import { walletLookupHref, beatsExplainerFor,
   toLocalInput, type BeatAvailability, type BeatClaimant,
   BEAT_REFUND_NOTE, beatApiPath, fieldsOfPatch, pollPayment, sceneBeatsPath, shownFieldError, BEATS_NETWORK_UNAVAILABLE, beatsPayable,
   TRADEABLE_HINT, SUPPLY_HINT, PAID_SUPPLY_HINT, LOCATION_SCENE_ONLY, blankLocation, cancelledNote, claimantsHeading, locationBody, locationLine,
-  reviewSummary, beatLocked, COUNT_LABELS, CLAIM_STATUS_LABELS, claimantHeld,
+  reviewSummary, beatLocked, COUNT_LABELS, CLAIM_STATUS_LABELS, claimantHeld, canRemove,
   filterCollected, waitingNote, shortWallet, walletPageHref, walletFromPath, type CollectedFilter,
 } from './beats'
 
@@ -184,6 +184,16 @@ describe('claimants', () => {
     expect(COUNT_LABELS).toEqual({ claimed: 'Claimed (waiting to send)', minting: 'Sending', minted: 'Delivered', failed: 'Failed', cap: 'Cap' })
     expect(CLAIM_STATUS_LABELS.minted).toBe('Delivered')
     expect(CLAIM_STATUS_LABELS.removed).toBe('Removed by you')
+  })
+  it('the host can remove a waiting claim any time, a claimed one only while held, and nothing else', () => {
+    const on = { mintsHeldUntil: 'x', mintsReleasedAt: null }
+    const off = { mintsHeldUntil: null, mintsReleasedAt: null }
+    expect(canRemove({ status: 'waiting', claimedAt: null }, off)).toBe(true)
+    expect(canRemove({ status: 'waiting', claimedAt: null })).toBe(true)
+    expect(canRemove({ status: 'claimed', claimedAt: '2026-11-14T12:00:00Z' }, on)).toBe(true)
+    expect(canRemove({ status: 'claimed', claimedAt: '2026-11-14T12:00:00Z' }, off)).toBe(false)
+    expect(canRemove({ status: 'minted', claimedAt: '2026-11-14T12:00:00Z' }, on)).toBe(false)
+    expect(canRemove({ status: 'present', claimedAt: null }, on)).toBe(false)
   })
   it('a held claim is one claimed after the last Send while hold is on', () => {
     const c = { status: 'claimed', claimedAt: '2026-11-14T12:00:00Z' }

@@ -100,7 +100,7 @@ export default function PrivacyPage() {
         <h2>BEATs</h2>
         <p>
           A BEAT is a free token that shows you were at an event. Nothing about you is stored unless you choose to track your attendance and
-          agree to this, while signed in with a verified wallet inside the event's scene:
+          agree to this, while signed in with a verified wallet inside the event's scene (to claim with an account in the Virvi app instead, see BEATs in the Virvi app below):
         </p>
         <blockquote className="my-3 border-l-2 border-gray-700 pl-4 text-gray-400">{beatConsentText('{name}')}</blockquote>
         <ul className="list-disc pl-5">
@@ -143,7 +143,7 @@ export default function PrivacyPage() {
             <strong>Location:</strong> the app reads your location only at two moments: when you check in to an in-person BEAT and when you claim it. It is compared with the event's venue pin and is not stored.
           </li>
           <li>
-            <strong>App Attest:</strong> Apple's device check proves a request comes from the genuine Virvi app. Virvi stores a key made for that install of the app, not your Apple ID or a device identifier. Each install can claim a BEAT once.
+            <strong>App Attest:</strong> Apple's device check proves a request comes from the genuine Virvi app. Virvi stores a key made for that install of the app, not your Apple ID or a device identifier. While you have an account, the key is linked to it. If you delete your BEAT data or your account, the key itself stays, and once your account is deleted it has no account linked. A BEAT that was already sent keeps the key's id next to its public wallet, so one install can't claim the same BEAT twice.
           </li>
           <li>
             <strong>Waiting claims:</strong> if you have no wallet linked, your BEAT is saved and holds one of the limited copies. It is sent when you link a wallet. It is kept until it is sent, the host removes it, or you delete your account, and it is never lost to the 30-day clean-up.
@@ -152,7 +152,7 @@ export default function PrivacyPage() {
             <strong>Quest headsets:</strong> you sign a headset in by entering its code at virvi.io/pair or in the Virvi app on your phone. On a Quest you can earn BEATs in AR spaces; in-person BEATs are phone-only. The headset's sign-in tokens are stored encrypted on the headset.
           </li>
           <li>
-            <strong>Stopping and deleting:</strong> you can stop tracking before you claim, which deletes what was stored. Who sees your data, what goes on the blockchain and what happens when you delete your data or account are as described under BEATs above.
+            <strong>Stopping and deleting:</strong> you can stop tracking before you claim, which deletes what was stored. Who sees your data and what goes on the blockchain are as described under BEATs above. Deleting your data or account deletes your BEAT data that hasn't been sent, as described there, but not the install key described above.
           </li>
         </ul>
 

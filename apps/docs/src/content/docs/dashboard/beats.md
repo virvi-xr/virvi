@@ -130,15 +130,15 @@ Visitors can also earn a BEAT with the **Virvi app** on an iPhone. They sign in 
 Each visitor gets one claim per BEAT. If they have several wallets, they choose one for each BEAT. Minutes from Decentraland and from AR spaces add up toward the same claim.
 
 **Setting up an in-person BEAT:**
-- **Venue pin:** the point visitors must be near. Choose **Suggest from the address** to place it from your street address ("Suggested from the address. Drag it to the entrance if it's off."), or drop it yourself ("Couldn't find that address on the map. Drop the pin yourself."). The **radius** is how close visitors must be: from 50 to 1000 metres, 150 by default.
+- **Venue pin:** the point visitors must be near. Choose **Suggest from address** to place it from your street address ("Suggested from the address. Drag it to the entrance if it's off."), or drop it yourself ("Couldn't find that address on the map. Drop the pin yourself."). The **radius** is how close visitors must be: from 50 to 1000 metres, 150 by default.
 - **Event ARC:** download it black on white or white on black. The page says: "Print this ARC and put it up at {venue}. Visitors scan it with the Virvi app to earn this BEAT."
 - **Waiting for a wallet:** the BEAT's page shows how many claims are waiting for a wallet (see below).
 
 **Location.** The app reads a visitor's location only twice: when they check in to an in-person BEAT and when they claim it. It is compared with your venue pin and is not stored. A visitor outside the pin sees "You need to be at {venue} to check in." or "Come back to {venue} to claim this BEAT."; if the phone can't find its position well enough they're asked to step outside or near a window and try again.
 
-**No wallet yet.** A visitor with no wallet can still claim. Their BEAT is saved, holds one of your limited copies, and is sent when they link a wallet. A saved BEAT stays until it is sent, you remove it, or the visitor deletes their account, and the clean-up of data from visitors who never claimed doesn't touch it. With **Check claims before they are sent** on, you can remove a waiting claim with **Remove**, like any other.
+**No wallet yet.** A visitor with no wallet can still claim. Their BEAT is saved, holds one of your limited copies, and is sent when they link a wallet. A saved BEAT stays until it is sent, you remove it, or the visitor deletes their account, and the clean-up of data from visitors who never claimed doesn't touch it. You can remove a waiting claim with **Remove** at any time, whether or not you check claims first; its copy goes back into the supply.
 
-**One claim per install.** The app proves it is the genuine Virvi app with Apple's App Attest, which stores a key made for that install (not an Apple ID or a device identifier). Each install can claim a BEAT once.
+**One claim per install.** The app proves it is the genuine Virvi app with Apple's App Attest, which stores a key made for that install (not an Apple ID or a device identifier). Each install can claim a BEAT once, and a BEAT already sent keeps that key's id next to its public wallet so the same install can't claim it again.
 
 **Quest headsets.** A visitor signs a headset in by entering its code at virvi.io/pair or in the Virvi app on their phone. On a Quest they can earn BEATs in AR spaces. In-person BEATs are phone-only.
 

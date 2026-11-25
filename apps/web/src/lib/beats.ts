@@ -446,6 +446,12 @@ export function claimantHeld(c: Pick<BeatClaimant, 'status' | 'claimedAt'>, b: P
   return !b.mintsReleasedAt || !c.claimedAt || new Date(c.claimedAt).getTime() > new Date(b.mintsReleasedAt).getTime()
 }
 
+/** Whether the host can take this claim out: one waiting for a wallet, any time; a claimed one only while it waits for the host's Send. */
+export function canRemove(c: Pick<BeatClaimant, 'status' | 'claimedAt'>, b?: Pick<PublicBeat, 'mintsHeldUntil' | 'mintsReleasedAt'>): boolean {
+  if (c.status === 'waiting') return true
+  return !!b && claimantHeld(c, b)
+}
+
 /** A claimant's row: the short wallet (the full one for its title), the name as typed, the status and the tx link if any. */
 export function claimantRow(c: BeatClaimant, b?: Pick<PublicBeat, 'mintsHeldUntil' | 'mintsReleasedAt'>) {
   const held = !!b && claimantHeld(c, b)

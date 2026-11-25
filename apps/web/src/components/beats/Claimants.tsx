@@ -1,9 +1,9 @@
 'use client'
 // A BEAT's attendees and claims (LIV-11): short wallet, display name as plain text, status, tx link, the reissued flag,
-// "Copy wallets that claimed", and while claims are held for review, Remove.
+// "Copy wallets that claimed", and Remove for claims held for review or waiting for a wallet.
 import { useState } from 'react'
 import type { PublicBeat } from '@virvixr/shared'
-import { claimantRow, claimantsHeading, claimantWallets, hasClaimed, type BeatClaimant } from '@/lib/beats'
+import { canRemove, claimantRow, claimantsHeading, claimantWallets, hasClaimed, type BeatClaimant } from '@/lib/beats'
 import { ConfirmAction, tableHeadBand } from '@/components/ui'
 
 /** Copies the full wallet of every claim that took a BEAT, one per line (not visitors still attending). */
@@ -29,7 +29,7 @@ export function Claimants({ claimants, beat, error, busy, onRetry, onRemove }: {
   }
   const claimed = claimants.filter(hasClaimed).length
   const rows = claimants.map((c) => ({ c, r: claimantRow(c, beat) }))
-  const anyHeld = !!onRemove && rows.some((x) => x.r.held)
+  const anyHeld = !!onRemove && rows.some((x) => canRemove(x.c, beat))
   return (
     <section className="rounded-lg border border-gray-800 bg-gray-900">
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
@@ -71,8 +71,10 @@ export function Claimants({ claimants, beat, error, busy, onRetry, onRemove }: {
                   </td>
                   {anyHeld && (
                     <td className="px-4 py-2 text-right">
-                      {r.held && onRemove && (
-                        <ConfirmAction prompt={`Remove this claim? ${r.name ?? r.short} won't get this BEAT, and that wallet can't claim it again. This frees one BEAT of the supply.`}
+                      {onRemove && canRemove(c, beat) && (
+                        <ConfirmAction prompt={c.status === 'waiting'
+                          ? `Remove this claim? ${r.name ?? 'This visitor'} won't get this BEAT, even if they link a wallet. This frees one BEAT of the supply.`
+                          : `Remove this claim? ${r.name ?? r.short} won't get this BEAT, and that wallet can't claim it again. This frees one BEAT of the supply.`}
                           confirmLabel="Remove claim" onConfirm={() => onRemove(c)} disabled={busy}
                           className="rounded-md border border-gray-700 px-2 py-1 text-xs text-gray-300 hover:border-gray-500 disabled:opacity-50">
                           Remove

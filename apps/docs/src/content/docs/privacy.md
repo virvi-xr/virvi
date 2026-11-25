@@ -32,7 +32,7 @@ A scene owner can run a raffle. Nothing about you is entered unless you choose t
 - **Deleting your data:** deleting your data (below) also deletes your raffle entries.
 
 ## BEATs
-A BEAT is a free token that shows you were at an event. Nothing about you is stored unless you choose to track your attendance and agree to this, while signed in with a verified wallet inside the event's scene:
+A BEAT is a free token that shows you were at an event. Nothing about you is stored unless you choose to track your attendance and agree to this, while signed in with a verified wallet inside the event's scene (to claim with an account in the Virvi app instead, see BEATs in the Virvi app below):
 
 > To track your attendance for the {name} BEAT, Virvi stores your wallet address, your display name and how long you're here. The scene checks in every 30 seconds while you're in it. The hosts of this event will see your name, wallet and time. If you claim, your wallet, this BEAT and the time it was sent are recorded on Polygon, a public blockchain: anyone can see that record, and nobody can delete it. You can stop tracking at any time before you claim, which deletes what was stored.
 
@@ -52,10 +52,10 @@ In the Virvi app (iPhone) you can earn a BEAT in an AR space, by time present wh
 - **Signing in:** you sign in to the Virvi app with your Virvi account, through virvi.io's sign-in, which includes Sign in with Apple. Apple may give Virvi a private relay email instead of your own. Virvi treats that email as verified and never merges the account with another one by email.
 - **What's stored:** your account, how long you were present (in an AR space, while the space is shown; at an in-person event, from your check-in) and, when you claim, the wallet you choose. Minutes from Decentraland and from AR spaces add up toward one claim. You get one claim per BEAT. If you have several wallets, you choose one for each BEAT.
 - **Location:** the app reads your location only at two moments: when you check in to an in-person BEAT and when you claim it. It is compared with the event's venue pin and is not stored.
-- **App Attest:** Apple's device check proves a request comes from the genuine Virvi app. Virvi stores a key made for that install of the app, not your Apple ID or a device identifier. Each install can claim a BEAT once.
+- **App Attest:** Apple's device check proves a request comes from the genuine Virvi app. Virvi stores a key made for that install of the app, not your Apple ID or a device identifier. While you have an account, the key is linked to it. If you delete your BEAT data or your account, the key itself stays, and once your account is deleted it has no account linked. A BEAT that was already sent keeps the key's id next to its public wallet, so one install can't claim the same BEAT twice.
 - **Waiting claims:** if you have no wallet linked, your BEAT is saved and holds one of the limited copies. It is sent when you link a wallet. It is kept until it is sent, the host removes it, or you delete your account, and it is never lost to the 30-day clean-up.
 - **Quest headsets:** you sign a headset in by entering its code at virvi.io/pair or in the Virvi app on your phone. On a Quest you can earn BEATs in AR spaces; in-person BEATs are phone-only. The headset's sign-in tokens are stored encrypted on the headset.
-- **Stopping and deleting:** you can stop tracking before you claim, which deletes what was stored. Who sees your data, what goes on the blockchain and what happens when you delete your data or account are as described under BEATs above.
+- **Stopping and deleting:** you can stop tracking before you claim, which deletes what was stored. Who sees your data and what goes on the blockchain are as described under BEATs above. Deleting your data or account deletes your BEAT data that hasn't been sent, as described there, but not the install key described above.
 
 ## Virvi Spaces on Quest
 Virvi Spaces is the Meta Quest app that shows a Virvi space in your room. It talks to virvi.io. Pictures, videos and 3D models in a space load from wherever its owner hosts them, which may be outside virvi.io; those hosts see the headset's network address like any website would.
