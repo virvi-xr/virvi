@@ -12,6 +12,7 @@ description: Send custom real-time messages between players in a scene with virv
 - `onMessage(id, callback)` calls `callback(data)` for each message with that `id`.
 - Nothing is stored. A player who connects later never sees earlier messages.
 - `data` must survive JSON-like serialization: plain objects, arrays, strings, numbers, booleans and `null`.
+- **Limits:** a message can be up to about 4 KB, and its `id` up to 128 characters. Each player can send a burst of 20 messages, then 10 a second. Messages over the limit are dropped without an error, so don't send one every frame.
 
 ## Send
 

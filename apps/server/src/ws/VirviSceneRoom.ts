@@ -38,6 +38,7 @@ import { FRAMEABLE_TYPES, KIOSK_ITEMS_KEY, VideoSourceType, checkFrame, type Ven
 import { screenShowingsMessages, SHOWINGS_REFRESH_MS } from '../scenes/showings.js'
 import { hold, holderOf, release, releaseAll, sweepExpired } from './draft-holds.js'
 import { checkParentInstance } from '../scenes/instance-parent.js'
+import { RelayLimiter, relayUserMessage } from './relay-limit.js'
 
 interface JoinOptions {
   sessionToken: string
@@ -103,6 +104,8 @@ export class VirviSceneRoom extends Room {
 
   private sceneId: string = ''
   private clientMeta: Map<string, ClientMeta> = new Map()
+  /** Open relay messages are rate-limited per client (LIV-156). */
+  private relayLimit = new RelayLimiter()
   /** Signed-in scene-pass connections, by session: they count as live presence for BEAT check-ins (beats/live.ts). */
   private beatLive: Map<string, { userId: string; since: number }> = new Map()
   /** Whether the scene has a BEAT in its card window (paid or live): presence is only written while it does (M-9). */
@@ -408,12 +411,16 @@ export class VirviSceneRoom extends Room {
 
     // ── Sound Locators ────────────────────────────────────────────────────
     this.onMessage('scene_sound_locator', (client, message) => {
+      if (!this.relayLimit.take(client.sessionId, 'scene_sound_locator')) return
       this.broadcast('scene_sound_locator', message, { except: client })
     })
 
     // ── User Messaging ────────────────────────────────────────────────────
+    // Open to everyone in the room by design (Multiplayer Events); limited per client, and only its id and data go on
     this.onMessage('user_message', (client, message) => {
-      this.broadcast('user_message', { ...message, type: 'inbound' }, { except: client })
+      const relay = relayUserMessage(message)
+      if (!relay || !this.relayLimit.take(client.sessionId, 'user_message')) return
+      this.broadcast('user_message', relay, { except: client })
     })
 
     // ── Moderator Actions ─────────────────────────────────────────────────
@@ -577,6 +584,7 @@ export class VirviSceneRoom extends Room {
   }
 
   onLeave(client: Client, consented: boolean) {
+    this.relayLimit.forget(client.sessionId)
     const meta = this.clientMeta.get(client.sessionId)
     console.log(`[VirviSceneRoom] ${meta?.clientType || 'unknown'} left: ${meta?.displayName || client.sessionId}`)
 
