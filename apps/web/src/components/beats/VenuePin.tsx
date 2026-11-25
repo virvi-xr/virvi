@@ -31,7 +31,8 @@ export default function VenuePin({ pin, radiusM, onPin }: { pin: LatLng | null; 
     const m = L.map(box.current, { center: pin ? [pin.lat, pin.lng] : [20, 0], zoom: pin ? 16 : 2 })
     L.tileLayer(TILES, { attribution: ATTRIBUTION, maxZoom: 19 }).addTo(m)
     m.on('click', (e: L.LeafletMouseEvent) => {
-      const p = { lat: e.latlng.lat, lng: e.latlng.lng }
+      const w = e.latlng.wrap()
+      const p = { lat: w.lat, lng: w.lng }
       reported.current = p
       onPinRef.current(p)
     })
@@ -51,7 +52,7 @@ export default function VenuePin({ pin, radiusM, onPin }: { pin: LatLng | null; 
     if (!marker.current) {
       marker.current = L.marker(at, { icon: PIN_ICON, draggable: true, keyboard: true, title: 'Venue pin' }).addTo(m)
       marker.current.on('dragend', () => {
-        const ll = marker.current!.getLatLng()
+        const ll = marker.current!.getLatLng().wrap()
         const p = { lat: ll.lat, lng: ll.lng }
         reported.current = p
         onPinRef.current(p)

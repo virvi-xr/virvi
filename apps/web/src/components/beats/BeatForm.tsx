@@ -94,8 +94,9 @@ export function BeatForm({ initial, editing, error, busy, submitLabel, busyLabel
       if (r.pin && !(auto && pinRef.current)) {
         setF((cur) => ({ ...cur, location: { ...cur.location, pin: r.pin } }))
         setPinNote('suggested')
-      } else if (!r.pin) setPinNote('failed')
+      } else if (!r.pin && !(auto && pinRef.current)) setPinNote('failed')
     } catch (err) {
+      if (auto && pinRef.current) { setSuggesting(false); return }
       setPinNote((err as { status?: number }).status === 429 ? (err as Error).message : 'failed')
     }
     setSuggesting(false)

@@ -38,9 +38,15 @@ export function clampRadius(n: number): number {
   return Math.min(BEAT_PIN_RADIUS.maxM, Math.max(BEAT_PIN_RADIUS.minM, Math.round(n)))
 }
 
+/** A longitude in -180..180 (a map panned past the date line reports one beyond it). */
+export function wrapLng(lng: number): number {
+  if (!Number.isFinite(lng) || (lng >= -180 && lng <= 180)) return lng // in range: untouched, so no rounding drift
+  return ((((lng + 180) % 360) + 360) % 360) - 180
+}
+
 /** The `pin` of the create/update body, or null. */
 export function pinBody(pin: LatLng | null, radiusM: number): { lat: number; lng: number; radiusM: number } | null {
-  return pin ? { lat: pin.lat, lng: pin.lng, radiusM: clampRadius(radiusM) } : null
+  return pin ? { lat: pin.lat, lng: wrapLng(pin.lng), radiusM: clampRadius(radiusM) } : null
 }
 
 /** The server makes an ARC only for an in-person BEAT that is paid, live or ended (else 409 `no_arc`). */

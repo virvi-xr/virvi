@@ -40,6 +40,12 @@ describe('radius and body', () => {
     expect(pinBody({ lat: 1, lng: 2 }, 300)).toEqual({ lat: 1, lng: 2, radiusM: 300 })
     expect(pinBody(null, 300)).toBeNull()
   })
+  it('brings a longitude from a map panned past the date line back into -180..180', () => {
+    expect(pinBody({ lat: 1, lng: 190 }, 150)?.lng).toBe(-170)
+    expect(pinBody({ lat: 1, lng: -190 }, 150)?.lng).toBe(170)
+    expect(pinBody({ lat: 1, lng: 540 }, 150)?.lng).toBe(-180)
+    expect(pinBody({ lat: 1, lng: 2 }, 150)?.lng).toBe(2)
+  })
   it('uses the exact copy', () => {
     expect(PIN_COPY.suggested).toBe("Suggested from the address. Drag it to the entrance if it's off.")
     expect(PIN_COPY.failed).toBe("Couldn't find that address on the map. Drop the pin yourself.")
