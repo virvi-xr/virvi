@@ -3,8 +3,9 @@ import { and, eq, lt } from 'drizzle-orm'
 import type { FastifyRequest } from 'fastify'
 import { config } from '../config.js'
 import { db } from '../db/connection.js'
-import { appAttestChallenges, appAttestKeys } from '../db/schema.js'
+import { appAttestChallenges, appAttestKeys, arDevices } from '../db/schema.js'
 import { BeatError } from '../beats/errors.js'
+import { isUuid } from '../auth/scene-from.js'
 
 /**
  * Apple App Attest for the Virvi app (the BEATs plan, anti-farming): an install registers a Secure Enclave key once,
@@ -259,19 +260,37 @@ interface InstallProof {
   header: string
   verify(request: FastifyRequest, value: string, body: string | Buffer | undefined): Promise<string>
 }
-// A signed-in Quest (a visitor device) is to slot in here as a second proof with its own header
 const PROOFS: InstallProof[] = [{ header: 'x-virvi-attest', verify: appAttestInstall }]
 
 /**
- * The install a write comes from, proved by the first proof whose header the request carries: today an App Attest
- * assertion over `body` (the raw request body; undefined for none). Throws 401 `attest_required` with none, 401
- * `bad_assertion` when the proof fails.
+ * A signed-in Quest has no App Attest, so it is its own install: `X-Virvi-Device: <deviceId>` names the visitor pairing
+ * it signed in with. The header is a client-supplied string and proves nothing alone; it counts only when the id is an
+ * `ar_devices` row that is a visitor pairing, was approved by this very session's account (`user_id`), and was claimed
+ * (a spent code: `revoked` with no `code_hash`, as `claimVisitorPairing` leaves it). A made-up id, another account's
+ * device, a builder headset or an unclaimed pairing is refused like a missing proof, so ids can't be invented for keys.
+ * Returns `quest:<deviceId>`.
+ */
+async function questInstall(request: FastifyRequest, deviceId: string): Promise<string> {
+  if (!isUuid(deviceId)) throw attestRequired()
+  const [row] = await db.select({ purpose: arDevices.purpose, userId: arDevices.userId, status: arDevices.status, codeHash: arDevices.codeHash })
+    .from(arDevices).where(eq(arDevices.id, deviceId))
+  if (!row || row.purpose !== 'visitor' || row.status !== 'revoked' || row.codeHash !== null || !row.userId || row.userId !== request.user.id) throw attestRequired()
+  return `quest:${deviceId}`
+}
+
+/**
+ * The install a write comes from, proved by the first proof whose header the request carries: an App Attest
+ * assertion over `body` (the raw request body; undefined for none), or with no such header a signed-in Quest's visitor
+ * device (`questInstall`). Throws 401 `attest_required` with neither, 401 `bad_assertion` when the proof fails.
  */
 export async function requireAssertion(request: FastifyRequest, body: string | Buffer | undefined): Promise<string> {
   for (const p of PROOFS) {
     const value = request.headers[p.header]
     if (typeof value === 'string' && value) return p.verify(request, value, body)
   }
+  // Only with no App Attest header at all: a bad assertion never falls back to a device header
+  const device = request.headers['x-virvi-device']
+  if (typeof device === 'string' && device) return questInstall(request, device)
   throw attestRequired()
 }
 

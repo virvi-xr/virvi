@@ -107,7 +107,8 @@ describe('Virvi app and Quest visitor sign-in', () => {
       expect(res.statusCode).toBe(200)
       const body = res.json()
       expect(body).toMatchObject({ status: 'approved', purpose: 'visitor', session: { user: { id: a.id } } })
-      expect(body.deviceId).toBeUndefined()
+      // an id for BEAT writes (the Quest's `X-Virvi-Device`), though the row is no headset: see the mint below
+      expect(body.deviceId).toBe((await db.select().from(arDevices))[0].id)
       const claims = app.jwt.verify<Record<string, unknown>>(body.session.accessToken)
       expect(claims).toMatchObject({ id: a.id, kind: 'account', verified: true })
       expect(claims.deviceId).toBeUndefined()

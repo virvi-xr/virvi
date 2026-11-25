@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { createHash } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
 import { getAddress } from 'ethers'
 import { AR_FEED, BEAT_APP_CONSENT_VERSION, BEAT_CONSENT_VERSION } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { arSpaces, beatClaims, beats, beatScenes, mediaAssets, userAuthMethods } from '../src/db/schema.js'
+import { arDevices, arSpaces, beatClaims, beats, beatScenes, mediaAssets, userAuthMethods } from '../src/db/schema.js'
 import { issueScenePass } from '../src/auth/scene-pass.js'
 import { arLiveSince, markBeatLive } from '../src/beats/live.js'
 import { checkInBeat, takenCount } from '../src/beats/visitor.js'
@@ -240,6 +241,96 @@ describe('BEATs in AR spaces with the Virvi app', () => {
     expect(await rows(b.id)).toHaveLength(1)
     // Another BEAT is fine
     expect((await track(second, await seed())).statusCode).toBe(200)
+  })
+
+  describe('a signed-in Quest (no App Attest)', () => {
+    const SECRET = 'quest-secret-for-tests'
+    const sha = (v: string) => createHash('sha256').update(v).digest('hex')
+    /** Pairs a headset through the real routes: `approver` approves its code, and the claim returns its device id. */
+    async function pair(approver: TestUser, purpose: 'visitor' | 'builder' = 'visitor') {
+      const start = await app.inject({ method: 'POST', url: '/api/ar/pair', payload: { secretHash: sha(SECRET), deviceName: 'Quest 3', purpose } })
+      const { code } = start.json()
+      const ok = await app.inject({ method: 'POST', url: `/api/ar/pair/${code}/approve`, headers: { authorization: `Bearer ${tokenFor(approver)}` }, payload: { kind: 'personal' } })
+      expect(ok.statusCode, ok.body).toBe(200)
+      const res = await app.inject({ method: 'POST', url: `/api/ar/pair/${code}/claim`, payload: { secret: SECRET } })
+      expect(res.statusCode, res.body).toBe(200)
+      return res.json().deviceId as string
+    }
+    const questTrack = (user: TestUser, deviceId: string | null, b: { id: string }, headers: Record<string, string> = {}) => {
+      const raw = JSON.stringify({ consentVersion: BEAT_APP_CONSENT_VERSION, spaceId })
+      return app.inject({
+        method: 'POST', url: `/api/app/beats/${b.id}/track`, payload: raw,
+        headers: { authorization: `Bearer ${tokenFor(user)}`, 'content-type': 'application/json', ...(deviceId ? { 'x-virvi-device': deviceId } : {}), ...headers },
+      })
+    }
+
+    // The brief's "second account on the same device gets 409": a Quest's key is its pairing row, approved by one account,
+    // so a second account can't reach it at all (401 below); 409 this_device is the unique index on `quest:<id>` itself.
+    it("a visitor device's claim uses quest:<id>; a second account on that device id is refused (401)", async () => {
+      const b = await seed()
+      const first = await createUser({ wallet: randomWallet() })
+      const deviceId = await pair(first)
+      const res = await questTrack(first, deviceId, b)
+      expect(res.statusCode, res.body).toBe(200)
+      expect((await rowOf(b.id, first.id)).installKeyId).toBe(`quest:${deviceId}`)
+      // another account signed in on that device is not approved by it: refused as unproven
+      const second = await createUser({ wallet: randomWallet() })
+      expect((await questTrack(second, deviceId, b)).statusCode).toBe(401)
+      // signing in as the second account pairs afresh: its own row, its own key
+      const secondDevice = await pair(second)
+      expect((await questTrack(second, secondDevice, b)).statusCode).toBe(200)
+    })
+
+    it('one claim per Quest per BEAT: a claim already holding the quest key is 409 this_device', async () => {
+      const b = await seed()
+      const first = await createUser({ wallet: randomWallet() })
+      const deviceId = await pair(first)
+      expect((await questTrack(first, deviceId, b)).statusCode).toBe(200)
+      // The key is held by another account's claim, as after a device's account changed: the index refuses it
+      const second = await createUser({ wallet: randomWallet() })
+      await db.update(beatClaims).set({ userId: second.id }).where(eq(beatClaims.beatId, b.id))
+      const res = await questTrack(first, deviceId, b)
+      expect([res.statusCode, res.json().error]).toEqual([409, 'this_device'])
+    })
+
+    it('an invented X-Virvi-Device id is 401, as is one with no row for it', async () => {
+      const b = await seed()
+      const u = await createUser({ wallet: randomWallet() })
+      for (const id of [crypto.randomUUID(), 'not-a-uuid', 'x'.repeat(500)]) {
+        const res = await questTrack(u, id, b)
+        expect([res.statusCode, res.json().error]).toEqual([401, 'attest_required'])
+      }
+      expect(await rows(b.id)).toHaveLength(0)
+    })
+
+    it('a device approved by another user is 401', async () => {
+      const b = await seed()
+      const owner = await createUser({ wallet: randomWallet() })
+      const other = await createUser({ wallet: randomWallet() })
+      const deviceId = await pair(owner)
+      const res = await questTrack(other, deviceId, b)
+      expect([res.statusCode, res.json().error]).toEqual([401, 'attest_required'])
+    })
+
+    it('a builder headset id is 401, and a device that was never claimed is 401', async () => {
+      const b = await seed()
+      const u = await createUser({ wallet: randomWallet() })
+      const builder = await pair(u, 'builder')
+      expect((await questTrack(u, builder, b)).statusCode).toBe(401)
+      // approved but not claimed: no one holds its id, and it still counts for nothing
+      const start = await app.inject({ method: 'POST', url: '/api/ar/pair', payload: { secretHash: sha(SECRET), deviceName: 'Quest 3', purpose: 'visitor' } })
+      await app.inject({ method: 'POST', url: `/api/ar/pair/${start.json().code}/approve`, headers: { authorization: `Bearer ${tokenFor(u)}` }, payload: {} })
+      const [row] = await db.select().from(arDevices).where(eq(arDevices.status, 'approved'))
+      expect((await questTrack(u, row.id, b)).statusCode).toBe(401)
+    })
+
+    it('an App Attest header wins: a device header beside it is not a second way in', async () => {
+      const b = await seed()
+      const u = await createUser({ wallet: randomWallet() })
+      const deviceId = await pair(u)
+      const res = await questTrack(u, deviceId, b, { 'x-virvi-attest': 'junk.junk' })
+      expect([res.statusCode, res.json().error]).toEqual([401, 'bad_assertion'])
+    })
   })
 
   it('3 minutes in-world then 2 in an AR space claim a 5-minute BEAT on one claim', async () => {

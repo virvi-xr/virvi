@@ -109,7 +109,9 @@ export async function claimDevicePairing(app: FastifyInstance, code: string, sec
 
 /**
  * A visitor headset trades its approved code for the approver's account session. The row is spent (revoked, no code),
- * never `claimed`, so it is no headset: it can't mint a pass, list spaces or scan rooms. Only one claim wins.
+ * never `claimed`, so it is no headset: it can't mint a pass, list spaces or scan rooms. Only one claim wins. The
+ * response carries the row's id, which a Quest sends as `X-Virvi-Device` on BEAT writes (it counts only beside this
+ * account's session, `questInstall`); the id is known to no one until this claim.
  */
 async function claimVisitorPairing(app: FastifyInstance, row: DeviceRow, now: Date): Promise<ArPairClaimResponse | 'expired'> {
   const [spent] = await db
@@ -120,7 +122,7 @@ async function claimVisitorPairing(app: FastifyInstance, row: DeviceRow, now: Da
   if (!spent?.userId) return 'expired'
   const user = await db.query.users.findFirst({ where: eq(users.id, spent.userId) })
   if (!user || user.isTrial) return 'expired'
-  return { status: 'approved', purpose: 'visitor', session: issueAccountSession(app, user, 'unknown') }
+  return { status: 'approved', purpose: 'visitor', deviceId: row.id, session: issueAccountSession(app, user, 'unknown') }
 }
 
 /** The device behind an id and secret, if it is still live. An id that is not a uuid is no device. */

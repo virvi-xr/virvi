@@ -81,8 +81,8 @@ export type ArPairApprovalInfo = { deviceName: string | null; codeExpiresAt: str
 export type ArPairClaimResponse =
   | { status: 'pending' }
   | { status: 'approved'; deviceId: string; kind: ArDeviceKind; expiresAt: string }
-  /** A visitor headset: the approver's account session, and no device (it can build nothing). */
-  | { status: 'approved'; purpose: 'visitor'; session: { user: { id: string; displayName: string | null; email: string | null; role: string }; accessToken: string; refreshToken: string } }
+  /** A visitor headset: the approver's account session, and an id that is no builder device (it can build nothing). */
+  | { status: 'approved'; purpose: 'visitor'; deviceId: string; session: { user: { id: string; displayName: string | null; email: string | null; role: string }; accessToken: string; refreshToken: string } }
   | { status: 'refused' }
 /** POST /api/ar/devices/:id/pass */
 export type ArPassResponse = { pass: string; passExpiresAt: string; sceneId: string }
