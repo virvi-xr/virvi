@@ -95,11 +95,10 @@ export async function getSceneAccess(actor: Actor, sceneId: string, at = new Dat
   const collab = await db.query.sceneCollaborators.findFirst({
     where: and(eq(sceneCollaborators.sceneId, sceneId), eq(sceneCollaborators.userId, actor.userId)),
   })
-  if (collab?.role === 'editor') return { level: 'editor', scopes: new Set(EDITOR_SCOPES), booking: null }
-
+  // The strongest of the person's collaborator invite and wallet role: a co-host who is also an account editor is a co-host
   const role = await sceneRoleFor(sceneId, actor)
   if (role === 'cohost') return full('cohost')
-  if (role === 'editor') return { level: 'editor', scopes: new Set(EDITOR_SCOPES), booking: null }
+  if (collab?.role === 'editor' || role === 'editor') return { level: 'editor', scopes: new Set(EDITOR_SCOPES), booking: null }
 
   const subject = actor.wallet
     ? or(eq(accessGrants.userId, actor.userId), eq(accessGrants.walletAddress, actor.wallet))

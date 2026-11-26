@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { sceneRoles } from '../src/db/schema.js'
+import { sceneCollaborators, sceneRoles } from '../src/db/schema.js'
 import { getSceneAccess, isFullAccess, isHostAccess, hasScope } from '../src/auth/permissions.js'
 import { linkWalletGrants } from '../src/auth/permissions.js'
 import { actorFromClaims } from '../src/auth/actor.js'
@@ -38,6 +38,19 @@ describe('getSceneAccess with scene roles', () => {
     expect(v.level).toBe('viewer')
     expect([...v.scopes]).toEqual(['analytics.view'])
     expect((await getSceneAccess(actorOf(none), scene.id)).level).toBe('none')
+  })
+
+  it('a person with both a collaborator invite and a wallet role gets the stronger one', async () => {
+    const host = await createUser()
+    const { scene } = await createScene(host)
+    const u = await createUser({ wallet: randomWallet() })
+    await db.insert(sceneCollaborators).values({ sceneId: scene.id, userId: u.id, role: 'editor' })
+    await db.insert(sceneRoles).values({ sceneId: scene.id, walletAddress: u.wallet!, userId: u.id, role: 'cohost' })
+    expect((await getSceneAccess(actorOf(u), scene.id)).level).toBe('cohost')
+    const v = await createUser({ wallet: randomWallet() })
+    await db.insert(sceneCollaborators).values({ sceneId: scene.id, userId: v.id, role: 'viewer' })
+    await db.insert(sceneRoles).values({ sceneId: scene.id, walletAddress: v.wallet!, userId: v.id, role: 'editor' })
+    expect((await getSceneAccess(actorOf(v), scene.id)).level).toBe('editor')
   })
 
   it('a revoked role grants nothing', async () => {
