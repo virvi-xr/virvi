@@ -418,7 +418,7 @@ export function createDemoApi(opts: { trialId: string; now: () => number; storag
       }
       const found = wanted.map((w) => DEMO_CREATOR_ITEMS.find((c) => c.contractAddress === w.contractAddress.toLowerCase() && c.itemId === w.itemId))
       if (found.some((f) => !f)) {
-        return Promise.reject(refused(400, 'not_your_item', 'Pick items from collections you created, with a wallet linked to your account.'))
+        return Promise.reject(refused(400, 'not_your_item', 'Pick items you created or can mint, with a wallet linked to your account.'))
       }
       write((s) => {
         s.items = s.items.filter((i) => i.giveawayId !== id)

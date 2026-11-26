@@ -6,7 +6,7 @@ import { db } from '../src/db/connection.js'
 import { events, eventGiveawayLinks, giveawayClaims, giveawayClaimMints, giveawayItems, giveaways, giveawayScenes, giveawayTxs, sceneCollaborators, users } from '../src/db/schema.js'
 import { issueScenePass } from '../src/auth/scene-pass.js'
 import { issueTrialSession } from '../src/auth/trial.js'
-import { creatorItems } from '../src/giveaways/marketplace.js'
+import { creatorItems, setCreatorItemsFetchForTests } from '../src/giveaways/marketplace.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
 import { giveawaysOn, type FakeGiveawayChain, type FakeMarketplace } from './helpers/giveaways-fake.js'
@@ -163,18 +163,50 @@ describe('giveaway host API (LIV-194)', () => {
         { contractAddress: getAddress(CONTRACT), itemId: '0', name: 'Prize hat', thumbnail: 'https://peer.example/thumb.png', rarity: 'rare', available: 50 },
         { contractAddress: getAddress(CONTRACT), itemId: '1', name: 'Prize dance', thumbnail: 'https://peer.example/thumb.png', rarity: 'rare', available: 50 },
       ])
-      expect(market.calls.every((u) => u.startsWith('https://marketplace-api.decentraland.org/v1/items?'))).toBe(true)
+      expect(market.calls.every((u) => u.startsWith('https://marketplace-api.decentraland.org/v1/items?') || u === 'https://subgraph.decentraland.org/collections-matic-mainnet')).toBe(true)
       expect((await call('GET', '/api/giveaways/creator-items?chain=polygon-amoy')).statusCode).toBe(403)
     })
 
     it('caches per chain and wallet for a minute', async () => {
       await creatorItems('polygon', [host.wallet!])
       const n = market.calls.length
-      expect(n).toBe(2) // wearables and emotes
+      expect(n).toBe(3) // wearables, emotes and minting rights (none, so no collection lookups)
       await creatorItems('polygon', [host.wallet!])
       expect(market.calls.length).toBe(n)
       await creatorItems('polygon', [host.wallet!, stranger.wallet!])
-      expect(market.calls.length).toBe(n + 2)
+      expect(market.calls.length).toBe(n + 3)
+    })
+
+    it("lists items the caller's wallets may mint without having created them: whole collections and single items", async () => {
+      const THIRD = '0x' + '33'.repeat(20)
+      const FOURTH = '0x' + '44'.repeat(20)
+      const maker = randomWallet()
+      market.add(stranger.wallet!, { contractAddress: OTHER_CONTRACT, itemId: '1', name: 'Also theirs', category: 'emote' })
+      market.add(stranger.wallet!, { contractAddress: OTHER_CONTRACT, itemId: '2', name: 'Their draft', reviewedAt: null })
+      market.add(maker, { contractAddress: THIRD, itemId: '0', name: 'Granted on its own' })
+      market.add(maker, { contractAddress: THIRD, itemId: '1', name: 'Not granted' })
+      market.add(maker, { contractAddress: FOURTH, itemId: '0', name: 'Unapproved collection' })
+      market.grantCollection(host.wallet!, OTHER_CONTRACT)
+      market.grantItem(host.wallet!, THIRD, '0')
+      market.grantItem(host.wallet!, FOURTH, '0', false)
+      const res = await call('GET', '/api/giveaways/creator-items?chain=polygon')
+      expect(res.statusCode).toBe(200)
+      expect(res.json().items.map((i: any) => i.name).sort()).toEqual(['Also theirs', 'Granted on its own', 'Not yours', 'Prize dance', 'Prize hat'])
+
+      // And they can be given away
+      const g = await create()
+      const put = await call('PUT', `/api/giveaways/${g.id}/items`, host, { items: [{ contractAddress: OTHER_CONTRACT, itemId: '0' }, { contractAddress: THIRD, itemId: '0' }] })
+      expect(put.statusCode, put.body).toBe(200)
+      expect((await call('PUT', `/api/giveaways/${g.id}/items`, host, { items: [{ contractAddress: THIRD, itemId: '1' }] })).json()).toMatchObject({ error: 'not_your_item' })
+    })
+
+    it('a subgraph that is down is marketplace_down, not an empty list', async () => {
+      const real = market.fetch
+      market.fetch = async (input, init) => new URL(String(input)).hostname === 'subgraph.decentraland.org' ? new Response('nope', { status: 503 }) : real(input, init)
+      setCreatorItemsFetchForTests(market.fetch)
+      const res = await call('GET', '/api/giveaways/creator-items?chain=polygon')
+      expect(res.statusCode).toBe(502)
+      expect(res.json()).toMatchObject({ error: 'marketplace_down' })
     })
   })
 

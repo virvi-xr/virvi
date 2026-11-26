@@ -27,7 +27,7 @@ When a visitor claims, Virvi mints one of each item in the giveaway to that visi
 1. In the dashboard, go to **Drops** and create a giveaway.
 2. Set:
    - **Name.**
-   - **Items:** choose the wearables to give away, from collections you created. They are found through the wallets linked to your account, so link the wallet that created the collection first. A visitor gets **one of every item** in the giveaway.
+   - **Items:** choose the wearables and emotes to give away: ones you created, and ones from someone else's collection that you were given minting rights to (for the whole collection or a single item). They are found through the wallets linked to your account, so link the wallet that created the collection, or the one with the minting rights, first. A visitor gets **one of every item** in the giveaway.
    - **Starts** and **Ends** (optional). Leave them empty to start when you switch it on and run until you switch it off.
    - **Claim limit** (optional): the most people who can claim. Leave it empty for no limit. Claims that failed don't count toward it.
    - **Minimum minutes in the scene** (optional): how long a visitor must stay in your scene before they can claim.
@@ -48,6 +48,8 @@ To add the minter:
 2. Choose **Open the Builder** next to the item to go to the collection.
 3. In the collection's settings, add the address as a minter for the item (or for the whole collection) and confirm in your wallet.
 4. Back on the giveaway's page, choose **Check again**.
+
+Only the collection's owner can add a minter. For an item from someone else's collection, send them the giveaway's address and ask them to add it.
 
 The collection must be published and approved. You can switch a giveaway on only once every item shows **Can mint**. Until then visitors don't see it.
 

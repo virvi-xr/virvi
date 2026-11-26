@@ -278,7 +278,7 @@ function parseItems(v: unknown): ItemRef[] {
 }
 
 /**
- * Replaces the giveaway's items: 1 to 10, each one the owner's verified wallets created (400 not_your_item), with its
+ * Replaces the giveaway's items: 1 to 10, each one the owner's verified wallets created or may mint (400 not_your_item), with its
  * name, thumbnail and rarity cached. Refused (409 has_claims) once any claim is past `present`. On a giveaway that is
  * switched on, the new items must pass the minter check too.
  */
@@ -296,7 +296,7 @@ export async function setItems(c: GiveawayCaller, id: string, body: Record<strin
   const found = wanted.map((w) => mine.find((m) => m.contractAddress.toLowerCase() === w.contractAddress.toLowerCase() && m.itemId === w.itemId))
   const missing = wanted.find((_, i) => !found[i])
   if (missing) {
-    throw new GiveawayError(400, 'not_your_item', 'Pick items from collections you created, with a wallet linked to your account.', { ...missing })
+    throw new GiveawayError(400, 'not_your_item', 'Pick items you created or can mint, with a wallet linked to your account.', { ...missing })
   }
   if (g.enabled) {
     let checks: GiveawayMintCheck[]

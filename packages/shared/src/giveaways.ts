@@ -36,6 +36,13 @@ export function giveawayMarketplaceApi(chain: GiveawayChain): string {
   return chain === 'polygon' ? 'https://marketplace-api.decentraland.org' : 'https://marketplace-api.decentraland.zone'
 }
 
+/** Decentraland's collections subgraph for the chain: who may mint from each collection and item. */
+export function giveawayCollectionsSubgraph(chain: GiveawayChain): string {
+  return chain === 'polygon'
+    ? 'https://subgraph.decentraland.org/collections-matic-mainnet'
+    : 'https://subgraph.decentraland.org/collections-matic-amoy'
+}
+
 /**
  * Where a host manages the collection. The Builder's per-collection URL uses its own collection id, which the contract
  * address doesn't give us, so this links the collections list; `contract` is kept so a deep link can be added later.

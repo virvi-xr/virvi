@@ -10,7 +10,7 @@ import { ToolError, type Before, type ToolDef } from './types.js'
 type Obj = Record<string, any>
 
 export const GIVEAWAY_NEXT = 'Add it as a minter on your collection in the Builder, then switch the giveaway on in Drops.'
-const NOT_YOURS = 'Pick items from collections you created, with a wallet linked to your account.'
+const NOT_YOURS = 'Pick items you created or can mint, with a wallet linked to your account.'
 const GIVEAWAYS_OFF = "Automatic giveaways aren't switched on for this server yet."
 
 export const GIVEAWAY_TOOLS: ToolDef<any>[] = [
