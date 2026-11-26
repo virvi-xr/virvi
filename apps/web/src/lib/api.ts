@@ -33,6 +33,7 @@ import { ratingsQuery, type AdminLesson, type AdminRating, type Digest, type Kin
 import type { HostRaffle, RaffleDetail, RaffleSnapshotRow, RaffleWinner, drawBody, editBody, raffleBody } from './raffles'
 import type { AdminBeatsOverview } from './admin-beats'
 import type { TermsStatus } from './terms'
+import { PRIVACY_NOTICE_VERSION, type PrivacyDecision, type PrivacyDecisionVia, type PrivacyStatus } from '@virvixr/shared'
 import type { AdminReissueRequest, ProposedReissueFile, ReissueRequest, SafeBatchPreview } from './reissue'
 import { beatApiPath, sceneBeatsPath, type BeatAvailability, type BeatCheckoutResult, type BeatClaimant, type BeatCollection, type BeatQuote, type PublicBeat, type WalletBeats, type beatBody, type beatEditBody, type payBody } from './beats'
 
@@ -657,6 +658,10 @@ function useRealApi() {
     getTermsStatus: () => apiFetch<TermsStatus>('/api/auth/terms'),
     acceptTerms: (version: string) =>
       apiFetch<TermsStatus>('/api/auth/terms', { method: 'POST', body: JSON.stringify({ version }), userAction: true }),
+    // The dashboard privacy notice (GDPR notice)
+    getPrivacyStatus: () => apiFetch<PrivacyStatus>('/api/auth/privacy'),
+    decidePrivacy: (decision: PrivacyDecision, via: PrivacyDecisionVia) =>
+      apiFetch<PrivacyStatus>('/api/auth/privacy', { method: 'POST', body: JSON.stringify({ decision, version: PRIVACY_NOTICE_VERSION, via }), userAction: true }),
     deleteAccount: (password: string) =>
       apiFetch('/api/auth/account', { method: 'DELETE', body: JSON.stringify({ password }) }),
 

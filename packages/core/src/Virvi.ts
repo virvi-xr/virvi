@@ -6,6 +6,7 @@ import { VirviStorageImpl } from './storage.js'
 import type { Selected } from './transform/session.js'
 import { EventBus } from './events/EventBus.js'
 import { AdHost } from './ads/host.js'
+import type { KioskClick } from './managers/KioskManager.js'
 
 // Default API URLs by environment
 const API_URLS: Record<string, string> = {
@@ -637,6 +638,29 @@ export class Virvi {
     return () => this.events.off('giveaway_available', handler)
   }
 
+  /** A giveaway kiosk was clicked (which one, and the giveaway it is for). Returns an unsubscribe. */
+  onKioskClick(listener: (click: KioskClick) => void): () => void {
+    const handler = (c: KioskClick) => {
+      try { listener(c) } catch { /* swallow */ }
+    }
+    this.events.on('kiosk_click', handler)
+    return () => this.events.off('kiosk_click', handler)
+  }
+
+  /** How many giveaway kiosk copies the scene shows now with something a visitor can click. */
+  kioskCount(): number {
+    return this.sceneManager.kioskCount()
+  }
+
+  /** Called with the scene's kiosk count whenever it changes (a preset load, a kiosk added or removed). Returns an unsubscribe. */
+  onKiosksChanged(listener: (count: number) => void): () => void {
+    const handler = (n: number) => {
+      try { listener(n) } catch { /* swallow */ }
+    }
+    this.events.on('kiosks_changed', handler)
+    return () => this.events.off('kiosks_changed', handler)
+  }
+
   /** A raffle draw happened: spin the wheel. Returns an unsubscribe. */
   onRaffleDraw(listener: (draw: PublicDraw) => void): () => void {
     const handler = (d: PublicDraw) => {
@@ -714,8 +738,20 @@ export class Virvi {
     this.track(id, metadata)
   }
 
+  /** Analytics (and so the visitor notice) are starting: hold ad views until attachAnalytics, or noAnalytics. */
+  holdAdViews(): void {
+    this.ads.tracker.hold()
+  }
+
+  /** Analytics didn't start, so there is no notice to wait on: ad views count as before (the server still drops a decliner's). */
+  noAnalytics(): void {
+    this.ads.tracker.setConsent(null)
+  }
+
   attachAnalytics(collector: import('./analytics/collector.js').Collector): void {
     this.analytics = collector
+    // Ad views follow the same visitor decision (GDPR notice)
+    this.ads.tracker.setConsent(collector.consent)
   }
 
   track(name: string, props?: Record<string, unknown>): void {

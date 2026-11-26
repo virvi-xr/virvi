@@ -127,7 +127,7 @@ function GiveawayList() {
               <button key={g.id} type="button" onClick={() => open(g.id)}
                 className="rounded-lg border border-gray-800 bg-gray-900 p-4 text-left transition-colors hover:border-gray-600">
                 <div className="flex items-start justify-between gap-2">
-                  <h3 className="min-w-0 break-words font-semibold">{g.name}</h3>
+                  <h2 className="min-w-0 break-words font-semibold">{g.name}</h2>
                   {g.chain === 'polygon-amoy' && <Badge tone="violet">{TEST_BADGE}</Badge>}
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-gray-400">

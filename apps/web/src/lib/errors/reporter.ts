@@ -5,6 +5,7 @@ import { Breadcrumbs, clickLabel, type LabelledElement } from './breadcrumbs'
 import { ErrorQueue, type SendResult } from './queue'
 import { apiErrorEvent, consoleMessage, errorEvent, isOwnSource, shouldReportApi, type ReportResult } from './capture'
 import { decideFromAnswer, promptKey, promptRequestBody, readLocal, shouldCheckPrompt, writeLocal, type PromptAnswer } from './prompt'
+import { ReportingGate, type ReportingMode } from './consent'
 
 /** A toast to show after an error that broke what the user was doing (LIV-66 §4). */
 export interface PromptEvent { kind: 'ask' | 'known'; event: ClientErrorEvent }
@@ -22,6 +23,9 @@ const SCENE_IN_PATH = /\/scenes\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4
  * The browser side of error reporting (LIV-66): records what the user did (breadcrumbs), catches uncaught errors,
  * unhandled rejections, console.error from our own scripts and apiFetch failures, and sends them in batches. Every
  * failure of its own is swallowed; it never reports itself.
+ *
+ * Under the dashboard privacy notice (GDPR notice; ./consent.ts) it holds everything and sends nothing until the
+ * account decides, and an account that declined has nothing recorded or sent (setMode, from <ErrorReporting/>).
  */
 class Reporter {
   readonly crumbs = new Breadcrumbs()
@@ -33,6 +37,21 @@ class Reporter {
   private checked = new Set<string>()
   private promptListeners = new Set<(p: PromptEvent) => void>()
   private reportListeners = new Set<(lastError: ClientErrorEvent | null) => void>()
+  private readonly gate = new ReportingGate({
+    add: (e) => this.queue.add(e),
+    crash: (e) => { void this.post([e], { keepalive: false, bearer: false }).catch(() => {}) },
+    // Off: what's queued goes too, so the pagehide flush sends nothing
+    forget: () => { this.queue.clear(); this.crumbs.clear(); this.last = null },
+  })
+
+  /** Hold, send or switch off (the account's privacy decision). */
+  setMode(mode: ReportingMode) {
+    try { this.gate.set(mode) } catch { /* never let reporting throw */ }
+  }
+
+  get mode(): ReportingMode {
+    return this.gate.mode
+  }
 
   setToken(get: () => string | null) {
     this.token = get
@@ -53,8 +72,9 @@ class Reporter {
 
   private add(e: ClientErrorEvent) {
     try {
+      if (!this.gate.records) return
       this.last = e
-      this.queue.add(e)
+      this.gate.add(e)
     } catch { /* never let reporting throw */ }
   }
 
@@ -95,7 +115,7 @@ class Reporter {
    */
   private async checkPrompt(e: ClientErrorEvent) {
     try {
-      if (!shouldCheckPrompt(e) || !this.promptListeners.size) return
+      if (!this.gate.sends || !shouldCheckPrompt(e) || !this.promptListeners.size) return
       const key = promptKey(e)
       if (this.checked.has(key) || this.checked.size >= 50) return
       this.checked.add(key)
@@ -154,7 +174,7 @@ class Reporter {
     document.addEventListener('click', (ev) => {
       try {
         const el = (ev.target as Element | null)?.closest?.('button, a, [role="button"], [role="link"], [role="tab"], [role="menuitem"]')
-        this.crumbs.click(clickLabel(el as unknown as LabelledElement | null))
+        if (this.gate.records) this.crumbs.click(clickLabel(el as unknown as LabelledElement | null))
       } catch { /* ignore */ }
     }, { capture: true })
     const flush = () => { void this.queue.flush({ keepalive: true }) }
@@ -163,7 +183,7 @@ class Reporter {
   }
 
   nav(path: string) {
-    this.crumbs.nav(path)
+    if (this.gate.records) this.crumbs.nav(path)
   }
 
   /**
@@ -172,7 +192,7 @@ class Reporter {
    */
   apiDone(r: { method: string; path: string; status: number; ms: number; requestId: string | null; ok: boolean; body?: unknown; userAction?: boolean }) {
     try {
-      if (!shouldReportApi(r.path)) return
+      if (!shouldReportApi(r.path) || !this.gate.records) return
       this.crumbs.api(r.method, r.path, r.status, r.ms, r.requestId)
       if (r.ok) return
       const e = apiErrorEvent({ ...r, body: r.body }, this.ctx(!!r.userAction))
@@ -183,13 +203,15 @@ class Reporter {
 
   /**
    * A crash screen: recorded at once, without the session (nothing about the user goes until they press Submit on
-   * the Report form), and returned for that form.
+   * the Report form), and returned for that form. Held until the account decides, and never sent after a decline.
    */
   crash(error: unknown): ClientErrorEvent {
     if (error && typeof error === 'object') this.captured.add(error)
     const e = errorEvent('crash', error, this.ctx(true))
-    this.last = e
-    void this.post([e], { keepalive: false, bearer: false }).catch(() => {})
+    if (this.gate.records) {
+      this.last = e
+      this.gate.crash(e)
+    }
     return e
   }
 

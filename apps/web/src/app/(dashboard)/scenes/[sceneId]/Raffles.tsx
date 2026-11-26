@@ -61,8 +61,8 @@ export function Raffles({ sceneId, sceneName }: { sceneId: string; sceneName: st
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-sm font-medium text-gray-300">Raffles</h3>
-        <button type="button" onClick={() => setCreating(true)} className="rounded-md bg-orange-600 px-3 py-1.5 text-sm text-white hover:bg-orange-500">New raffle</button>
+        <h2 className="text-sm font-medium text-gray-300">Raffles</h2>
+        <button type="button" onClick={() => setCreating(true)} className="rounded-md bg-orange-700 px-3 py-1.5 text-sm text-white hover:bg-orange-800">New raffle</button>
       </div>
       {error && <div className="mb-3 rounded-md bg-red-900/50 border border-red-700 px-4 py-2 text-sm text-red-300">{error}</div>}
       {raffles && raffles.length === 0 && <p className="text-sm text-gray-500">No raffles yet.</p>}
@@ -114,7 +114,7 @@ function RaffleForm({ sceneId, sceneName, editing, onCancel, onCreated }: {
 
   return (
     <form onSubmit={submit} className="rounded-lg border border-gray-800 bg-gray-900 p-6 space-y-4">
-      <h3 className="text-sm font-medium text-gray-300">{editing ? 'Edit raffle' : 'New raffle'}</h3>
+      <h2 className="text-sm font-medium text-gray-300">{editing ? 'Edit raffle' : 'New raffle'}</h2>
       {error && <div role="alert" className="rounded-md bg-red-900/50 border border-red-700 px-4 py-2 text-sm text-red-300">{error}</div>}
       <label className="block text-xs text-gray-400">Name
         <input className={`${INPUT} mt-1 w-full`} value={f.name} maxLength={80} onChange={(e) => set({ name: e.target.value })} />
@@ -161,7 +161,7 @@ function RaffleForm({ sceneId, sceneName, editing, onCancel, onCreated }: {
         </label>
       )}
       <div className="flex gap-2">
-        <button type="submit" disabled={busy || blocked !== null} className="rounded-md bg-orange-600 px-3 py-1.5 text-sm text-white hover:bg-orange-500 disabled:opacity-50">{editing ? 'Save changes' : 'Create raffle'}</button>
+        <button type="submit" disabled={busy || blocked !== null} className="rounded-md bg-orange-700 px-3 py-1.5 text-sm text-white hover:bg-orange-800 disabled:opacity-50">{editing ? 'Save changes' : 'Create raffle'}</button>
         <button type="button" onClick={onCancel} className="rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700">Back</button>
       </div>
     </form>
@@ -229,7 +229,7 @@ function RafflePage({ raffleId, sceneId, sceneName, onBack }: { raffleId: string
         <>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h3 className="text-base font-medium text-white">{r.name}</h3>
+              <h2 className="text-base font-medium text-white">{r.name}</h2>
               <p className="text-xs text-gray-400">Prize: {r.prize} · {r.winnersCount} {r.winnersCount === 1 ? 'winner' : 'winners'} · {MODE_LABELS[r.mode]}</p>
             </div>
             <div className="flex items-center gap-2">
@@ -241,7 +241,7 @@ function RafflePage({ raffleId, sceneId, sceneName, onBack }: { raffleId: string
               )}
               {raffleActions(r.status).map((a) => (
                 <button key={a} type="button" disabled={busy} onClick={() => act(a)}
-                  className={`rounded-md px-3 py-1.5 text-sm disabled:opacity-50 ${a === 'cancel' || a === 'close' ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-orange-600 text-white hover:bg-orange-500'}`}>
+                  className={`rounded-md px-3 py-1.5 text-sm disabled:opacity-50 ${a === 'cancel' || a === 'close' ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-orange-700 text-white hover:bg-orange-800'}`}>
                   {ACTION_LABELS[a]}
                 </button>
               ))}
@@ -272,13 +272,13 @@ function RafflePage({ raffleId, sceneId, sceneName, onBack }: { raffleId: string
 
           {spun && (
             <section aria-label="Winners">
-              <h4 className="mb-2 text-sm font-medium text-gray-300">Winners</h4>
+              <h3 className="mb-2 text-sm font-medium text-gray-300">Winners</h3>
               <ul className="space-y-1 rounded-md bg-gray-800 p-3">{spun.map((w) => <Winner key={w.entryId} w={w} />)}</ul>
             </section>
           )}
 
           <section>
-            <h4 className="mb-2 text-sm font-medium text-gray-300">Entries ({detail.entries.length})</h4>
+            <h3 className="mb-2 text-sm font-medium text-gray-300">Entries ({detail.entries.length})</h3>
             {detail.entries.length === 0 ? <p className="text-sm text-gray-500">No entries yet.</p> : (
               <table className="w-full text-left text-sm">
                 <thead className="text-xs text-gray-500"><tr><th className="py-1">Name</th><th>Wallet</th><th>Minutes present</th><th>Last seen</th></tr></thead>
@@ -300,7 +300,7 @@ function RafflePage({ raffleId, sceneId, sceneName, onBack }: { raffleId: string
           </section>
 
           <section>
-            <h4 className="mb-2 text-sm font-medium text-gray-300">Snapshots ({detail.snapshots.length})</h4>
+            <h3 className="mb-2 text-sm font-medium text-gray-300">Snapshots ({detail.snapshots.length})</h3>
             {detail.snapshots.length === 0 ? <p className="text-sm text-gray-500">No snapshots yet. A spin only counts entrants who were present in a snapshot.</p> : (
               <ul className="space-y-1 text-sm text-gray-300">
                 {detail.snapshots.map((s) => <li key={s.id}>{when(s.takenAt)} · {s.trigger === 'auto' ? 'Automatic' : 'Manual'} · {s.entryIds.length} present</li>)}
@@ -309,7 +309,7 @@ function RafflePage({ raffleId, sceneId, sceneName, onBack }: { raffleId: string
           </section>
 
           <section>
-            <h4 className="mb-2 text-sm font-medium text-gray-300">Draws ({detail.draws.length})</h4>
+            <h3 className="mb-2 text-sm font-medium text-gray-300">Draws ({detail.draws.length})</h3>
             {detail.draws.length === 0 ? <p className="text-sm text-gray-500">No draws yet.</p> : (
               <ul className="space-y-3">
                 {detail.draws.map((d) => (

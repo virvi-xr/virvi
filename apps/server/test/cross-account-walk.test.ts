@@ -222,7 +222,11 @@ async function fixtures() {
     conversationId: conversation.id, userId: b.id, tool: 'update_scene', effect: 'write', argsRedacted: {}, args: { sceneId: scene.id, name: 'B scene 2' }, argsHash: 'h',
     label: 'Rename scene to "B scene 2"', status: 'done', undo: { method: 'PUT', url: `/api/scenes/${scene.id}`, body: { name: 'pwned' } }, after: { name: 'B scene' }, finishedAt: new Date(),
   }).returning()
-  const aScene = (await createScene(a, 'A scene')).scene
+  const { scene: aScene, preset: aPreset } = await createScene(a, 'A scene')
+  // A's own giveaway kiosk, to reach for B's giveaway in a body
+  const aKiosk = await createElement(aPreset.id, { type: 'claim_point', name: 'A kiosk', properties: { hoverText: 'Claim' } })
+  // A's own image holding B's giveaway id (stored before kiosks were checked, or by hand), to turn into a kiosk
+  const aImage = await createElement(aPreset.id, { type: 'image', name: 'A image', properties: { textureSrc: 'a.png', giveawayId: giveaway.id } })
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   // B's show for B's event, with B's raffle attached; A's own show, to reach for B's raffle in a body
   const [show] = await db.insert(assistantShows).values({
@@ -232,7 +236,7 @@ async function fixtures() {
   const [aShow] = await db.insert(assistantShows).values({ userId: a.id, title: 'A show', items: [{ id: crypto.randomUUID(), kind: 'raffle', label: 'Raffle', ref: {} }] }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
-    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, pastPackage, notification, raffle, raffleSnapshot, raffleDraw, beat, arcBeat, reissueRequest, reissueFile, aScene, aEvent, deletedScene, removal,
+    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, pastPackage, notification, raffle, raffleSnapshot, raffleDraw, beat, arcBeat, reissueRequest, reissueFile, aScene, aPreset, aKiosk, aImage, aEvent, deletedScene, removal,
     conversation, planId, doneAction, show, aShow,
   }
 }
@@ -325,6 +329,11 @@ const CASES: Case[] = [
   { route: 'POST /api/presets/:presetId/activate', url: (f) => `/api/presets/${f.preset.id}/activate` },
   { route: 'POST /api/presets/:presetId/elements', url: (f) => `/api/presets/${f.preset.id}/elements`, body: () => ({ type: 'image', name: 'pwned' }) },
   { route: 'PUT /api/elements/:elementId', url: (f) => `/api/elements/${f.element.id}`, body: () => ({ name: 'pwned' }) },
+  // A's own giveaway kiosk (new, or saved) picking B's giveaway: refused, and B's giveaway isn't linked to A's scene
+  { route: 'POST /api/presets/:presetId/elements', url: (f) => `/api/presets/${f.aPreset.id}/elements`, body: (f) => ({ type: 'claim_point', name: 'pwned', properties: { giveawayId: f.giveaway.id } }) },
+  { route: 'PUT /api/elements/:elementId', url: (f) => `/api/elements/${f.aKiosk.id}`, body: (f) => ({ properties: { giveawayId: f.giveaway.id } }) },
+  // A's own image with B's giveaway id becoming a kiosk (no properties sent): refused, so B's giveaway's items never go out
+  { route: 'PUT /api/elements/:elementId', url: (f) => `/api/elements/${f.aImage.id}`, body: () => ({ type: 'claim_point' }) },
   { route: 'DELETE /api/elements/:elementId', url: (f) => `/api/elements/${f.element.id}` },
   { route: 'POST /api/elements/:elementId/live', url: (f) => `/api/elements/${f.element.id}/live`, body: () => ({ enabled: true }) },
   { route: 'POST /api/elements/:elementId/instances', url: (f) => `/api/elements/${f.element.id}/instances`, body: () => ({ position: { x: 0, y: 0, z: 0 } }) },
@@ -766,7 +775,7 @@ describe('cross-account route walk', () => {
       'GET /api/notifications', 'GET /api/notifications/unread-count', 'GET /api/assistant/status',
     ])
     const cases = CASES.filter((c) => trialRoutes.has(c.route))
-    expect(cases.length).toBe(trialRoutes.size - own.size)
+    expect(new Set(cases.map((c) => c.route)).size).toBe(trialRoutes.size - own.size)
     const offenders: string[] = []
     for (const c of cases) {
       const before = await snapshot(f)

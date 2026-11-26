@@ -15,7 +15,7 @@ import { GUEST_NOTICE_MS, startSceneBeats } from '../src/beat/connect.js'
 const NOW = Date.parse('2026-11-14T10:30:00.000Z')
 const beat = (over: Partial<VisitorBeat> = {}): VisitorBeat => ({
   id: 'b1', name: 'Launch', imageUrl: '', startsAt: '2026-11-14T10:00:00.000Z', endsAt: '2026-11-14T12:00:00.000Z',
-  minPresentSeconds: 300, status: 'live', soldOut: false, claimUntil: '2026-11-15T12:00:00.000Z', test: false, myClaim: null, ...over,
+  minPresentSeconds: 300, status: 'live', soldOut: false, claimUntil: '2026-11-15T12:00:00.000Z', test: false, autoClaim: false, myClaim: null, ...over,
 })
 const present = (secondsPresent: number) => ({ myClaim: { status: 'present' as const, secondsPresent, txUrl: null, final: false, heldUntil: null } })
 const httpError = (status: number, code: string) => new Error(`HTTP ${status}: ${JSON.stringify({ error: code })}`)

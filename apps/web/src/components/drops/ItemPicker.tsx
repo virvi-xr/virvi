@@ -62,7 +62,7 @@ export function ItemPicker({ giveaway: g, onSaved }: { giveaway: HostGiveaway; o
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Choose items" className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-lg border border-gray-800 bg-gray-900 p-4">
         <h2 className="text-lg font-semibold">Choose items</h2>
         <p className="mb-3 text-sm text-gray-400">
-          Wearables and emotes from collections the giveaway owner created, with a wallet linked to their account. Pick up to {ITEMS_MAX}.
+          Wearables and emotes the giveaway owner created, or can mint from someone else's collection, with a wallet linked to their account. Pick up to {ITEMS_MAX}.
         </p>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {!items ? (

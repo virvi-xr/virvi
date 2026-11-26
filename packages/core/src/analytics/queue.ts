@@ -19,6 +19,11 @@ export class EventQueue {
     this.trim()
   }
 
+  /** Drop everything (the visitor declined the analytics notice). */
+  clear(): void {
+    this.items = []
+  }
+
   hasHighPriority(): boolean {
     return this.items.some((i) => isHighPriority(i.event))
   }
@@ -42,6 +47,8 @@ export class EventQueue {
     while (this.items.length > this.maxSize) {
       let i = this.items.findIndex((x) => x.event.type === 'pos')
       if (i < 0) i = this.items.findIndex((x) => x.event.type === 'session.heartbeat')
+      // Session starts and leaves last: a long wait for the visitor's decision (GDPR notice) mustn't lose the start
+      if (i < 0) i = this.items.findIndex((x) => x.event.type !== 'session.start' && x.event.type !== 'session.leave')
       if (i < 0) i = 0
       this.items.splice(i, 1)
     }

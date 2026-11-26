@@ -23,6 +23,8 @@ import { deleteUserWithModels, releaseModelFiles } from '../library/user-models.
 import { deleteMyBeatData } from '../beats/retention.js'
 import { deleteMyGiveawayData, giveawaysBlockingDelete } from '../giveaways/account.js'
 import { handOverDesigns } from '../studio/handover.js'
+import { privacyStatusesFor } from '../auth/privacy.js'
+import { termsStatusesFor } from '../auth/terms.js'
 
 
 export default async function adminRoutes(app: FastifyInstance) {
@@ -164,7 +166,10 @@ export default async function adminRoutes(app: FastifyInstance) {
         .where(conditions),
     ])
 
-    return reply.send({ users: rows, total, limit, offset })
+    // Each account's Terms agreement and privacy choice, and when (GDPR notice)
+    const ids = rows.map((r) => r.id)
+    const [terms, privacy] = await Promise.all([termsStatusesFor(ids), privacyStatusesFor(ids)])
+    return reply.send({ users: rows.map((r) => ({ ...r, terms: terms.get(r.id), privacy: privacy.get(r.id) })), total, limit, offset })
   })
 
   // ── GET /api/admin/users/:userId — single user details ────────────────────
@@ -194,7 +199,8 @@ export default async function adminRoutes(app: FastifyInstance) {
       .where(eq(subscriptions.userId, userId))
       .limit(1)
 
-    return reply.send({ user, subscription: subscription || null })
+    const [terms, privacy] = await Promise.all([termsStatusesFor([userId]), privacyStatusesFor([userId])])
+    return reply.send({ user, subscription: subscription || null, terms: terms.get(userId), privacy: privacy.get(userId) })
   })
 
   // ── PUT /api/admin/users/:userId/role — update user role ──────────────────

@@ -3,7 +3,7 @@ import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useEffect, useState, Suspense } from 'react'
-import { Badge, PageHeader, PrimaryButton, Skeleton, StatusDot, tableHead } from '@/components/ui'
+import { Badge, PageHeader, PrimaryButton, Skeleton, StatusDot, tableHead, TableScroll } from '@/components/ui'
 import { PlusIcon } from '@/components/icons'
 import { countLabel } from '@/lib/format'
 
@@ -408,7 +408,7 @@ function ServerDetail({ serverId, onDeleted }: { serverId: string; onDeleted: ()
         {sessions.length === 0 ? (
           <p className="text-sm text-gray-500">No sessions recorded yet.</p>
         ) : (
-          <div className="overflow-x-auto">
+          <TableScroll label="Sessions history">
             <table className="w-full text-sm">
               <thead className={tableHead}>
                 <tr className="border-b border-gray-800">
@@ -441,7 +441,7 @@ function ServerDetail({ serverId, onDeleted }: { serverId: string; onDeleted: ()
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableScroll>
         )}
       </div>
 

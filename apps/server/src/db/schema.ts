@@ -40,6 +40,8 @@ export const elementTypeEnum = pgEnum('element_type', [
   'custom',
   'model',
   'ad_space',
+  // Giveaway kiosks
+  'claim_point',
 ])
 
 export const orgRoleEnum = pgEnum('org_role', ['owner', 'admin', 'member'])
@@ -1346,6 +1348,37 @@ export const termsAcceptances = pgTable('terms_acceptances', {
   via: text('via').notNull(),
   acceptedAt: timestamp('accepted_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({ oneEach: uniqueIndex('terms_acceptances_user_version_idx').on(t.userId, t.version) }))
+
+// ── Privacy decisions (GDPR notice) ─────────────────────────────────────────
+
+/**
+ * Scene visitors' decisions on the analytics notice (ANALYTICS_CONSENT_VERSION), append-only: a new decision is a new
+ * row, never an update. The current decision is the latest row for the current version. `subject_hash` is the
+ * cross-scene key (analytics/consent.ts): an HMAC of the verified wallet or the guest id, never the raw value.
+ */
+export const analyticsConsents = pgTable('analytics_consents', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  subjectHash: text('subject_hash').notNull(),
+  /** 'accept' | 'decline' */
+  decision: text('decision').notNull(),
+  version: integer('version').notNull(),
+  /** The analytics location the decision was made in, when Virvi knows it. */
+  sceneId: uuid('scene_id').references(() => analyticsScenes.id, { onDelete: 'set null' }),
+  platform: text('platform').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ bySubject: index('analytics_consents_subject_idx').on(t.subjectHash, t.version, t.createdAt) }))
+
+/** Accounts' decisions on the dashboard privacy notice (PRIVACY_NOTICE_VERSION), append-only; they go with the account. */
+export const privacyDecisions = pgTable('privacy_decisions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  /** 'accept' | 'decline' */
+  decision: text('decision').notNull(),
+  version: integer('version').notNull(),
+  /** 'prompt' (the dashboard notice) | 'settings' (the Settings row) */
+  via: text('via').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ byUser: index('privacy_decisions_user_idx').on(t.userId, t.version, t.createdAt) }))
 
 // ── Password Reset Tokens ───────────────────────────────────────────────────
 
@@ -2855,6 +2888,8 @@ export const beats = pgTable('beats', {
   paymentId: uuid('payment_id').references((): AnyPgColumn => beatPayments.id, { onDelete: 'set null' }),
   // Host review: nothing is minted until the host sends (mints_released_at) or the claim grace after ends_at runs out
   holdMints: boolean('hold_mints').notNull().default(false),
+  // Auto-claim (LIV-180): a visitor who agreed to tracking (consent v3+) is claimed for as soon as they meet the rules
+  autoClaim: boolean('auto_claim').notNull().default(true),
   mintsReleasedAt: timestamp('mints_released_at', { withTimezone: true }),
   // The most wallets the job puts in this BEAT's next mint (halved after a revert, grows back); null is BEAT_MAX_BATCH
   maxBatch: integer('max_batch'),

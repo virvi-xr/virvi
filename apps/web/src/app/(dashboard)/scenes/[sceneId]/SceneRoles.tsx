@@ -46,7 +46,7 @@ export function SceneRoles({ sceneId }: { sceneId: string }) {
 
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-6">
-      <h3 className="text-sm font-medium text-gray-300 mb-1">Roles</h3>
+      <h2 className="text-sm font-medium text-gray-300 mb-1">Roles</h2>
       <p className="text-xs text-gray-500 mb-4">Co-hosts can do everything except change the host. Editors manage content. Viewers see analytics.</p>
       {error && <div className="mb-3 rounded-md bg-red-900/50 border border-red-700 px-4 py-2 text-sm text-red-300">{error}</div>}
       {data && (

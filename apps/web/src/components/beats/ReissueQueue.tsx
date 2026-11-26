@@ -4,7 +4,7 @@
 import { useState } from 'react'
 import { BEAT_REISSUE_NOTE_MAX, type BeatChain } from '@virvixr/shared'
 import { CopyWallet } from '@/components/CopyWallet'
-import { Badge, ConfirmAction, tableHeadBand } from '@/components/ui'
+import { Badge, ConfirmAction, tableHeadBand, TableScroll } from '@/components/ui'
 import {
   APPROVE_WARNING, FLAG_LABELS, REISSUE_STATUS_LABELS, REVIEW_WHY, SAFE_ORDER_NOTE, SAFE_STATE_NOTE, SAFE_STEPS, UNLINK_WARNING, WITHDRAW_WARNING,
   blockerLabel, chainLabel, itemStateLabel, linkedByLabel, lossLabel, requestChains, revocationNote,
@@ -169,7 +169,7 @@ function Wallets({ r, a }: { r: AdminReissueRequest; a: ReissueActions }) {
   return (
     <div className="space-y-2">
       <h4 className="text-sm font-semibold">Wallets on this account, now and before</h4>
-      <div className="overflow-x-auto">
+      <TableScroll label="Wallets on this account">
         <table className="w-full text-xs">
           <thead className={tableHeadBand}><tr><th className="p-1">Wallet</th><th className="p-1">State</th><th className="p-1">Linked</th><th className="p-1">How</th><th className="p-1">Last sign-in</th><th className="p-1"><span className="sr-only">Actions</span></th></tr></thead>
           <tbody>
@@ -190,7 +190,7 @@ function Wallets({ r, a }: { r: AdminReissueRequest; a: ReissueActions }) {
             ))}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
       {lifting && (
         <div className="space-y-2 rounded-md border border-gray-700 p-3">
           <p className="text-sm">Lift the block on {lifting}? It can sign in to Virvi again. Only do this when the wrong wallet was blocked.</p>
@@ -248,7 +248,7 @@ export function ReissueRequestCard({ r, a }: { r: AdminReissueRequest; a: Reissu
       </dl>
       {revoked && <p className="rounded-md border border-gray-700 bg-gray-950 px-3 py-2 text-gray-200">{revoked}</p>}
 
-      <div className="overflow-x-auto">
+      <TableScroll label="BEATs on the old wallet">
         <table className="w-full text-xs">
           <thead className={tableHeadBand}><tr><th className="p-1">BEAT</th><th className="p-1">Network</th><th className="p-1">Token</th><th className="p-1">Tradeable</th><th className="p-1">State</th><th className="p-1">Can move now?</th></tr></thead>
           <tbody>
@@ -258,13 +258,13 @@ export function ReissueRequestCard({ r, a }: { r: AdminReissueRequest; a: Reissu
                 <td className="p-1">{chainLabel(b.chain)}</td>
                 <td className="p-1 tabular-nums">{b.tokenId}</td>
                 <td className="p-1">{b.tradeable ? 'Yes' : 'No'}</td>
-                <td className="p-1">{itemStateLabel(b.state)}{b.landed ? ' (on chain, confirming)' : ''}{b.txUrl && <> · <a href={b.txUrl} target="_blank" rel="noreferrer" className="text-blue-300 hover:underline">Polygonscan</a></>}</td>
+                <td className="p-1">{itemStateLabel(b.state)}{b.landed ? ' (on chain, confirming)' : ''}{b.txUrl && <> · <a href={b.txUrl} target="_blank" rel="noreferrer" className="text-blue-300 underline underline-offset-2">Polygonscan</a></>}</td>
                 <td className="p-1">{b.eligible ? 'Yes' : b.blockers.length ? b.blockers.map(blockerLabel).join('; ') : '—'}</td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
       <Wallets r={r} a={a} />
 

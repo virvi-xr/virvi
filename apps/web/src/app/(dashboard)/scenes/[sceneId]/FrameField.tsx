@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { FRAME_STYLE_HINTS, FRAME_SWATCHES, FRAME_THICKNESS, type FrameSettings } from '@virvixr/shared'
+import { FRAME_STYLE_HINTS, FRAME_THICKNESS, type FrameSettings } from '@virvixr/shared'
+import { ColorSwatches } from './ColorSwatches'
 import { FRAME_CHOICES, frameChoiceOf, frameFormOf, frameSaved, frameSummary, pickFrameChoice, thicknessFrom } from '@/lib/frames'
 
 const BTN = 'rounded-md border border-gray-700 px-2.5 py-1 text-xs text-gray-300 hover:border-gray-500 hover:text-white disabled:opacity-50'
@@ -63,19 +64,7 @@ export function FrameField({ properties, onSave }: {
       </div>
       {form.enabled && (
         <>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-gray-500">Colour</span>
-            {FRAME_SWATCHES.map((s) => (
-              <button key={s.color} type="button" title={s.label} aria-label={s.label} aria-pressed={form.color === s.color}
-                onClick={() => setForm((f) => ({ ...f, color: s.color }))}
-                className={`h-6 w-6 rounded border ${form.color === s.color ? 'border-blue-400 ring-2 ring-blue-500' : 'border-gray-600'}`}
-                style={{ backgroundColor: s.color }} />
-            ))}
-            <label className="flex items-center gap-1 text-xs text-gray-500">Any colour
-              <input type="color" value={form.color} onChange={(e) => setForm((f) => ({ ...f, color: e.target.value.toLowerCase() }))}
-                className="h-6 w-8 cursor-pointer rounded border border-gray-700 bg-gray-950" />
-            </label>
-          </div>
+          <ColorSwatches value={form.color} onChange={(color) => setForm((f) => ({ ...f, color }))} />
           <label className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-gray-500">Thickness</span>
             <input type="range" min={FRAME_THICKNESS.min} max={FRAME_THICKNESS.max} step={FRAME_THICKNESS.step} value={form.thickness}

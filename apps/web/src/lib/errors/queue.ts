@@ -47,6 +47,8 @@ export class ErrorQueue {
   private sentSigs = new Set<string>()
   private inflight = new Set<string>()
   private timer: unknown = null
+  /** Bumped by clear(): a send still out when the queue was cleared puts nothing back. */
+  private epoch = 0
   dropped = 0
 
   constructor(private opts: QueueOptions) {}
@@ -100,6 +102,17 @@ export class ErrorQueue {
     return out
   }
 
+  /** Drops everything waiting, and any retry of a send still out (the account turned error reporting off). */
+  clear(): void {
+    if (this.timer) {
+      ;(this.opts.clearTimer ?? clearTimeout)(this.timer as never)
+      this.timer = null
+    }
+    this.pending.clear()
+    this.attempts.clear()
+    this.epoch++
+  }
+
   /** Sends what is waiting now; `keepalive` when the page is going away (then only one send, as the browser allows). Never throws. */
   async flush(opts: { keepalive?: boolean } = {}): Promise<void> {
     if (this.timer) {
@@ -116,6 +129,7 @@ export class ErrorQueue {
       groups = groups.slice(0, 1)
     }
     let retryIn = 0
+    const epoch = this.epoch
     for (const group of groups) {
       let result: SendResult
       try {
@@ -130,6 +144,7 @@ export class ErrorQueue {
           this.attempts.delete(sig)
           continue
         }
+        if (epoch !== this.epoch) continue // cleared while out: nothing comes back
         const tries = (this.attempts.get(sig) ?? 0) + 1
         if (result === 'drop' || tries >= MAX_ATTEMPTS) {
           this.attempts.delete(sig)
@@ -143,7 +158,7 @@ export class ErrorQueue {
         retryIn = Math.max(retryIn, FLUSH_MS * 2 ** tries)
       }
     }
-    if (retryIn) this.schedule(retryIn)
+    if (retryIn && epoch === this.epoch) this.schedule(retryIn)
   }
 
   get size() { return this.pending.size }

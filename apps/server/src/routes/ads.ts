@@ -6,6 +6,7 @@ import { verifyDclSceneRequest, type SceneRequestContext } from '../middleware/d
 import { bindSceneRequest } from '../auth/scene-binding.js'
 import { selectAdsForElements } from '../ads/select.js'
 import { elementsInScene, recordAdEvents } from '../ads/events.js'
+import { anyDeclined, consentSubject } from '../analytics/consent.js'
 
 const MAX_SERVE_IDS = 50
 
@@ -53,6 +54,9 @@ export default async function adRoutes(app: FastifyInstance) {
     if (!check.ok) return reply.status(400).send({ error: check.error })
     const sceneId = await boundSceneId(signed)
     if (!sceneId) return reply.status(404).send({ error: 'scene_not_found' })
+    // The visitor declined the analytics notice (GDPR notice): their ad views aren't counted either. Accepted with
+    // nothing stored, so the scene doesn't retry. As at ingest, only a decline is enforced here
+    if (await anyDeclined([consentSubject(signed.wallet, signed.wallet)])) return reply.send({ accepted: 0 })
     const viewer = { wallet: signed.wallet, isGuest: signed.scene.isGuest, sessionId: check.batch.sessionId }
     const accepted = await recordAdEvents(sceneId, viewer, check.batch.events, new Date())
     return reply.send({ accepted })

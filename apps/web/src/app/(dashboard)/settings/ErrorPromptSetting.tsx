@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
 
-/** "Ask me about errors" (LIV-66 §4): the account's switch for the report toast. Errors are still recorded either way. */
+/** "Ask me about errors" (LIV-66 §4): the account's switch for the report toast. Whether errors are recorded is the Privacy row's. */
 export function ErrorPromptSetting() {
   const api = useApi()
   const [ask, setAsk] = useState<boolean | null>(null)
@@ -22,7 +22,7 @@ export function ErrorPromptSetting() {
           <h3 className="text-sm font-medium text-gray-300">Ask me about errors</h3>
           <p className="mt-1 text-sm text-gray-500">
             When something you're doing fails and we need more detail, we may ask you what happened, at most once a day.
-            Errors are recorded either way. You can always use Report a bug in the menu.
+            Errors are recorded only if you allowed it under Privacy. You can always use Report a bug in the menu.
           </p>
           {failed && <p className="mt-2 text-xs text-red-400">That didn't save. Try again in a moment.</p>}
         </div>

@@ -1,9 +1,9 @@
 import type { Metadata } from 'next'
-import { beatAppConsentText, beatClaimsPerNetworkText, beatConsentText } from '@virvixr/shared'
+import { BEAT_AUTO_CLAIM_CONSENT, beatAppConsentText, beatClaimsPerNetworkText, beatConsentText } from '@virvixr/shared'
 
 export const metadata: Metadata = {
   title: 'Privacy',
-  description: 'What Virvi collects in Decentraland scenes, for BEATs, in error reports, from the advertiser early-access form and from Summit sign-ups, and how to have it removed.',
+  description: 'What Virvi collects in Decentraland scenes and the choices you have, for BEATs, in error reports, from the advertiser early-access form and from Summit sign-ups, and how to have it removed.',
 }
 
 // Keep in step with apps/docs/src/content/docs/privacy.md
@@ -16,8 +16,9 @@ export default function PrivacyPage() {
 
         <h2>What is collected</h2>
         <p>
-          When a scene uses Virvi, the scene sends anonymous usage events to Virvi while you're inside its parcels: when you arrive and leave, where
-          you walk (sampled every few seconds), what you click or hover, videos you play, emotes, and camera mode.
+          When a scene uses Virvi, and you accept its notice (below), the scene sends pseudonymous usage events to Virvi while you're inside its
+          parcels: when you arrive and leave, where you walk (sampled every few seconds), what you click or hover, videos you play, emotes, and
+          camera mode.
         </p>
 
         <h2>How you're identified</h2>
@@ -32,6 +33,30 @@ export default function PrivacyPage() {
           </li>
           <li>
             <strong>IP addresses are never stored.</strong> Virvi uses them briefly to limit abuse and to look up your country, then discards them.
+          </li>
+        </ul>
+
+        <h2>Your choices</h2>
+        <ul className="list-disc pl-5">
+          <li>
+            <strong>In scenes:</strong> the first time you enter a Virvi scene, a small notice asks whether Virvi may record how you use it.
+            Until you choose, nothing is sent. If you decline, nothing is recorded for the rest of your visit, including which ads you saw and
+            your wallet and name in a scene that has wallet visibility on. Ads still show; they just aren&apos;t counted for you. Raffles, BEATs and giveaways still work, under their own agreements. One choice covers every
+            Virvi scene, and you&apos;re asked again only when the notice changes. To change your mind, press Privacy at the bottom right of
+            the screen. Scenes that haven&apos;t been updated since the notice was added don&apos;t show it; Virvi still records nothing from
+            them for a visitor who has declined.
+          </li>
+          <li>
+            <strong>Your choice is recorded:</strong> each time you choose, Virvi keeps what you chose, which version of the notice it was, the
+            scene and platform, and when. It&apos;s kept under a keyed hash of your wallet (or guest id), separate from the per-scene
+            pseudonym and never your wallet address, so one choice can cover every scene. It&apos;s kept for as long as Virvi runs scenes; a
+            deletion request (below) removes it, except that a final &ldquo;decline&rdquo; is kept so it keeps being honoured.
+          </li>
+          <li>
+            <strong>In the dashboard:</strong> when you&apos;re signed in, Virvi asks once whether it may record errors in your browser and the
+            pages you visited just before them (see Error reporting). If you decline, your browser records and sends none. Until you choose,
+            nothing is sent. Change it at any time under Privacy in Settings. Each choice is kept with its version and time, while your account
+            exists, and is deleted with it. Errors our server records are unaffected: they cover no browsing.
           </li>
         </ul>
 
@@ -63,8 +88,9 @@ export default function PrivacyPage() {
         <h2>Deleting your data</h2>
         <p>
           Call <code className="rounded bg-gray-800 px-1.5 py-0.5 text-sm">POST /api/analytics/me/delete</code> with your session token. A
-          dashboard control for this is coming. This removes your sessions, events and positions from every scene, your ad records, your raffle entries, and your
-          BEAT data (see BEATs below for tokens already sent).
+          dashboard control for this is coming. This removes your sessions, events and positions from every scene, your ad records, your raffle entries, your
+          BEAT data (see BEATs below for tokens already sent), and the record of your choices on the scene notice (a final decline is kept, so
+          it keeps being honoured).
           To ask for your data to be deleted, or for help, email{' '}
           <a href="mailto:support@virvi.io" className="text-blue-400 underline underline-offset-2 hover:text-blue-300">support@virvi.io</a>.
         </p>
@@ -103,6 +129,10 @@ export default function PrivacyPage() {
           agree to this, while signed in with a verified wallet inside the event's scene (to claim with an account in the Virvi app instead, see BEATs in the Virvi app below):
         </p>
         <blockquote className="my-3 border-l-2 border-gray-700 pl-4 text-gray-400">{beatConsentText('{name}')}</blockquote>
+        <p>
+          Most hosts leave <strong>Claim automatically</strong> on. Then the text also says &ldquo;{BEAT_AUTO_CLAIM_CONSENT}&rdquo;, and agreeing
+          also claims the BEAT for you as soon as you&rsquo;ve been there long enough, so your wallet is recorded on Polygon without a second step.
+        </p>
         <ul className="list-disc pl-5">
           <li>
             <strong>What's stored:</strong> your wallet address, your display name, and how long you were present at the event (from a check-in every 30 seconds while you're in the scene; time only counts while the scene is connected to Virvi's live room). To check that your wallet has a Decentraland profile, Virvi asks Decentraland's public profile server about your wallet address when you track and when you claim; only whether a profile exists is kept, for up to a day. To allow only {beatClaimsPerNetworkText()}, Virvi keeps a count per BEAT under a scrambled code (a keyed hash) of your network, never your internet address and not linked to your claim; the counts are deleted once the BEAT's claims are over.
@@ -193,7 +223,7 @@ export default function PrivacyPage() {
 
         <h2>Error reporting</h2>
         <p>
-          When something goes wrong on virvi.io, the page and our server record the error so we can find and fix it. A report holds the error
+          When something goes wrong on virvi.io, the page (if you allowed it; see Your choices) and our server record the error so we can find and fix it. A report holds the error
           message, the page, the build of Virvi, your browser and operating system, your organization and scene ids, the time, and the last few
           things you did: pages you opened, the names of buttons and links you clicked, and the requests the page made (their address, result and
           timing). Before anything leaves your browser, tokens, email addresses, wallet addresses, secrets and the query part of web addresses are

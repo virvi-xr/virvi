@@ -199,11 +199,11 @@ export async function currentGiveaway(sceneId: string, userId: string, now = new
   return null
 }
 
-/** For the room's `giveaway_available` (guests can't use REST): the scene's open giveaway, name and test flag only. */
+/** For the room's `giveaway_available` (guests can't use REST): the scene's open giveaway's name, test flag and id (for kiosks). */
 export async function availableGiveaway(sceneId: string, now = new Date()): Promise<AvailableGiveaway | null> {
   if (!UUID.test(sceneId)) return null
   const open = await openGiveaway(sceneId, now)
-  return open ? { name: open.g.name, test: open.g.chain === 'polygon-amoy' } : null
+  return open ? { name: open.g.name, test: open.g.chain === 'polygon-amoy', giveawayId: open.g.id } : null
 }
 
 // ── Actions ──────────────────────────────────────────────────────────────────

@@ -25,6 +25,7 @@ import { getAnalyticsAccess } from '../analytics/access.js'
 import { verifiedWalletsOf } from '../analytics/claims.js'
 import { walletsEverOf } from '../auth/wallet-blocks.js'
 import { boundScene, fromAnalyticsLocation, isScenePass } from '../auth/scene-from.js'
+import { deleteConsents, walletSubjects } from '../analytics/consent.js'
 import { visitorHash } from '../analytics/hash.js'
 import { adViewerKeysFor } from '../ads/viewer.js'
 import { TokenBucketLimiter } from '../analytics/limiter.js'
@@ -375,7 +376,7 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
     if (!wallets.size) return reply.status(400).send({ error: 'Sign in with your wallet to delete your visitor data' })
     const limit = deleteLimiter.take(`del:${actor.userId}`, 1, DELETE_LIMIT.capacity, DELETE_LIMIT.refillPerSec)
     if (!limit.ok) return reply.status(429).send({ error: 'rate_limited', retryAfter: Math.ceil(limit.retryAfterMs / 1000) })
-    const deleted = { sessions: 0, events: 0, positions: 0, copresence: 0, raffleEntries: 0, beatClaims: 0, adViews: 0 }
+    const deleted = { sessions: 0, events: 0, positions: 0, copresence: 0, raffleEntries: 0, beatClaims: 0, adViews: 0, consents: 0 }
     const all = await db.select({ id: analyticsScenes.id, salt: analyticsScenes.salt }).from(analyticsScenes)
     for (const scene of all) {
       const hashes = [...wallets].map((w) => visitorHash(scene.salt, w))
@@ -411,6 +412,8 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
     for (let i = 0; i < adKeys.length; i += 500) {
       deleted.adViews += (await db.delete(adEvents).where(inArray(adEvents.viewerKey, adKeys.slice(i, i + 500))).returning({ id: adEvents.id })).length
     }
+    // Analytics-notice decisions (GDPR notice): all of the wallets' rows go, but a final decline stays, so it's still honoured
+    deleted.consents = await deleteConsents([...wallets].flatMap(walletSubjects))
     // Raffle entries go by account; draws keep only entry ids, so earlier draws still replay
     deleted.raffleEntries = (await db.delete(raffleEntries).where(eq(raffleEntries.userId, actor.userId)).returning({ id: raffleEntries.id })).length
     // BEAT claims: unminted ones go, minted ones lose their name and account link, minting ones are flagged for the job

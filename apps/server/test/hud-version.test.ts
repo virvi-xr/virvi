@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { DCL_HUD_VERSION, HUD_VERSION_HEADER, compareHudVersions } from '@virvixr/shared'
+import { DCL_HUD_LATEST, DCL_HUD_VERSION, HUD_VERSION_HEADER, compareHudVersions } from '@virvixr/shared'
 import { resetDb } from './helpers/db.js'
 import { db } from '../src/db/connection.js'
 import { sceneDeployments } from '../src/db/schema.js'
@@ -33,7 +33,7 @@ describe('which Decentraland HUD release a scene runs (LIV-33)', () => {
     const { scene } = await createScene(owner)
     await hudCall(owner, scene.id)
     await flush()
-    expect((await detail(owner, scene.id)).dclHud).toMatchObject({ version: null, latest: DCL_HUD_VERSION })
+    expect((await detail(owner, scene.id)).dclHud).toMatchObject({ version: null, latest: DCL_HUD_LATEST })
     clearHudVersionThrottle()
     await hudCall(owner, scene.id, DCL_HUD_VERSION)
     await flush()
@@ -89,6 +89,9 @@ describe('which Decentraland HUD release a scene runs (LIV-33)', () => {
     expect(compareHudVersions('2.13.0', '2.13.0')).toBe(0)
     expect(compareHudVersions(null, '0.0.1')).toBeLessThan(0)
     const dcl = JSON.parse(readFileSync(new URL('../../../packages/dcl/package.json', import.meta.url), 'utf8'))
-    expect(DCL_HUD_VERSION).toBe(dcl.version) // raise both together at each release
+    // The package reports its own version, so a published release never claims to be the one before it
+    expect(DCL_HUD_VERSION).toBe(dcl.version)
+    // The dashboard's latest waits for npm, so it never runs ahead of what a HUD can report
+    expect(compareHudVersions(DCL_HUD_LATEST, DCL_HUD_VERSION)).toBeLessThanOrEqual(0)
   })
 })

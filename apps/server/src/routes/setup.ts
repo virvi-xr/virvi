@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { and, eq, inArray } from 'drizzle-orm'
-import { localModelFile, validateSceneRef, type AnalyticsSceneRef } from '@virvixr/shared'
+import { DCL_HUD_LATEST, localModelFile, validateSceneRef, type AnalyticsSceneRef } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { analyticsScenes, assetLibraryItems, mediaAssets, sceneElements, scenes } from '../db/schema.js'
 import { isSceneDeleted } from '../scenes/live.js'
@@ -10,6 +10,7 @@ import { resolveAnalyticsScene } from '../analytics/registry.js'
 import { DirectoryUnavailableError } from '../analytics/dcl-directory.js'
 import { controls, verifiedWalletsOf } from '../analytics/claims.js'
 import { TokenBucketLimiter, checkRequesterLimits } from '../analytics/limiter.js'
+import { virviDeploysDcl } from '../scenes/hud-version.js'
 import { getActiveSetup, releaseIfRedeployed, setUpLocation, SetupError } from '../setup/setups.js'
 import { sceneRoleFor } from '../auth/scene-roles.js'
 import { config } from '../config.js'
@@ -76,7 +77,13 @@ export default async function setupRoutes(app: FastifyInstance) {
       if (setup && (await isSceneDeleted(setup.virviSceneId))) return reply.send({ state: 'none' })
       if (setup) {
         const role = await roleOf(setup.virviSceneId, wallet)
-        if (role) return reply.send({ state: 'member', sceneId: setup.virviSceneId, role })
+        // LIV-13: the newest published HUD, so the HUD can tell people who work on the scene that it's behind
+        if (role) {
+          return reply.send({
+            state: 'member', sceneId: setup.virviSceneId, role,
+            hudLatest: DCL_HUD_LATEST, virviDeploys: await virviDeploysDcl(setup.virviSceneId),
+          })
+        }
         // Non-members still get the sceneId so the client can connect content-only (no HUD).
         return reply.send(
           (await controls(scene, wallet))

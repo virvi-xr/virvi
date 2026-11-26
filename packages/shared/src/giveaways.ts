@@ -36,6 +36,13 @@ export function giveawayMarketplaceApi(chain: GiveawayChain): string {
   return chain === 'polygon' ? 'https://marketplace-api.decentraland.org' : 'https://marketplace-api.decentraland.zone'
 }
 
+/** Decentraland's collections subgraph for the chain: who may mint from each collection and item. */
+export function giveawayCollectionsSubgraph(chain: GiveawayChain): string {
+  return chain === 'polygon'
+    ? 'https://subgraph.decentraland.org/collections-matic-mainnet'
+    : 'https://subgraph.decentraland.org/collections-matic-amoy'
+}
+
 /**
  * Where a host manages the collection. The Builder's per-collection URL uses its own collection id, which the contract
  * address doesn't give us, so this links the collections list; `contract` is kept so a deep link can be added later.
@@ -55,8 +62,11 @@ export interface VisitorGiveaway {
   claim: null | { status: GiveawayClaimStatus; secondsPresent: number; txUrl: string | null; failReason: string | null; delayed: boolean }
 }
 
-/** The room's `giveaway_available` for guests (who can't use REST): the scene's open giveaway, name and test flag only. */
-export interface AvailableGiveaway { name: string; test: boolean }
+/**
+ * The room's `giveaway_available` for guests (who can't use REST): the scene's open giveaway, name and test flag, and
+ * its id (`giveawayId`, so a kiosk can tell whether it is the one open; not `id`, which marks a VisitorGiveaway).
+ */
+export interface AvailableGiveaway { name: string; test: boolean; giveawayId?: string }
 
 export type GiveawayMintState = 'ready' | 'not_minter' | 'not_approved' | 'sold_out'
 

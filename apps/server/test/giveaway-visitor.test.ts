@@ -410,10 +410,10 @@ describe('giveaway visitor routes (LIV-194)', () => {
     ;({ off } = giveawaysOn())
   })
 
-  it('availableGiveaway (the room\'s giveaway_available) gives the open giveaway\'s name and test flag', async () => {
+  it('availableGiveaway (the room\'s giveaway_available) gives the open giveaway\'s name, test flag and id (for kiosks)', async () => {
     expect(await availableGiveaway(sceneA)).toBeNull()
-    await seed()
-    expect(await availableGiveaway(sceneA)).toEqual({ name: 'Launch party', test: false })
+    const g = await seed()
+    expect(await availableGiveaway(sceneA)).toEqual({ name: 'Launch party', test: false, giveawayId: g.id })
     expect(await availableGiveaway(sceneB)).toBeNull()
   })
 })

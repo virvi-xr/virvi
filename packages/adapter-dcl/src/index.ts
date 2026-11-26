@@ -19,6 +19,7 @@ import { startSceneBeats } from './beat/connect.js'
 import { startSceneGiveaways } from './giveaway/connect.js'
 import { pickHostRaffle, presentNow, raffleHostError, type HUDRaffle } from './raffle/host.js'
 import { locationKeyFor } from '@virvixr/shared'
+import { hudUpdateNotice } from './hud/update-notice.js'
 import type { VirviInitConfig, VirviStorage } from '@virvixr/shared'
 
 // Setup-status re-checks while Decentraland's directory is unavailable (~2.5 min).
@@ -113,8 +114,11 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
   const virvi = new Virvi(adapter)
   if (config?.analytics !== false) {
     // Analytics start once per scene runtime; every createVirvi call (retries included) attaches the shared collector.
+    // Ad views wait for the visitor's decision on the analytics notice; with no collector there is no notice to wait on
+    virvi.holdAdViews()
     void startVirviAnalytics({ env: config?.env, apiUrl: config?.apiUrl, adapter }).then((c) => {
       if (c) virvi.attachAnalytics(c)
+      else virvi.noAnalytics()
     })
   }
   const enableHud = config?.enableHud !== false
@@ -812,10 +816,13 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
       if (managesRoles()) void refresh()
     }
 
+    // LIV-13: set from the member's setup status, shown under the HUD's tabs once connected
+    let updateNotice: string | null = null
     const connectAs = async (sceneId: string, role: SceneRole): Promise<void> => {
       await virvi.authenticate({ env: 'prod', ...config })
       ensureRenderer()
       renderer?.setSceneRole(role)
+      renderer?.setUpdateNotice(role === 'viewer' ? null : updateNotice)
       renderer?.updateConnectionState('connecting', { sceneId })
       renderer?.setCurrentScene(sceneId, sceneRef.title || 'Scene')
       // Installed before connecting so the error screen's Retry works even if this first connect fails
@@ -879,7 +886,10 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
 
     // Act on a status answer; true when it was final (no directory retry needed)
     const act = (status: SetupStatus): boolean => {
-      if (status.state === 'member') connectInBackground(status.sceneId, status.role)
+      if (status.state === 'member') {
+        updateNotice = hudUpdateNotice(status)
+        connectInBackground(status.sceneId, status.role)
+      }
       else if (status.state === 'eligible') offerSetup()
       else if (status.state === 'unavailable') return false
       else if (status.state === 'taken') console.log(`[Virvi] Analytics running; Virvi here is already set up by ${status.host}`)

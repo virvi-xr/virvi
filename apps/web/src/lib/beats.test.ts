@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { CollectedBeat } from '@virvixr/shared'
 import { BEAT_IMAGE_MIN_PX, BEAT_MIN_PRESENT_DEFAULT_MINUTES, BEAT_SUPPLY_CAP_DEFAULT, type PublicBeat } from '@virvixr/shared'
-import { walletLookupHref, beatsExplainerFor,
+import { walletLookupHref, beatsExplainerFor, beatToInput,
   BEAT_FROZEN_NOTE, BEAT_IMAGE_HINT, BEAT_NO_REFUND, BEAT_TEST_BADGE, BEATS_UNAVAILABLE, beatActions, beatWindow, formatWhen, beatBody, beatEditBody, beatFieldError, beatFormError,
   beatHref, beatsNavVisible, blankBeat, claimantRow, claimantWallets, confirmBeatAction, fromLocalInput, newBeatHref, paymentNote, reviewModel,
   toLocalInput, type BeatAvailability, type BeatClaimant,
@@ -24,7 +24,7 @@ function beat(over: Partial<PublicBeat> = {}): PublicBeat {
     startsAt: new Date(NOW.getTime() + HOUR).toISOString(), endsAt: new Date(NOW.getTime() + 3 * HOUR).toISOString(),
     minPresentSeconds: 300, supplyCap: 100, tradeable: false, status: 'draft', sceneIds: ['s1'],
     counts: { claimed: 0, minting: 0, minted: 0, failed: 0 }, frozen: false, test: false,
-    holdMints: false, mintsReleasedAt: null, mintsHeldUntil: null, scheduledEndsAt: null, heldClaims: 0, waitingCount: 0, artStatus: 'pending', retired: false,
+    holdMints: false, autoClaim: true, mintsReleasedAt: null, mintsHeldUntil: null, scheduledEndsAt: null, heldClaims: 0, waitingCount: 0, artStatus: 'pending', retired: false,
     location: { type: 'scene', label: 'A', platform: null, url: null, venue: null, city: null, country: null, address: null, mapUrl: null }, ...over,
   }
 }
@@ -131,6 +131,13 @@ describe('form', () => {
     expect(beatEditBody(f, 'paid')).not.toHaveProperty('supplyCap')
     expect(beatEditBody(f, 'paid')).toMatchObject({ tradeable: true, holdMints: true })
     expect(beatEditBody(f, 'draft')).toHaveProperty('supplyCap', 100)
+  })
+  it('LIV-180: Claim automatically is on by default, sent on create and edit, and read back from the BEAT', () => {
+    const f = { ...blankBeat(NOW, 's1'), name: 'Launch', imageMediaId: 'm1', imageUrl: 'u' }
+    expect(f.autoClaim).toBe(true)
+    expect(beatBody(f)).toMatchObject({ autoClaim: true })
+    expect(beatEditBody({ ...f, autoClaim: false }, 'paid')).toMatchObject({ autoClaim: false })
+    expect(beatToInput(beat({ autoClaim: false })).autoClaim).toBe(false)
   })
   it('round-trips local datetime inputs', () => {
     expect(fromLocalInput(toLocalInput('2026-11-15T10:30:00.000Z'))).toBe('2026-11-15T10:30:00.000Z')

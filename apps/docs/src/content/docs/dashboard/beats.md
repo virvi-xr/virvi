@@ -38,6 +38,7 @@ If your BEAT gives people something valuable (a whitelist place, a prize), check
    - **Supply cap:** from 1 to 5,000, 100 by default. "The most BEATs that can be claimed. You pay for this many up front. You can raise it later, never lower it."
    - **Tradeable:** "Holders can send it to other wallets. You can't change this once the BEAT starts."
    - **Check claims before they are sent:** "Claims wait for you to press Send on this page, so you can remove any you don't recognise first. If you don't, they're sent anyway 24 hours after the end."
+   - **Claim automatically:** on by default. "Visitors who agree to tracking get the BEAT sent once they've been here long enough. Turn off to make them press Claim." You can change it until the BEAT starts.
 3. Choose **Review**. The review step sums up what is fixed once the BEAT starts (for example "Supply cap 500 · Tradeable: No · 3 scenes · Starts …"), then shows the price. Pay with **Pay with card**, or **Use credit** if your Virvi credit covers it. When it doesn't, the page says how much credit you have. A test BEAT has **Create test BEAT** instead.
 
 A BEAT you haven't paid for shows as **Draft**, with a **Pay** button.
@@ -99,11 +100,11 @@ When a visitor presses **Track my attendance**, before anything is stored, they 
 
 > To track your attendance for the {name} BEAT, Virvi stores your wallet address, your display name and how long you're here. The scene checks in every 30 seconds while you're in it. The hosts of this event will see your name, wallet and time. If you claim, your wallet, this BEAT and the time it was sent are recorded on Polygon, a public blockchain: anyone can see that record, and nobody can delete it. You can stop tracking at any time before you claim, which deletes what was stored.
 
-`{name}` is your BEAT's name. Nothing is stored for visitors who don't agree.
+`{name}` is your BEAT's name. Nothing is stored for visitors who don't agree. With **Claim automatically** on, the text also says "Agreeing also claims this BEAT to your wallet once you've been here long enough." after the sentence about hosts.
 
 **Your scene needs `@virvixr/dcl` 2.17.0 or later** to track BEATs, because it shows the text above. In a scene built with an older version, every **Track my attendance** is refused: visitors see "This BEAT's terms have changed. Reload the scene and try again." (newer scenes say "This scene needs an update before you can claim. Ask the host to update it."). Reloading doesn't help. Update the package and redeploy the scene before your BEAT's card appears. Scenes Virvi deploys for you get the new version when they're redeployed.
 
-Time only counts while the event runs ("Time counts while the event is running."), and time in all of the BEAT's scenes adds up. Once a visitor reaches the minimum, the card says "You've been here long enough. Claim your BEAT before {date and time}." and offers **Claim your BEAT** until 24 hours after the event ends. **Stop tracking** stays on the card until they claim, including when the BEAT is sold out or over; then the card also says "Your wallet and name are still saved for this BEAT. Stop tracking to delete them."
+Time only counts while the event runs ("Time counts while the event is running."), and time in all of the BEAT's scenes adds up. With **Claim automatically** on, the card adds "It's claimed for you once you've been here long enough.", and the claim happens on its own as soon as the visitor reaches the minimum (while the supply lasts); the card then says "Your BEAT is on its way." before what follows a claim below. Visitors in scenes built with `@virvixr/dcl` older than 2.21.0 agreed to the text without that sentence, so they still press Claim. Otherwise, once a visitor reaches the minimum, the card says "You've been here long enough. Claim your BEAT before {date and time}." and offers **Claim your BEAT** until 24 hours after the event ends. **Stop tracking** stays on the card until they claim, including when the BEAT is sold out or over; then the card also says "Your wallet and name are still saved for this BEAT. Stop tracking to delete them."
 
 After a claim the card says one of:
 - "Sending your BEAT. This usually takes a few minutes, and you can leave the scene."
@@ -115,7 +116,7 @@ After a claim the card says one of:
 
 ## What you see
 
-Open the BEAT in the dashboard to see **When**, **Claiming** ("Visitors can claim until …"), **Minimum time in scene**, **Where**, **Scenes**, **Tradeable** and **Check claims first**, and the counts: **Claimed (waiting to send)**, **Waiting for a wallet**, **Sending**, **Delivered**, **Failed** and **Cap**, with "N of M used" (claims waiting for a wallet count as used). "Failed claims are retried automatically. A wallet that can't accept BEATs stays failed."
+Open the BEAT in the dashboard to see **When**, **Claiming** ("Visitors can claim until …"), **Minimum time in scene**, **Where**, **Scenes**, **Tradeable**, **Check claims first** and **Claim automatically**, and the counts: **Claimed (waiting to send)**, **Waiting for a wallet**, **Sending**, **Delivered**, **Failed** and **Cap**, with "N of M used" (claims waiting for a wallet count as used). "Failed claims are retried automatically. A wallet that can't accept BEATs stays failed."
 
 The list is headed "Attendees (N): X claimed, Y still attending", with "Y waiting for a wallet" added when claims are waiting. It shows each visitor's display name, wallet and status (**Attending**, **Claimed**, **Waiting for your Send**, **Waiting for a wallet**, **Sending**, **Delivered**, **Failed** or **Removed by you**), with a **View** link to the record on Polygonscan, Polygon's public explorer, once it's delivered. A BEAT that Virvi sent again to a visitor's new wallet, because their old one was lost or stolen, is marked **Reissued**, with a **Reissue** link. **Copy wallets that claimed** copies the wallet of everyone who claimed, one per line; visitors still attending aren't included.
 

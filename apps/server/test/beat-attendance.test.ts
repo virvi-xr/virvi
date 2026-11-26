@@ -54,10 +54,11 @@ describe('BEAT attendance protections (LIV-11)', () => {
   })
 
   let tokenSeq = 7000
+  // Auto-claim off: these tests drive the manual Claim (with a minimum of 0, tracking would claim at once)
   async function seed(over: Partial<typeof beats.$inferInsert> = {}) {
     const [b] = await db.insert(beats).values({
       chain: 'polygon', ownerUserId: host.id, name: 'Night', description: '', imageUrl: 'https://cdn.example/f.webp',
-      tokenId: tokenSeq++, status: 'live', minPresentSeconds: 0, supplyCap: 100, startsAt: at(-H), endsAt: at(H), ...over,
+      tokenId: tokenSeq++, status: 'live', minPresentSeconds: 0, supplyCap: 100, autoClaim: false, startsAt: at(-H), endsAt: at(H), ...over,
     }).returning()
     await db.insert(beatScenes).values({ beatId: b.id, sceneId: sceneA })
     return b

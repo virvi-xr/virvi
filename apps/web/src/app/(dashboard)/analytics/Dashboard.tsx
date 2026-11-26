@@ -24,7 +24,7 @@ const HeatmapPanel = dynamic(() => import('@/components/analytics/HeatmapPanel')
 import { Section, type SectionState } from '@/components/analytics/Section'
 import { full } from '@/components/analytics/format'
 import { tenureLabel } from './LocationList'
-import { Badge, PageHeader, tableHead } from '@/components/ui'
+import { Badge, PageHeader, tableHead, TableScroll } from '@/components/ui'
 
 const LIVE_MS = 15_000
 const LIVE_ERROR_MS = 60_000
@@ -41,7 +41,7 @@ export function NoAccess() {
       <PageHeader crumbs={['Tools', 'Analytics']} title="Analytics" />
       <div className="rounded-lg border border-gray-800 bg-gray-900 p-6 text-sm text-gray-300">
         <p>You don&apos;t have access to this scene&apos;s analytics.</p>
-        <Link href="/analytics/" className="mt-3 inline-block text-blue-400 hover:text-blue-300 hover:underline">See the scenes you can view</Link>
+        <Link href="/analytics/" className="mt-3 inline-block text-blue-400 hover:text-blue-300 underline underline-offset-2">See the scenes you can view</Link>
       </div>
     </div>
   )
@@ -221,7 +221,7 @@ export function Dashboard({ location, showAllLink, onWalletVisibility }: {
       {summary.status === 'error' ? (
         <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 text-sm text-gray-400" role="alert">
           Couldn&apos;t load the summary —{' '}
-          <button type="button" onClick={retrySummary} className="text-blue-400 hover:text-blue-300 hover:underline">Retry</button>
+          <button type="button" onClick={retrySummary} className="text-blue-400 hover:text-blue-300 underline underline-offset-2">Retry</button>
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5" aria-busy={summary.status === 'loading'}>
@@ -368,7 +368,7 @@ function Sessions({ apiRef, id, onNoAccess }: { apiRef: { current: Api }; id: st
 
   return (
     <Section title="Recent visits" state={state} onRetry={retry}>
-      <div className="overflow-x-auto">
+      <TableScroll label="Recent visits">
         <table className="w-full min-w-[640px] text-left text-sm">
           <thead className={tableHead}>
             <tr className="border-b border-gray-800">
@@ -400,7 +400,7 @@ function Sessions({ apiRef, id, onNoAccess }: { apiRef: { current: Api }; id: st
             ))}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
       {cursor && (
         <div className="mt-3 flex items-center gap-3">
           <button

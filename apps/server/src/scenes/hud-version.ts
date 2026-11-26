@@ -1,5 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm'
-import { compareHudVersions, DCL_HUD_VERSION, parseHudVersion } from '@virvixr/shared'
+import { compareHudVersions, DCL_HUD_LATEST, parseHudVersion } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { sceneDeployments, scenes } from '../db/schema.js'
 
@@ -43,7 +43,7 @@ export const FIRST_VERSIONED_HUD = '2.14.0'
  * A HUD that sent no version is behind only once the latest release sends one: before that, redeploying wouldn't
  * change anything.
  */
-export function dclHudStatus(s: { dclHudVersion: string | null; dclHudSeenAt: Date | null }, latest: string = DCL_HUD_VERSION, virviDeploys = true) {
+export function dclHudStatus(s: { dclHudVersion: string | null; dclHudSeenAt: Date | null }, latest: string = DCL_HUD_LATEST, virviDeploys = true) {
   if (!s.dclHudSeenAt) return null
   const behind = s.dclHudVersion
     ? compareHudVersions(s.dclHudVersion, latest) < 0

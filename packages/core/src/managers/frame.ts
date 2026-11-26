@@ -34,7 +34,7 @@ const toldLimit = new WeakSet<object>()
  * Room for `n` more entities under the platform's limit. Without a known limit (capabilities.maxEntities) or a count
  * (entityCount), there is always room.
  */
-function roomFor(adapter: VirviPlatformAdapter, n: number): boolean {
+export function roomFor(adapter: VirviPlatformAdapter, n: number): boolean {
   const max = adapter.capabilities?.maxEntities
   if (max === undefined || !adapter.entityCount) return true
   return adapter.entityCount() + n <= max

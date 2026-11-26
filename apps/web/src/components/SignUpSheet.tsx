@@ -8,7 +8,7 @@ import { TermsCheckbox } from '@/components/TermsCheckbox'
 import { useDialog } from '@/lib/use-dialog'
 
 const BUTTON_STYLE = {
-  wallet: 'bg-orange-500 text-white hover:bg-orange-600',
+  wallet: 'bg-orange-700 text-white hover:bg-orange-800',
   google: 'bg-white text-gray-900 hover:bg-gray-100',
   discord: 'bg-[#5865F2] text-white hover:bg-[#4752C4]',
   apple: 'bg-black text-white ring-1 ring-gray-600 hover:bg-gray-950',

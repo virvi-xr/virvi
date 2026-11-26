@@ -6,6 +6,10 @@
  * HTTP calls (the server refuses guest tokens): the room's `giveaway_available` on join tells them of one, for the
  * one-time "Connect a wallet" notice. Stops when the Virvi is destroyed (or on the returned dispose); a late response is
  * then ignored. Mirrors beat/connect.ts. Nothing here logs a wallet or a display name.
+ *
+ * Giveaway kiosks: while the scene shows one (Virvi's kiosk count), the card stays hidden until a kiosk is clicked, and
+ * then shows the kiosk's giveaway if it is the scene's open one ("Not open right now" otherwise) until it is closed. A
+ * signed-in visitor's click also reads the giveaway again, so the card is current.
  */
 import type { Virvi } from '@virvixr/core'
 import { CHECKIN_INTERVAL_MS, type VisitorGiveaway } from '@virvixr/shared'
@@ -37,7 +41,7 @@ export function startSceneGiveaways(
   const wallet = opts.wallet || null
 
   let giveaway: CardGiveaway | null = null
-  let ui: GiveawayUi = initialGiveawayUi(guest, wallet)
+  let ui: GiveawayUi = { ...initialGiveawayUi(guest, wallet), kiosks: (virvi.kioskCount?.() ?? 0) > 0 }
   const notice = new GuestNotice(GUEST_NOTICE_MS)
   let disposed = false
   let connected = false
@@ -56,8 +60,8 @@ export function startSceneGiveaways(
     publish()
   }
   const setGiveaway = (next: CardGiveaway | null) => {
-    // Another giveaway (or none): the last one's note and busy flag don't carry over
-    if (giveawayKey(next) !== giveawayKey(giveaway)) ui = initialGiveawayUi(guest, wallet)
+    // Another giveaway (or none): the last one's note and busy flag don't carry over (whether the card is open does)
+    if (giveawayKey(next) !== giveawayKey(giveaway)) ui = { ...initialGiveawayUi(guest, wallet), kiosks: ui.kiosks, opened: ui.opened }
     giveaway = next
     // The card's countdown runs on from the server's count as of now
     ui = { ...ui, seenAt: now() }
@@ -112,6 +116,17 @@ export function startSceneGiveaways(
     setGiveaway(available)
   })
 
+  // Giveaway kiosks: the card opens on a click, for the kiosk's giveaway
+  const unsubscribeKiosks = virvi.onKiosksChanged?.((count) => {
+    if (disposed) return
+    setUi(count > 0 ? { kiosks: true } : { kiosks: false, opened: null })
+  }) ?? (() => {})
+  const unsubscribeKioskClick = virvi.onKioskClick?.((click) => {
+    if (disposed) return
+    setUi({ kiosks: true, opened: { giveawayId: click.giveawayId }, note: null })
+    if (connected) refresh()
+  }) ?? (() => {})
+
   // Engine time drives the polling and the guest notice (the platform has no timers)
   const system = (dt: number) => {
     if (disposed) return
@@ -132,6 +147,10 @@ export function startSceneGiveaways(
   systems.registerSystem(system)
 
   setGiveawayCardHandler((action: GiveawayAction) => {
+    if (action === 'close') {
+      if (!disposed) setUi({ opened: null, note: null })
+      return
+    }
     const g = visitorGiveaway()
     if (disposed || guest || !g || ui.busy) return
     const id = g.id
@@ -188,6 +207,8 @@ export function startSceneGiveaways(
     queued = null
     unsubscribeState()
     unsubscribeAvailable()
+    unsubscribeKiosks()
+    unsubscribeKioskClick()
     systems.unregisterSystem?.(system)
     started.delete(virvi)
     setGiveawayCardHandler(() => {})

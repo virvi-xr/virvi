@@ -278,7 +278,7 @@ function parseItems(v: unknown): ItemRef[] {
 }
 
 /**
- * Replaces the giveaway's items: 1 to 10, each one the owner's verified wallets created (400 not_your_item), with its
+ * Replaces the giveaway's items: 1 to 10, each one the owner's verified wallets created or may mint (400 not_your_item), with its
  * name, thumbnail and rarity cached. Refused (409 has_claims) once any claim is past `present`. On a giveaway that is
  * switched on, the new items must pass the minter check too.
  */
@@ -296,7 +296,7 @@ export async function setItems(c: GiveawayCaller, id: string, body: Record<strin
   const found = wanted.map((w) => mine.find((m) => m.contractAddress.toLowerCase() === w.contractAddress.toLowerCase() && m.itemId === w.itemId))
   const missing = wanted.find((_, i) => !found[i])
   if (missing) {
-    throw new GiveawayError(400, 'not_your_item', 'Pick items from collections you created, with a wallet linked to your account.', { ...missing })
+    throw new GiveawayError(400, 'not_your_item', 'Pick items you created or can mint, with a wallet linked to your account.', { ...missing })
   }
   if (g.enabled) {
     let checks: GiveawayMintCheck[]
@@ -341,6 +341,25 @@ export async function setScenes(c: GiveawayCaller, id: string, body: Record<stri
     if (sceneIds.length) await tx.insert(giveawayScenes).values(sceneIds.map((sceneId) => ({ giveawayId: g.id, sceneId })))
   })
   return view(g)
+}
+
+/**
+ * A giveaway kiosk placed in a scene links its giveaway there (the scene is added to the giveaway's scenes when it isn't
+ * one yet). The same rules as picking scenes: the caller manages the giveaway (404 otherwise) and may run events in the
+ * scene (403), and a giveaway being deleted takes no more scenes.
+ */
+export async function linkGiveawayToScene(c: GiveawayCaller, id: string, sceneId: string): Promise<void> {
+  const g = await load(c, id)
+  refuseWhileDeleting(g)
+  if (!(await sceneExists(sceneId)) || !(await mayRunBeatsIn(c, sceneId))) {
+    throw new GiveawayError(403, 'forbidden', "You can't run events in this scene.")
+  }
+  const linked = await db.select({ sceneId: giveawayScenes.sceneId }).from(giveawayScenes).where(eq(giveawayScenes.giveawayId, g.id))
+  if (linked.some((r) => r.sceneId === sceneId)) return
+  if (linked.length >= GIVEAWAY_SCENES_MAX) {
+    throw new GiveawayError(409, 'too_many_scenes', `A giveaway can be in up to ${GIVEAWAY_SCENES_MAX} scenes.`)
+  }
+  await db.insert(giveawayScenes).values({ giveawayId: g.id, sceneId }).onConflictDoNothing()
 }
 
 // ── Claims ───────────────────────────────────────────────────────────────────

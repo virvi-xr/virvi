@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { TERMS_VERSION } from '@virvixr/shared'
 import { useApi } from '@/lib/api'
 import { termsGate, type TermsStatus } from '@/lib/terms'
@@ -8,14 +8,23 @@ import { useDialog } from '@/lib/use-dialog'
 /**
  * Covers the dashboard until the account agrees to the Terms of Service in force: on first visit for accounts that
  * signed up without the sign-up form's box (Google, Discord, wallet), and again whenever TERMS_VERSION changes.
+ * `onAgreed` runs once the account is known to have agreed (the privacy notice waits for it).
  */
-export function TermsGate({ onSignOut }: { onSignOut: () => void }) {
+export function TermsGate({ onSignOut, onAgreed }: { onSignOut: () => void; onAgreed?: () => void }) {
   const api = useApi()
   const [status, setStatus] = useState<TermsStatus | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => { api.getTermsStatus().then(setStatus, () => {}) }, [api])
   const gate = termsGate(status)
+  const agreed = !!status?.accepted
+  const told = useRef(false)
+  useEffect(() => {
+    if (agreed && !told.current) {
+      told.current = true
+      onAgreed?.()
+    }
+  }, [agreed, onAgreed])
   // No Escape: the Terms must be answered (agree, or sign out)
   const dialog = useDialog(!!gate, undefined, false)
   if (!gate) return null

@@ -226,4 +226,50 @@ describe('AdTracker', () => {
     await settle()
     expect(send).toHaveBeenCalledTimes(1)
   })
+
+  describe('the visitor notice (GDPR notice)', () => {
+    const gate = (g: { sending: boolean; declined: boolean }) => g
+
+    it('held until the decision is attached, then sent once they accept', async () => {
+      const { tracker, all, tick } = setup()
+      tracker.hold()
+      tick()
+      tracker.showing('s1', 'el1', 'ad1')
+      tracker.click('s1')
+      await tracker.flush()
+      expect(all()).toEqual([])
+      const g = gate({ sending: false, declined: false })
+      tracker.setConsent(g)
+      await tracker.flush()
+      expect(all()).toEqual([])
+      g.sending = true
+      await tracker.flush()
+      expect(all().map((e) => e.level)).toEqual(['scene', 'click'])
+    })
+
+    it('a decline drops what was held and counts nothing more', async () => {
+      const { tracker, all, tick, send } = setup()
+      const g = gate({ sending: false, declined: false })
+      tracker.setConsent(g)
+      tick()
+      tracker.showing('s1', 'el1', 'ad1')
+      g.declined = true
+      tracker.click('s1')
+      tick()
+      g.sending = true // even a gate that would send: a decline wins
+      await tracker.flush()
+      expect(all()).toEqual([])
+      expect(send).not.toHaveBeenCalled()
+    })
+
+    it('with no notice (analytics off) ad views count as before', async () => {
+      const { tracker, all, tick } = setup()
+      tracker.hold()
+      tracker.setConsent(null)
+      tick()
+      tracker.showing('s1', 'el1', 'ad1')
+      await tracker.flush()
+      expect(all().map((e) => e.level)).toEqual(['scene'])
+    })
+  })
 })

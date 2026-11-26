@@ -7,7 +7,7 @@ import { useAuth } from '@/lib/auth'
 import { useApi, fileToBase64, mediaContentType, uploadErrorMessage } from '@/lib/api'
 import type { AdminAdSpace } from '@/lib/api'
 import { shapeLabel, isHttpsUrl, clickRate, contentLabel, reviewBadge } from '@/lib/ads'
-import { PageHeader, PrimaryButton, Skeleton, tableHeadBand } from '@/components/ui'
+import { PageHeader, PrimaryButton, Skeleton, tableHeadBand, TableScroll } from '@/components/ui'
 import { PlusIcon } from '@/components/icons'
 
 const ERRORS: Record<string, string> = {
@@ -514,7 +514,7 @@ function Stat({ label, value, sub }: { label: string; value: string; sub: string
 
 function CountsTable({ title, rows }: { title: string; rows: { key: string; label: string; counts: LevelCounts }[] }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-gray-800">
+    <TableScroll label="Delivery by day" className="rounded-lg border border-gray-800">
       <table className="w-full text-sm">
         <thead className={tableHeadBand}>
           <tr>
@@ -539,6 +539,6 @@ function CountsTable({ title, rows }: { title: string; rows: { key: string; labe
           ))}
         </tbody>
       </table>
-    </div>
+    </TableScroll>
   )
 }

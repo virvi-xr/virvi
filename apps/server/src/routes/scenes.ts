@@ -1,4 +1,4 @@
-import { checkClickEvent, checkFrame, FRAMEABLE_TYPES } from '@virvixr/shared'
+import { checkClickEvent, checkFrame, checkKioskProperties, FRAMEABLE_TYPES, KIOSK_ITEMS_KEY, kioskSettings } from '@virvixr/shared'
 import { dclHudStatus, virviDeploysDcl } from '../scenes/hud-version.js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { eq, and, or, isNull, sql, inArray } from 'drizzle-orm'
@@ -28,6 +28,8 @@ import { getSubscription } from '../integrations/stripe.js'
 import { liveScene } from '../scenes/live.js'
 import { mayManageDeletion } from '../scenes/deleted.js'
 import { authorizeVideoControl } from '../ws/scene-guard.js'
+import { isAdminRequest } from '../auth/admin.js'
+import { GiveawayError, linkGiveawayToScene } from '../giveaways/host.js'
 import { checkParentInstance } from '../scenes/instance-parent.js'
 import { boundScene, fromElement, fromInstance, fromParam, fromPreset, isScenePass } from '../auth/scene-from.js'
 import { SceneGone, ThumbnailError, bodyLimitFor, removeSceneThumbnail, setSceneThumbnail } from '../scenes/thumbnail.js'
@@ -73,7 +75,7 @@ interface CreateSceneBody {
 }
 
 interface CreateElementBody {
-  type: 'image' | 'video' | 'nft' | 'sound' | 'widget' | 'model' | 'custom' | 'ad_space'
+  type: 'image' | 'video' | 'nft' | 'sound' | 'widget' | 'model' | 'custom' | 'ad_space' | 'claim_point'
   name: string
   enabled?: boolean
   customId?: string
@@ -198,6 +200,83 @@ function tidyFrame(type: unknown, before: unknown, body: { properties?: unknown 
   if (c.value) p.frame = c.value
   else delete p.frame
   return true
+}
+
+/** Kiosk-only keys: no other element type keeps them (the server makes `giveawayItems`; see giveaways/kiosk.ts). */
+const KIOSK_ONLY_KEYS = ['giveawayId', KIOSK_ITEMS_KEY] as const
+
+const isProps = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
+
+/**
+ * A giveaway kiosk's settings (`claim_point`) are checked and stored tidied. Picking a giveaway (a giveawayId that
+ * isn't the one a stored kiosk already has, including on an element whose type changes to claim_point, with or
+ * without properties in the body) needs a signed-in account that manages it, by the Drops routes' rules (404 for
+ * anyone else's, 403 for a scene the caller can't run events in), and links the giveaway to the scene when it isn't
+ * yet. Any other element type never keeps a giveawayId or kiosk items: they are taken out of what is stored.
+ * `stored` is the element as it is (null on create). False when the reply (400 bad_kiosk, 403, 404, 409 or 503
+ * giveaways_off) was sent.
+ */
+async function tidyKiosk(
+  request: FastifyRequest, reply: FastifyReply, type: unknown, stored: { type: string; properties: unknown } | null, sceneId: string,
+): Promise<boolean> {
+  const body = (request.body ?? {}) as { properties?: unknown }
+  const wasKiosk = stored?.type === 'claim_point'
+  // A stored non-kiosk's properties were never checked as a kiosk's: they count as no kiosk at all
+  const before = wasKiosk ? stored!.properties : null
+
+  if (type !== 'claim_point') {
+    if (isProps(body.properties)) {
+      for (const k of KIOSK_ONLY_KEYS) delete body.properties[k]
+    } else if (body.properties === undefined && stored && isProps(stored.properties) && KIOSK_ONLY_KEYS.some((k) => k in (stored.properties as object))) {
+      const rest = { ...stored.properties }
+      for (const k of KIOSK_ONLY_KEYS) delete rest[k]
+      body.properties = rest
+    }
+    return true
+  }
+
+  let next: unknown
+  if (body.properties !== undefined) {
+    const c = checkKioskProperties(body.properties)
+    if (!c.ok) return refuse(reply, c.error)
+    // In place: the create route has already read `properties` off the body
+    if (isProps(body.properties)) {
+      const props = body.properties
+      for (const k of Object.keys(props)) if (!(k in c.value)) delete props[k]
+      Object.assign(props, c.value)
+    }
+    next = c.value.giveawayId
+  } else if (stored && !wasKiosk) {
+    // Becoming a kiosk with its old properties: they are checked and stored tidied, and their giveawayId is a pick
+    const c = checkKioskProperties(stored.properties)
+    if (!c.ok) return refuse(reply, c.error)
+    body.properties = c.value
+    next = c.value.giveawayId
+  } else {
+    return true
+  }
+  if (typeof next !== 'string' || next === kioskSettings(before).giveawayId) return true
+  if (!config.giveaways.enabled) {
+    reply.status(503).send({ error: 'giveaways_off', message: "Automatic giveaways aren't switched on for this server yet." })
+    return false
+  }
+  if (request.user.kind !== 'account' || request.user.trial) {
+    reply.status(403).send({ error: 'forbidden', message: "Pick the kiosk's giveaway in the Virvi dashboard." })
+    return false
+  }
+  try {
+    await linkGiveawayToScene({ userId: request.user.id, actor: actorFromClaims(request.user), admin: await isAdminRequest(request) }, next, sceneId)
+  } catch (e) {
+    if (!(e instanceof GiveawayError)) throw e
+    reply.status(e.status).send({ ...e.details, error: e.code, message: e.message })
+    return false
+  }
+  return true
+}
+
+function refuse(reply: FastifyReply, message: string): false {
+  reply.status(400).send({ error: 'bad_kiosk', message })
+  return false
 }
 
 export default async function sceneRoutes(app: FastifyInstance) {
@@ -558,6 +637,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
       const trialRefusal = request.user.trial ? trialElementRefusal(type, properties) : null
       if (trialRefusal) return refuseTrial(request, reply, trialRefusal)
       if (!tidyFrame(type, null, request.body, reply)) return reply
+      if (!(await tidyKiosk(request, reply, type, null, preset.sceneId))) return reply
 
       // A room-set asset gets the scene's own copy of its set (generated and uploaded before the transaction)
       let prepared: PreparedRoomSet | null = null
@@ -632,6 +712,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
       const trialRefusal = request.user.trial ? trialElementChangeRefusal(element, request.body) : null
       if (trialRefusal) return refuseTrial(request, reply, trialRefusal)
       if (!tidyFrame(request.body.type ?? element.type, element.properties, request.body, reply)) return reply
+      if (!(await tidyKiosk(request, reply, request.body.type ?? element.type, element, element.preset.sceneId))) return reply
 
       const updates: Record<string, unknown> = { updatedAt: new Date() }
       for (const key of ['type', 'name', 'enabled', 'customId', 'customRendering', 'clickEvent', 'properties'] as const) {

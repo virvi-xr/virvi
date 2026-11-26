@@ -64,7 +64,7 @@ export function ShareDialog({ asset, onShared, onClose }: { asset: any; onShared
                 <span className="min-w-0">
                   <span className="block text-sm font-medium">
                     {l.name}
-                    {l.url && <> <a href={l.url} target="_blank" rel="noopener noreferrer" className="ml-1 text-xs font-normal text-blue-300 hover:underline" onClick={(e) => e.stopPropagation()}>Full license</a></>}
+                    {l.url && <> <a href={l.url} target="_blank" rel="noopener noreferrer" className="ml-1 text-xs font-normal text-blue-300 underline underline-offset-2" onClick={(e) => e.stopPropagation()}>Full license</a></>}
                   </span>
                   <span className="block text-sm text-gray-400">{l.summary}</span>
                 </span>

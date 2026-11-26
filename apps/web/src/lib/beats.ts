@@ -59,6 +59,8 @@ export const SUPPLY_HINT = 'The most BEATs that can be claimed. You pay for this
 export const PAID_SUPPLY_HINT = "The supply can't be changed after paying. To allow more BEATs, use Raise cap."
 export const MINUTES_HINT = '0 means anyone who agrees can claim once it starts.'
 export const HOLD_LABEL = 'Check claims before they are sent'
+export const AUTO_CLAIM_LABEL = 'Claim automatically'
+export const AUTO_CLAIM_HINT = "Visitors who agree to tracking get the BEAT sent once they've been here long enough. Turn off to make them press Claim."
 export const HOLD_HINT = "Claims wait for you to press Send on this page, so you can remove any you don't recognise first. If you don't, they're sent anyway 24 hours after the end."
 export const LOCATION_SCENE_ONLY = 'People claim this BEAT in your Virvi scene, or in an AR space with the Virvi app.'
 export const LOCATION_TYPE_LABELS: Record<BeatLocationType, string> = { scene: 'In my Virvi scenes', online: 'Online, on another platform', in_person: 'In person' }
@@ -116,6 +118,8 @@ export interface BeatInput {
   tradeable: boolean
   /** Host review: claims wait for the host's Send. */
   holdMints: boolean
+  /** Auto-claim (LIV-180): agreeing to tracking also claims, once the visitor meets the rules. */
+  autoClaim: boolean
   location: LocationInput
 }
 
@@ -206,7 +210,7 @@ export function blankBeat(now: Date, sceneId?: string | null): BeatInput {
   return {
     name: '', description: '', imageMediaId: null, imageUrl: null, startsAt: toLocalInput(start.toISOString()), endsAt: toLocalInput(end.toISOString()),
     sceneIds: sceneId ? [sceneId] : [], minPresentMinutes: BEAT_MIN_PRESENT_DEFAULT_MINUTES, supplyCap: BEAT_SUPPLY_CAP_DEFAULT, tradeable: false,
-    holdMints: false, location: blankLocation(),
+    holdMints: false, autoClaim: true, location: blankLocation(),
   }
 }
 
@@ -215,7 +219,7 @@ export function beatToInput(b: PublicBeat): BeatInput {
   return {
     name: b.name, description: b.description, imageMediaId: null, imageUrl: b.imageUrl || null, startsAt: toLocalInput(b.startsAt), endsAt: toLocalInput(b.endsAt),
     sceneIds: [...b.sceneIds], minPresentMinutes: Math.round(b.minPresentSeconds / 60), supplyCap: b.supplyCap, tradeable: b.tradeable,
-    holdMints: b.holdMints, location: locationToInput(b.location),
+    holdMints: b.holdMints, autoClaim: b.autoClaim, location: locationToInput(b.location),
   }
 }
 
@@ -253,7 +257,7 @@ export function beatBody(f: BeatInput) {
   return {
     name: f.name.trim(), description: f.description.trim(), imageMediaId: f.imageMediaId, startsAt: fromLocalInput(f.startsAt), endsAt: fromLocalInput(f.endsAt),
     sceneIds: f.sceneIds, minPresentMinutes: f.minPresentMinutes, supplyCap: f.supplyCap, tradeable: f.tradeable, holdMints: f.holdMints,
-    location: locationBody(f.location),
+    autoClaim: f.autoClaim, location: locationBody(f.location),
   }
 }
 

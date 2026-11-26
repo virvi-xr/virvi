@@ -27,7 +27,7 @@ When a visitor claims, Virvi mints one of each item in the giveaway to that visi
 1. In the dashboard, go to **Drops** and create a giveaway.
 2. Set:
    - **Name.**
-   - **Items:** choose the wearables to give away, from collections you created. They are found through the wallets linked to your account, so link the wallet that created the collection first. A visitor gets **one of every item** in the giveaway.
+   - **Items:** choose the wearables and emotes to give away: ones you created, and ones from someone else's collection that you were given minting rights to (for the whole collection or a single item). They are found through the wallets linked to your account, so link the wallet that created the collection, or the one with the minting rights, first. A visitor gets **one of every item** in the giveaway.
    - **Starts** and **Ends** (optional). Leave them empty to start when you switch it on and run until you switch it off.
    - **Claim limit** (optional): the most people who can claim. Leave it empty for no limit. Claims that failed don't count toward it.
    - **Minimum minutes in the scene** (optional): how long a visitor must stay in your scene before they can claim.
@@ -48,6 +48,8 @@ To add the minter:
 2. Choose **Open the Builder** next to the item to go to the collection.
 3. In the collection's settings, add the address as a minter for the item (or for the whole collection) and confirm in your wallet.
 4. Back on the giveaway's page, choose **Check again**.
+
+Only the collection's owner can add a minter. For an item from someone else's collection, send them the giveaway's address and ask them to add it.
 
 The collection must be published and approved. You can switch a giveaway on only once every item shows **Can mint**. Until then visitors don't see it.
 
@@ -85,6 +87,25 @@ When a giveaway is open in a scene (switched on, inside its dates, with claims a
 Each wallet can claim a giveaway once, however many accounts it uses. If a send fails for good, the card shows a short reason, such as "this giveaway ran out."
 
 Virvi-built scenes get the card the next time they are redeployed. A scene you build yourself with `@virvixr/dcl` needs version 2.18.0 or later.
+
+## Placing a giveaway kiosk
+
+A **giveaway kiosk** is something visitors walk up to and click to open the giveaway card, like a booth at an event. In a scene with a kiosk, the card no longer appears by itself: it opens when a visitor clicks a kiosk, and they can close it again.
+
+1. In the dashboard, open the scene, go to the **Kiosks** tab and choose **+ Add Giveaway kiosk**.
+2. Under **Giveaway**, pick one of your giveaways. Picking it adds this scene to the giveaway's scenes, so you don't have to add it on the Drops page too.
+3. Choose how the item shows under **Show the item as**:
+   - **Marketplace image:** the giveaway's first item, as the Decentraland Marketplace shows it.
+   - **Your image:** an image you upload or pick.
+   - **3D model:** a model you upload or pick. Like other models, it appears in-world after `npx @virvixr/dcl sync` and a redeploy.
+   - **Mannequin:** an avatar wearing the giveaway's wearables, with a male or female body, or **Dressed like the visitor** (their own avatar with the giveaway's wearables on).
+4. **Show the booth** puts the item in a booth with a roof sign, a panel and a counter with a Claim button. Pick the booth's three colours (roof and sides, panel, counter) and, if you like, a **Booth image** shown as a banner on the roof sign. Switch the booth off to show the item on its own.
+5. Optional: **Spin the item**, change the **Hover text** (it says "Claim" unless you change it), and move or resize the item with **Height** and **Size**.
+6. Place the kiosk with its instance's position, rotation and scale, like any other item.
+
+A scene shows one giveaway at a time. A kiosk whose giveaway isn't the one open in the scene right now (it is switched off, has ended, or isn't open yet) still stands there, but clicking it says **Not open right now**. Visitors without a wallet who click a kiosk see the **Connect a wallet** notice.
+
+Kiosks show in Decentraland. Virvi-built scenes get them the next time they are redeployed; a scene you build yourself with `@virvixr/dcl` needs version 2.19.0 or later. Other platforms don't show kiosks yet.
 
 ## Following claims
 

@@ -7,7 +7,7 @@ import {
 } from '@virvixr/shared'
 import { useApi } from '@/lib/api'
 import {
-  BEAT_IMAGE_HINT, FIELD_IDS, HOLD_HINT, HOLD_LABEL, LOCATION_SCENE_ONLY, LOCATION_TYPE_LABELS, MINUTES_HINT, PAID_SUPPLY_HINT, SUPPLY_HINT,
+  AUTO_CLAIM_HINT, AUTO_CLAIM_LABEL, BEAT_IMAGE_HINT, FIELD_IDS, HOLD_HINT, HOLD_LABEL, LOCATION_SCENE_ONLY, LOCATION_TYPE_LABELS, MINUTES_HINT, PAID_SUPPLY_HINT, SUPPLY_HINT,
   TRADEABLE_HINT, beatFormError, fieldsOfPatch, shownFieldError,
   type BeatField, type BeatInput, type BeatLocationType, type FieldError, type LocationInput,
 } from '@/lib/beats'
@@ -315,6 +315,13 @@ export function BeatForm({ initial, editing, error, busy, submitLabel, busyLabel
             {HOLD_LABEL}
           </label>
           <p id="beat-hold-hint" className={HINT}>{HOLD_HINT}</p>
+        </div>
+        <div>
+          <label className="inline-flex items-center gap-2 text-sm text-gray-200">
+            <input type="checkbox" checked={f.autoClaim} aria-describedby="beat-auto-claim-hint" onChange={(e) => set({ autoClaim: e.target.checked })} />
+            {AUTO_CLAIM_LABEL}
+          </label>
+          <p id="beat-auto-claim-hint" className={HINT}>{AUTO_CLAIM_HINT}</p>
         </div>
       </div>
 

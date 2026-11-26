@@ -310,3 +310,94 @@ describe('startSceneGiveaways (LIV-194)', () => {
     expect(u.systems).toHaveLength(0)
   })
 })
+
+describe('startSceneGiveaways with giveaway kiosks', () => {
+  beforeEach(() => { overlay.card = null; overlay.handler = null })
+
+  function withKiosks(guest = false, kiosksAtStart = 0) {
+    const clicks: ((c: { elementId: string; instanceId: string; giveawayId: string | null }) => void)[] = []
+    const counts: ((n: number) => void)[] = []
+    const on: ((s: string) => void)[] = []
+    const available: ((g: AvailableGiveaway | null) => void)[] = []
+    const virvi = {
+      onStateChange: (fn: any) => { on.push(fn); return () => {} },
+      onGiveawayAvailable: (fn: any) => { available.push(fn); return () => {} },
+      onKioskClick: (fn: any) => { clicks.push(fn); return () => { clicks.splice(clicks.indexOf(fn), 1) } },
+      onKiosksChanged: (fn: any) => { counts.push(fn); return () => { counts.splice(counts.indexOf(fn), 1) } },
+      kioskCount: () => kiosksAtStart,
+      currentGiveaway: vi.fn(async () => ({ giveaway: giveaway() as VisitorGiveaway | null })),
+      trackGiveaway: vi.fn(async () => ({ giveaway: giveaway(claim('present')) })),
+      giveawayCheckIn: vi.fn(async () => ({ giveaway: giveaway(claim('present', 30)) })),
+      claimGiveaway: vi.fn(async () => ({ giveaway: giveaway(claim('waiting', 300)) })),
+      stopGiveaway: vi.fn(async () => {}),
+    }
+    const dispose = startSceneGiveaways(virvi as any, { registerSystem: () => {}, unregisterSystem: () => {} },
+      { guest, wallet: guest ? null : WALLET, hud: null, openUrl: vi.fn(), now: () => clock.ms })
+    return {
+      virvi, dispose,
+      connect: () => on.forEach((fn) => fn('connected')),
+      announce: (g: AvailableGiveaway | null) => available.forEach((fn) => fn(g)),
+      click: (giveawayId: string | null) => clicks.forEach((fn) => fn({ elementId: 'k1', instanceId: 'i1', giveawayId })),
+      kiosks: (n: number) => counts.forEach((fn) => fn(n)),
+      listeners: () => clicks.length + counts.length,
+    }
+  }
+
+  it('the card waits for a kiosk click, reads the giveaway again, and closes', async () => {
+    const t = withKiosks(false, 1)
+    t.connect()
+    await flush()
+    expect(state()).toBe('hidden')
+    t.click('g1')
+    expect(state()).toBe('consent')
+    await flush()
+    expect(t.virvi.currentGiveaway).toHaveBeenCalledTimes(2)
+    expect(view().actions.map((a) => a.id)).toEqual(['agree', 'close'])
+    // Agreeing keeps it open (another giveaway state, same giveaway)
+    overlay.handler!('agree')
+    await flush()
+    expect(state()).toBe('present')
+    overlay.handler!('close')
+    expect(state()).toBe('hidden')
+  })
+
+  it("a kiosk for a giveaway that isn't open says so", async () => {
+    const t = withKiosks(false, 1)
+    t.connect()
+    await flush()
+    t.click('other')
+    expect(view()).toMatchObject({ state: 'unavailable', line: 'Not open right now.' })
+  })
+
+  it('kiosks placed later switch the card to opening on a click; removing the last one brings it back', async () => {
+    const t = withKiosks()
+    t.connect()
+    await flush()
+    expect(state()).toBe('consent')
+    t.kiosks(2)
+    expect(state()).toBe('hidden')
+    t.click('g1')
+    expect(state()).toBe('consent')
+    t.kiosks(0)
+    expect(state()).toBe('consent')
+    expect(view().actions.map((a) => a.id)).toEqual(['agree'])
+  })
+
+  it('a guest who clicks gets the Connect a wallet notice, with no HTTP calls', async () => {
+    const t = withKiosks(true, 1)
+    t.connect()
+    t.announce({ name: 'Winter drop', test: false, giveawayId: 'g1' })
+    expect(state()).toBe('hidden')
+    t.click('g1')
+    expect(view()).toMatchObject({ state: 'guest', line: 'Connect a wallet to claim Winter drop.' })
+    await flush()
+    expect(t.virvi.currentGiveaway).not.toHaveBeenCalled()
+  })
+
+  it('stops listening to kiosks on dispose', () => {
+    const t = withKiosks(false, 1)
+    expect(t.listeners()).toBe(2)
+    t.dispose()
+    expect(t.listeners()).toBe(0)
+  })
+})

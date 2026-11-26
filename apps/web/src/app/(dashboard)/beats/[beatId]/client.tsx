@@ -131,7 +131,7 @@ function BeatDetail({ availability }: { availability: BeatAvailability }) {
     return (
       <div className="space-y-3">
         <p className="text-sm text-gray-400">BEAT not found.</p>
-        <Link href="/beats" className="text-sm text-blue-300 hover:underline">Back to your BEATs</Link>
+        <Link href="/beats" className="text-sm text-blue-300 underline underline-offset-2">Back to your BEATs</Link>
       </div>
     )
   }
@@ -248,15 +248,16 @@ function BeatDetail({ availability }: { availability: BeatAvailability }) {
               <dt className="text-gray-400">Where</dt>
               <dd className="text-gray-200">
                 {locationLine(beat.location)}
-                {beat.location.url && <> · <a href={beat.location.url} target="_blank" rel="noopener noreferrer" className="text-blue-300 hover:underline">Event link</a></>}
-                {beat.location.mapUrl && <> · <a href={beat.location.mapUrl} target="_blank" rel="noopener noreferrer" className="text-blue-300 hover:underline">Map</a></>}
+                {beat.location.url && <> · <a href={beat.location.url} target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">Event link</a></>}
+                {beat.location.mapUrl && <> · <a href={beat.location.mapUrl} target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">Map</a></>}
               </dd>
               <dt className="text-gray-400">Scenes</dt>
               <dd className="flex flex-wrap gap-x-3 text-gray-200">
-                {beat.sceneIds.map((id) => <Link key={id} href={`/scenes?id=${encodeURIComponent(id)}`} className="text-blue-300 hover:underline">{sceneNames[id] ?? 'A scene'}</Link>)}
+                {beat.sceneIds.map((id) => <Link key={id} href={`/scenes?id=${encodeURIComponent(id)}`} className="text-blue-300 underline underline-offset-2">{sceneNames[id] ?? 'A scene'}</Link>)}
               </dd>
               <dt className="text-gray-400">Tradeable</dt><dd className="text-gray-200">{beat.tradeable ? 'Yes' : 'No'}</dd>
               <dt className="text-gray-400">Check claims first</dt><dd className="text-gray-200">{beat.holdMints ? 'Yes' : 'No'}</dd>
+              <dt className="text-gray-400">Claim automatically</dt><dd className="text-gray-200">{beat.autoClaim ? 'Yes' : 'No'}</dd>
             </dl>
           </section>
 

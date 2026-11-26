@@ -1,6 +1,6 @@
 import { SUMMIT_NO_SOURCE, type AdminSummitSignup, type AdminSummitTotals, type SummitInPersonStatus } from '@virvixr/shared'
 import { StatCard } from '@/components/analytics/StatCard'
-import { tableHeadBand } from '@/components/ui'
+import { tableHeadBand, TableScroll } from '@/components/ui'
 import { JOIN_AS_LABELS, SUMMIT_OFFERINGS } from '@/lib/summit'
 
 const dateFmt = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' })
@@ -51,7 +51,7 @@ export function AdminSummit({ signups, totals, onDecide, busyId }: {
       {signups.length === 0 ? (
         <p className="text-gray-400">No one has signed up yet.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-800">
+        <TableScroll label="Summit sign-ups" className="rounded-lg border border-gray-800">
           <table className="w-full text-sm">
             <thead className={tableHeadBand}>
               <tr>
@@ -69,7 +69,7 @@ export function AdminSummit({ signups, totals, onDecide, busyId }: {
               {signups.map((s) => (
                 <tr key={s.id} className="border-t border-gray-800 align-top">
                   <td className="p-2">{s.name}</td>
-                  <td className="p-2"><a href={`mailto:${s.email}`} className="text-blue-400 hover:text-blue-300 hover:underline">{s.email}</a></td>
+                  <td className="p-2"><a href={`mailto:${s.email}`} className="text-blue-400 hover:text-blue-300 underline underline-offset-2">{s.email}</a></td>
                   <td className="p-2 whitespace-nowrap">{JOIN_AS_LABELS[s.joinAs]}</td>
                   <td className="p-2 whitespace-nowrap text-gray-300">{details(s)}</td>
                   <td className="p-2 text-gray-300">{s.interests.length ? s.interests.map(offeringName).join(', ') : '—'}</td>
@@ -91,7 +91,7 @@ export function AdminSummit({ signups, totals, onDecide, busyId }: {
               ))}
             </tbody>
           </table>
-        </div>
+        </TableScroll>
       )}
     </div>
   )

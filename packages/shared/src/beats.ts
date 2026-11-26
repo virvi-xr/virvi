@@ -23,8 +23,12 @@ export type BeatArcKind = 'printed' | 'rotating'
  * The consent text's version, stored with each claim. Bump it whenever beatConsentText changes: a test pins each
  * version's text (apps/server/test/beats-shared.test.ts) and fails when the text changes without a bump.
  * 2: adds the 30-second check-ins and the permanent public record on Polygon (privacy I1).
+ * 3: on a BEAT with auto-claim (LIV-180), says that agreeing also claims it once the visitor has been here long enough.
+ *    A claim agreed under an older version is never claimed automatically: its visitor never read that.
  */
-export const BEAT_CONSENT_VERSION = 2
+export const BEAT_CONSENT_VERSION = 3
+/** The consent versions the server still accepts when tracking starts (scenes on older runtimes send 2). */
+export const BEAT_CONSENT_VERSIONS_ACCEPTED: readonly number[] = [2, 3]
 /** The app's consent text's version, stored with each app claim. Bump it whenever beatAppConsentText changes. */
 export const BEAT_APP_CONSENT_VERSION = 1
 /** A venue pin's radius in metres: the default, and the range a host may set. */
@@ -55,8 +59,12 @@ export const BEAT_SEND_MAX_ATTEMPTS = 5
 export const BEAT_REPRICE_AFTER_MS = 10 * 60_000
 export const BEAT_FEE_BUMP_PERCENT = 25
 
-export function beatConsentText(name: string): string {
-  return `To track your attendance for the ${name} BEAT, Virvi stores your wallet address, your display name and how long you're here. The scene checks in every 30 seconds while you're in it. The hosts of this event will see your name, wallet and time. If you claim, your wallet, this BEAT and the time it was sent are recorded on Polygon, a public blockchain: anyone can see that record, and nobody can delete it. You can stop tracking at any time before you claim, which deletes what was stored.`
+/** The sentence the consent adds on a BEAT with auto-claim on (consent version 3). */
+export const BEAT_AUTO_CLAIM_CONSENT = "Agreeing also claims this BEAT to your wallet once you've been here long enough."
+
+export function beatConsentText(name: string, opts: { autoClaim?: boolean } = {}): string {
+  const auto = opts.autoClaim ? ` ${BEAT_AUTO_CLAIM_CONSENT}` : ''
+  return `To track your attendance for the ${name} BEAT, Virvi stores your wallet address, your display name and how long you're here. The scene checks in every 30 seconds while you're in it. The hosts of this event will see your name, wallet and time.${auto} If you claim, your wallet, this BEAT and the time it was sent are recorded on Polygon, a public blockchain: anyone can see that record, and nobody can delete it. You can stop tracking at any time before you claim, which deletes what was stored.`
 }
 
 export function beatAppConsentText(name: string): string {
@@ -154,6 +162,8 @@ export interface PublicBeat {
   test: boolean
   /** Host review: claims wait for the host's Send (POST /api/beats/:id/release) or until `mintsHeldUntil`. */
   holdMints: boolean
+  /** Auto-claim (LIV-180): visitors who agreed to tracking are claimed for once they meet the rules. On by default. */
+  autoClaim: boolean
   /** When the host pressed Send, or null. */
   mintsReleasedAt: string | null
   /** While claims are held: when they go out anyway (ends_at + the claim grace); null when nothing is held. */
@@ -195,6 +205,8 @@ export interface VisitorBeat {
   claimUntil: string
   /** On Polygon Amoy, the test network: the card shows a "Test" label. */
   test: boolean
+  /** The BEAT's auto-claim setting (LIV-180): agreeing to tracking also claims it once the visitor meets the rules. */
+  autoClaim: boolean
   /**
    * `final`: a failed claim that will never be retried (BEAT_FINAL_FAIL_REASONS); false otherwise. A `removed` claim was
    * taken out by the host before it was sent. `heldUntil`: a claimed claim the host is holding for review, and when it is

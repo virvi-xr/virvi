@@ -72,6 +72,8 @@ interface HUDState {
   // In-world setup + roles
   setupOffer: boolean
   setupMessage: string | null
+  /** LIV-13: a newer @virvixr/dcl is out; shown under the tabs to people who can redeploy */
+  updateNotice: string | null
   sceneRole: SceneRole | null
   roles: RolesData
   rolesError: string | null
@@ -175,6 +177,7 @@ const state: HUDState = {
 
   setupOffer: false,
   setupMessage: null,
+  updateNotice: null,
   sceneRole: null,
   roles: { hostWallets: [], roles: [] },
   rolesError: null,
@@ -1265,6 +1268,17 @@ function AssetBrowserPanel() {
 }
 
 /** Models placed or listed in this scene whose GLB file isn't deployed with it yet. */
+function UpdateNotice() {
+  if (!state.updateNotice) return null
+  return (
+    <UiEntity uiTransform={{ width: '100%', padding: { left: 10, right: 10, top: 4, bottom: 4 } }}
+      uiBackground={{ color: C.bgCard }}>
+      <Label value={state.updateNotice} fontSize={10} color={C.warning}
+        textAlign="middle-left" uiTransform={{ width: '100%', height: 30 }} />
+    </UiEntity>
+  )
+}
+
 function SyncNotice() {
   const n = state.missingModels
   if (n <= 0) return null
@@ -1821,6 +1835,7 @@ function VirviHUD() {
                 onMouseDown={markHudPress}
               >
                 <NavBar />
+                <UpdateNotice />
                 <SyncNotice />
                 {state.activePanel === HUDPanelType.SCENE_LAYOUT && <SceneLayoutPanel />}
                 {state.activePanel === HUDPanelType.ASSET_BROWSER && <AssetBrowserPanel />}
@@ -1848,7 +1863,8 @@ function VirviHUD() {
               onMouseDown={markHudPress}
             >
               <NavBar />
-              <SyncNotice />
+              <UpdateNotice />
+                <SyncNotice />
             </UiEntity>
           )
         }
@@ -1950,8 +1966,13 @@ export class DclHUDRenderer implements HUDRenderer {
     state.sceneRole = role
     state.setupOffer = false
     if (role !== 'host') state.confirmTransfer = null
+    if (role === 'viewer') state.updateNotice = null
     if (role !== 'host' && role !== 'cohost' && state.activePanel === HUDPanelType.ROLES) state.activePanel = null
     if (role === 'viewer' && state.activePanel === HUDPanelType.RAFFLE) state.activePanel = null
+  }
+
+  setUpdateNotice(notice: string | null): void {
+    state.updateNotice = notice
   }
 
   setRoles(data: RolesData): void {

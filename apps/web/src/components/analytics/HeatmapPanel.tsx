@@ -86,7 +86,7 @@ export function HeatmapPanel({ parcels, baseParcel, kind, data, metric, live, la
       {v.locked && lockNote && (
         <p id="heatmap-3d-locked" className="mb-3 text-sm text-gray-400" role="status">
           3D heatmap is on paid plans.{' '}
-          <Link href="/settings" className="text-blue-400 hover:text-blue-300 hover:underline">Upgrade</Link>
+          <Link href="/settings" className="text-blue-400 hover:text-blue-300 underline underline-offset-2">Upgrade</Link>
         </p>
       )}
       {note && <p className="mb-3 text-sm text-gray-400" role="status">{note}</p>}

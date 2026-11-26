@@ -168,9 +168,14 @@ export class FakeGiveawayChain {
 /** Decodes a raw transaction's sender (the fake's tests check who signed). */
 export const senderOf = (raw: string) => Transaction.from(raw).from!.toLowerCase()
 
-/** Marketplace items per creator wallet, served as the Marketplace API would. */
+/**
+ * Marketplace items per creator wallet, served as the Marketplace API would, plus the collections subgraph's minting
+ * rights: whole collections (grantCollection) and single items (grantItem) a wallet may mint from.
+ */
 export class FakeMarketplace {
   byCreator = new Map<string, Array<Record<string, unknown>>>()
+  collectionGrants: Array<{ wallet: string; contract: string; approved: boolean }> = []
+  itemGrants: Array<{ wallet: string; contract: string; itemId: string; approved: boolean }> = []
   calls: string[] = []
   add(creator: string, item: { contractAddress: string; itemId: string; name?: string; category?: string; reviewedAt?: number | null; network?: string }) {
     const list = this.byCreator.get(creator.toLowerCase()) ?? []
@@ -180,16 +185,32 @@ export class FakeMarketplace {
     })
     this.byCreator.set(creator.toLowerCase(), list)
   }
-  fetch: typeof fetch = async (input) => {
+  grantCollection(wallet: string, contract: string, approved = true) {
+    this.collectionGrants.push({ wallet: wallet.toLowerCase(), contract: contract.toLowerCase(), approved })
+  }
+  grantItem(wallet: string, contract: string, itemId: string, approved = true) {
+    this.itemGrants.push({ wallet: wallet.toLowerCase(), contract: contract.toLowerCase(), itemId, approved })
+  }
+  fetch: typeof fetch = async (input, init) => {
     const url = new URL(String(input))
     this.calls.push(url.toString())
+    const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
+    if (url.hostname === 'subgraph.decentraland.org') {
+      const w = (JSON.parse(String(init?.body)).variables.w as string[])[0]
+      return json({ data: {
+        collections: this.collectionGrants.filter((g) => g.wallet === w && g.approved).map((g) => ({ id: g.contract })),
+        items: this.itemGrants.filter((g) => g.wallet === w).map((g) => ({ blockchainId: g.itemId, collection: { id: g.contract, isApproved: g.approved } })),
+      } })
+    }
+    const contracts = url.searchParams.getAll('contractAddress')
     const creator = url.searchParams.get('creator') ?? ''
     const category = url.searchParams.get('category')
-    const all = (this.byCreator.get(creator) ?? []).filter((i) => i.category === category)
+    const all = contracts.length
+      ? [...this.byCreator.values()].flat().filter((i) => contracts.includes(String(i.contractAddress)))
+      : (this.byCreator.get(creator) ?? []).filter((i) => i.category === category)
     const skip = Number(url.searchParams.get('skip') ?? 0)
     const first = Number(url.searchParams.get('first') ?? 100)
-    const data = all.slice(skip, skip + first)
-    return new Response(JSON.stringify({ data, total: all.length }), { status: 200, headers: { 'content-type': 'application/json' } })
+    return json({ data: all.slice(skip, skip + first), total: all.length })
   }
 }
 

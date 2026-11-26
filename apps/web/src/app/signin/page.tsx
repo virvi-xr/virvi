@@ -130,7 +130,7 @@ function SignIn() {
             <div className="space-y-3">
               {hasWallet && (
                 <button type="button" onClick={handleWallet} disabled={submitting}
-                  className="block w-full rounded-lg bg-orange-500 py-2 text-center font-medium text-white hover:bg-orange-600 disabled:opacity-50">
+                  className="block w-full rounded-lg bg-orange-700 py-2 text-center font-medium text-white hover:bg-orange-800 disabled:opacity-50">
                   Sign in with wallet
                 </button>
               )}

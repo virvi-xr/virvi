@@ -1,5 +1,6 @@
 import { AD_LIMITS } from '@virvixr/shared'
 import type { AdEvent, AdLevel, Quat, Vec3 } from '@virvixr/shared'
+import type { ConsentGate } from '../analytics/consent.js'
 import { isOnScreen } from './rotation.js'
 
 const MAX_QUEUED = 200
@@ -24,6 +25,10 @@ export class AdTracker {
   private lastMoveAt: number
   private lastFlushAt: number
   private flushing = false
+  /** The visitor's decision on the analytics notice (GDPR notice): ad views count only once they accept. */
+  private consent: ConsentGate | null = null
+  /** Waiting for that decision's gate to be attached: count, but send nothing yet. */
+  private holding = false
 
   /** `onSeen` fires once per showing, when the visitor has had it on screen (the level-2 moment). */
   constructor(opts: { send: (events: AdEvent[]) => Promise<boolean>; now?: () => number; onSeen?: (spaceKey: string, adId: string) => void }) {
@@ -31,6 +36,21 @@ export class AdTracker {
     this.onSeen = opts.onSeen ?? (() => {})
     this.now = opts.now ?? Date.now
     this.lastMoveAt = this.lastFlushAt = this.now()
+  }
+
+  /** Send nothing until setConsent attaches the visitor's decision (or null: there is no notice, count as before). */
+  hold(): void {
+    this.holding = true
+  }
+
+  /**
+   * The visitor notice's decision gates ad views like the rest of Virvi's analytics: held until a decision, sent once
+   * they accept, and dropped (nothing more counted this visit) when they decline.
+   */
+  setConsent(gate: ConsentGate | null): void {
+    this.consent = gate
+    this.holding = false
+    this.applyDecline()
   }
 
   /** A new showing on this space (the same ad again counts as a new showing). */
@@ -52,6 +72,7 @@ export class AdTracker {
     spaces: Record<string, { position: Vec3; shortSideM: number }>
   }): void {
     const t = this.now()
+    this.applyDecline()
     this.inScene = input.inScene
     if (input.moved) this.lastMoveAt = t
     const active = this.active()
@@ -96,7 +117,8 @@ export class AdTracker {
   }
 
   async flush(): Promise<void> {
-    if (this.flushing) return
+    this.applyDecline()
+    if (this.flushing || !this.maySend()) return
     this.flushing = true
     this.lastFlushAt = this.now()
     try {
@@ -119,6 +141,14 @@ export class AdTracker {
     }
   }
 
+  private maySend(): boolean {
+    return !this.holding && (!this.consent || this.consent.sending)
+  }
+
+  private applyDecline(): void {
+    if (this.consent?.declined) this.queue = []
+  }
+
   private active(): boolean {
     return this.inScene && this.now() - this.lastMoveAt < AD_LIMITS.idleMs
   }
@@ -128,13 +158,13 @@ export class AdTracker {
   }
 
   private emit(space: SpaceState, adId: string, level: AdLevel, dwellMs?: number): void {
-    if (!this.active()) return
+    if (!this.active() || this.consent?.declined) return
     const key = `${adId}|${level}`
     if (this.emitted.has(key)) return
     this.emitted.add(key)
     this.queue.push({ adId, elementId: space.elementId, level, t: this.now(), ...(dwellMs !== undefined ? { dwellMs } : {}) })
     this.trim()
-    if (this.queue.length >= AD_LIMITS.eventsFlushCount) void this.flush()
+    if (this.queue.length >= AD_LIMITS.eventsFlushCount && this.maySend()) void this.flush()
   }
 
   private trim(): void {

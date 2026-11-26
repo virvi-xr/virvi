@@ -15,6 +15,18 @@ export function PrimaryButton({ className = '', children, ...rest }: ButtonHTMLA
   )
 }
 
+/**
+ * Wraps a table that can scroll sideways on a narrow screen. It takes keyboard focus, so the arrow keys can scroll it,
+ * and screen readers announce it by `label`.
+ */
+export function TableScroll({ label, className = '', children }: { label: string; className?: string; children: ReactNode }) {
+  return (
+    <div role="region" aria-label={label} tabIndex={0} className={`overflow-x-auto ${className}`}>
+      {children}
+    </div>
+  )
+}
+
 /** A breadcrumb step: plain text, or a link back up to that page. */
 export type Crumb = string | { label: string; href: string }
 
@@ -24,17 +36,20 @@ export function PageHeader({ crumbs, title, count, subtitle, actions }: { crumbs
     <header className="mb-6 border-b border-gray-800 pb-6">
       {crumbs && crumbs.length > 0 && (
         <nav aria-label="Breadcrumb" className="mb-3 text-sm text-gray-500">
-          {crumbs.map((c, i) => {
-            const last = i === crumbs.length - 1
-            return (
-              <span key={i}>
-                {i > 0 && <span className="mx-2 text-gray-600">/</span>}
-                {typeof c === 'string'
-                  ? <span className={last ? 'text-gray-200' : ''} aria-current={last ? 'page' : undefined}>{c}</span>
-                  : <Link href={c.href} className="text-gray-400 hover:text-blue-300">{c.label}</Link>}
-              </span>
-            )
-          })}
+          {/* A list, so each step is its own item: a link isn't sitting in a run of gray text told apart only by color */}
+          <ol className="flex flex-wrap items-center">
+            {crumbs.map((c, i) => {
+              const last = i === crumbs.length - 1
+              return (
+                <li key={i} className="flex items-center">
+                  {i > 0 && <span aria-hidden="true" className="mx-2 text-gray-600">/</span>}
+                  {typeof c === 'string'
+                    ? <span className={last ? 'text-gray-200' : ''} aria-current={last ? 'page' : undefined}>{c}</span>
+                    : <Link href={c.href} className="text-gray-400 hover:text-blue-300">{c.label}</Link>}
+                </li>
+              )
+            })}
+          </ol>
         </nav>
       )}
       <div className="flex flex-wrap items-start justify-between gap-4">

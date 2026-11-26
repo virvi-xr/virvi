@@ -128,3 +128,42 @@ describe('giveaway card (LIV-194)', () => {
     expect(giveawayError(new Error('boom'))).toBe('Something went wrong. Try again.')
   })
 })
+
+describe('giveaway card opened from a kiosk', () => {
+  const kiosk = (over: Partial<GiveawayUi> = {}) => ui({ kiosks: true, ...over })
+  const CLOSE = { id: 'close', label: 'Close' }
+
+  it('in a scene with kiosks the card waits for a kiosk click', () => {
+    expect(giveawayCardView(giveaway(), kiosk())).toMatchObject({ state: 'hidden', visible: false })
+  })
+
+  it("a click on the open giveaway's kiosk shows the card as before, with Close", () => {
+    const v = giveawayCardView(giveaway(), kiosk({ opened: { giveawayId: 'G1' } }))
+    expect(v).toMatchObject({ state: 'consent', visible: true, title: 'Winter drop' })
+    expect(v.actions).toEqual([{ id: 'agree', label: 'Agree and continue' }, CLOSE])
+    expect(giveawayCardView(giveaway(claim('present', { secondsPresent: 400 })), kiosk({ opened: { giveawayId: 'g1' } }), 0).actions)
+      .toEqual([{ id: 'claim', label: 'Claim' }, STOP, CLOSE])
+  })
+
+  it('a kiosk for another giveaway, or none, says nothing is open right now', () => {
+    for (const giveawayId of ['g2', null]) {
+      const v = giveawayCardView(giveaway(), kiosk({ opened: { giveawayId } }))
+      expect(v).toMatchObject({ state: 'unavailable', visible: true, title: 'Giveaway', line: 'Not open right now.', actions: [CLOSE] })
+    }
+    expect(giveawayCardView(null, kiosk({ opened: { giveawayId: 'g1' } })).state).toBe('unavailable')
+  })
+
+  it('a guest gets the Connect a wallet notice, with Close, even after the timed notice was done', () => {
+    const guest = { ...initialGiveawayUi(true, null), kiosks: true, noticeDone: true }
+    const announced = { name: 'Winter drop', test: false, giveawayId: 'g1' }
+    expect(giveawayCardView(announced, { ...guest, opened: { giveawayId: 'g1' } }))
+      .toMatchObject({ state: 'guest', line: 'Connect a wallet to claim Winter drop.', actions: [CLOSE] })
+    expect(giveawayCardView(announced, { ...guest, opened: { giveawayId: 'g9' } }).state).toBe('unavailable')
+    // An older server announces no id: the kiosk can't tell, so nothing is open
+    expect(giveawayCardView({ name: 'Winter drop', test: false }, { ...guest, opened: { giveawayId: 'g1' } }).state).toBe('unavailable')
+  })
+
+  it('a scene without kiosks keeps the card that shows by itself, with no Close', () => {
+    expect(giveawayCardView(giveaway(), ui()).actions).toEqual([{ id: 'agree', label: 'Agree and continue' }])
+  })
+})

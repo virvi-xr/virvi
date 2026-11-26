@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import type { OwnerAdSpaceReport } from '@virvixr/shared'
 import type { useApi } from '@/lib/api'
 import { clickRate, guestViews } from '@/lib/ads'
+import { TableScroll } from '@/components/ui'
 
 const RANGES = [7, 30, 90] as const
 
@@ -37,7 +38,7 @@ export default function AdSpaceDelivery({ elementId, api }: { elementId: string;
       {failed && <p className="text-xs text-red-400">Couldn’t load the delivery numbers.</p>}
       {report && report.ads.length === 0 && <p className="text-sm text-gray-500">No ad has shown here in the last {report.days} days.</p>}
       {report && report.ads.length > 0 && (
-        <div className="overflow-x-auto">
+        <TableScroll label="Ad delivery">
           <table className="w-full min-w-[28rem] text-left text-sm">
             <thead className="text-xs text-gray-500">
               <tr>
@@ -65,7 +66,7 @@ export default function AdSpaceDelivery({ elementId, api }: { elementId: string;
               ))}
             </tbody>
           </table>
-        </div>
+        </TableScroll>
       )}
       {report && (
         <p className="text-xs text-gray-500">

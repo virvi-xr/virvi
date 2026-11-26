@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from 'vitest'
 import { Collector } from '../src/analytics/collector.js'
 import type { AnalyticsProbe, IngestBatch } from '@virvixr/shared'
 
-function rig(opts: { insideAt?: (x: number) => boolean } = {}) {
+function rig(opts: { insideAt?: (x: number) => boolean; gate?: { sending: boolean; declined: boolean } } = {}) {
+  const gate = opts.gate ?? { sending: true, declined: false }
   let now = 0
   let pose: { position: { x: number; y: number; z: number }; headingDeg: number } | null = {
     position: { x: 8, y: 0, z: 8 },
@@ -32,6 +33,7 @@ function rig(opts: { insideAt?: (x: number) => boolean } = {}) {
     },
     scene: { realm: 'main', isWorld: false, isPreview: false, baseParcel: '0,0', parcels: ['0,0'] },
     visitor: { visitorId: '0xabc', isGuest: false, displayName: 'Ana' },
+    consent: gate,
     context: { platform: 'desktop', realm: 'main', sdkVersion: '2.0.0' },
     now: () => now,
     uuid: () => `00000000-0000-4000-8000-00000000000${++ids}`,
@@ -54,6 +56,7 @@ function rig(opts: { insideAt?: (x: number) => boolean } = {}) {
     move: (x: number, z = 8) => (pose = { position: { x, y: 0, z }, headingDeg: 92 }),
     vanish: () => (pose = null),
     pending,
+    gate,
     setNotice: (v: boolean) => (notice = v),
   }
 }
@@ -217,5 +220,85 @@ describe('Collector', () => {
     await r.step(70_000)
     expect(r.types().filter((t) => t === 'session.start')).toHaveLength(1)
     expect(r.events()).toHaveLength(n)
+  })
+
+  describe('the visitor notice (GDPR)', () => {
+    const undecided = () => ({ sending: false, declined: false })
+
+    it('sends nothing before a decision, buffering what happens', async () => {
+      const r = rig({ gate: undecided() })
+      await r.step(0)
+      r.c.track('a')
+      r.pending.interactions.push({ kind: 'click', target: 'door' })
+      for (let i = 0; i < 10; i++) await r.step(6_000)
+      expect(r.batches).toHaveLength(0)
+    })
+
+    it('on accept, sends what it buffered (from the session start on) and carries on', async () => {
+      const r = rig({ gate: undecided() })
+      await r.step(0)
+      r.c.track('a')
+      await r.step(1_000)
+      r.gate.sending = true
+      await r.step(100)
+      await r.step(100)
+      expect(r.types().slice(0, 2)).toEqual(['session.start', 'pos'])
+      expect(r.types()).toContain('custom')
+      r.c.track('b')
+      await r.step(100)
+      expect(r.events().filter((e) => e.type === 'custom').map((e) => e.data!.name)).toEqual(['a', 'b'])
+    })
+
+    it('keeps to the buffer limit while waiting', async () => {
+      const r = rig({ gate: undecided() })
+      await r.step(0)
+      for (let i = 0; i < 700; i++) r.c.track(`e${i}`)
+      r.gate.sending = true
+      for (let i = 0; i < 20; i++) await r.step(100)
+      expect(r.events().length).toBeLessThanOrEqual(500)
+      expect(r.types()[0]).toBe('session.start')
+    })
+
+    it('on decline, drops what it buffered and records nothing more, leave and destroy included', async () => {
+      const r = rig({ gate: undecided() })
+      await r.step(0)
+      r.c.track('a')
+      r.gate.declined = true
+      await r.step(100)
+      r.c.track('b')
+      r.c.giveaway('g', 'win')
+      r.move(40)
+      await r.step(1_000)
+      r.move(8)
+      await r.step(70_000)
+      await r.c.destroy()
+      // Even if the gate said sending now, nothing was kept to send
+      r.gate.sending = true
+      await r.step(100)
+      expect(r.batches).toHaveLength(0)
+    })
+
+    it('a decline after accepting stops sending and empties the buffer', async () => {
+      const r = rig()
+      await r.step(0)
+      await r.step(100)
+      const sent = r.events().length
+      r.gate.sending = false
+      r.gate.declined = true
+      r.c.track('after')
+      for (let i = 0; i < 5; i++) await r.step(6_000)
+      expect(r.events()).toHaveLength(sent)
+    })
+
+    it("never shows the wallet notice once declined, even if the server had asked", async () => {
+      const r = rig()
+      r.setNotice(true)
+      await r.step(0)
+      expect(r.probe.showNotice).not.toHaveBeenCalled() // the response lands after this tick
+      r.gate.sending = false
+      r.gate.declined = true
+      await r.step(100)
+      expect(r.probe.showNotice).not.toHaveBeenCalled()
+    })
   })
 })

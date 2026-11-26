@@ -1,6 +1,7 @@
 'use client'
 import { useApi } from '@/lib/api'
 import { ErrorPromptSetting } from './ErrorPromptSetting'
+import { PrivacySetting } from './PrivacySetting'
 import { AssistantActivity } from './AssistantActivity'
 import { memberLabel, type OrgMember, type OrgSummary } from '@/lib/orgs'
 import { useAuth } from '@/lib/auth'
@@ -11,7 +12,7 @@ import { EmailVerification } from './EmailVerification'
 import { MoveBeats } from './MoveBeats'
 import { LinkedHyperfySessions } from './LinkedHyperfySessions'
 import { PairedHeadsets } from './PairedHeadsets'
-import { Badge, PageHeader, PlatformBadge, Skeleton, tableHeadBand } from '@/components/ui'
+import { Badge, PageHeader, PlatformBadge, Skeleton, tableHeadBand, TableScroll } from '@/components/ui'
 import { useInstance } from '@/lib/instance'
 import { canManageBranding } from '@/lib/branding'
 import { BrandingSettings } from './BrandingSettings'
@@ -326,6 +327,8 @@ export default function SettingsPage() {
           <LinkedWallets />
 
           <MoveBeats />
+
+          <PrivacySetting />
 
           <ErrorPromptSetting />
 
@@ -649,7 +652,7 @@ export default function SettingsPage() {
             <p className="text-gray-500">No platform hooks registered. External platforms register hooks automatically when they connect.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-gray-800">
+          <TableScroll label="Platform hooks" className="rounded-lg border border-gray-800">
             <table className="w-full text-sm">
               <thead className={tableHeadBand}>
                 <tr>
@@ -717,7 +720,7 @@ export default function SettingsPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableScroll>
         )}
       </section>
     </div>

@@ -29,6 +29,10 @@ export class Breadcrumbs {
     })
   }
 
+  clear() {
+    this.items = []
+  }
+
   list(): Breadcrumb[] {
     return this.items.map((c) => ({ ...c }))
   }

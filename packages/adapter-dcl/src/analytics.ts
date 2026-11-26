@@ -18,10 +18,12 @@ import {
   Billboard,
 } from '@dcl/sdk/ecs'
 import { Vector3, Color4 } from '@dcl/sdk/math'
-import { Collector, createTransport, resolveApiUrl } from '@virvixr/core'
+import { AnalyticsConsent, Collector, createTransport, resolveApiUrl } from '@virvixr/core'
 import { PARCEL_RE, type AnalyticsProbe, type AnalyticsSceneRef, type Vec3, DCL_HUD_VERSION } from '@virvixr/shared'
 import { DclAdapter } from './DclAdapter'
 import { resolveTargetLabel } from './target-label'
+import { mountConsentOverlay } from './consent/ConsentOverlay.js'
+import { consentRequestFor } from './consent/request.js'
 
 // The HUD's real release (it said 2.0.0 for every release before)
 const SDK_VERSION = DCL_HUD_VERSION
@@ -207,12 +209,25 @@ async function start(opts: { env?: 'dev' | 'staging' | 'prod'; apiUrl?: string; 
     const [user, env, scene] = await Promise.all([adapter.getPlatformUser(), adapter.getEnvironment(), getAnalyticsSceneRef()])
     const random = Math.random
     const visitorId = user.walletAddress || user.id || `guest-${Math.floor(random() * 1e12).toString(36)}`
+    const apiUrl = resolveApiUrl(opts)
+    const transport = createTransport(adapter)
+    // The visitor notice (GDPR notice): nothing leaves the scene until the visitor accepts, and nothing after a decline
+    const consent = new AnalyticsConsent({
+      apiUrl,
+      // A wallet's decision goes over a signed request only (never an unsigned fallback as the wallet)
+      request: consentRequestFor(visitorId, (url, init) => adapter.signedOnlyRequest(url, init), (url, init) => transport.request!(url, init)),
+      visitorId,
+      scene,
+      platform: 'decentraland',
+      log: (m) => console.log(m),
+    })
     const collector = new Collector({
-      apiUrl: resolveApiUrl(opts),
+      apiUrl,
       probe: new DclAnalyticsProbe(scene),
-      transport: createTransport(adapter),
+      transport,
       scene,
       visitor: { visitorId, isGuest: user.isGuest, displayName: user.displayName },
+      consent,
       context: {
         platform: 'decentraland',
         device: String((env.metadata as { subPlatform?: unknown } | undefined)?.subPlatform ?? ''),
@@ -222,6 +237,8 @@ async function start(opts: { env?: 'dev' | 'staging' | 'prod'; apiUrl?: string; 
       log: (m) => console.log(m),
     })
     adapter.registerSystem(() => collector.tick())
+    mountConsentOverlay(consent, (url) => adapter.openUrl(url))
+    void consent.load()
     return collector
   } catch (err) {
     console.log('[Virvi analytics] disabled:', String(err))

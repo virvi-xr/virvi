@@ -33,10 +33,12 @@ import { authorizeSceneMessage, propertiesOf, type GuardResult, type GuardTarget
 import { getSceneLibraryItem } from '../library/scene-library.js'
 import { venueTopic, publishSceneTouched, STREAMS_TOPIC, type VenueEvent, type StreamStatusEvent } from '../realtime/bus.js'
 import { normalizeUrl, withLiveStatus, withLiveVideo } from '../streaming/live-status.js'
-import { FRAMEABLE_TYPES, VideoSourceType, checkFrame, type VenueAccessMessage } from '@virvixr/shared'
+import { withKioskElement, withKioskPreset } from '../giveaways/kiosk.js'
+import { FRAMEABLE_TYPES, KIOSK_ITEMS_KEY, VideoSourceType, checkFrame, type VenueAccessMessage } from '@virvixr/shared'
 import { screenShowingsMessages, SHOWINGS_REFRESH_MS } from '../scenes/showings.js'
 import { hold, holderOf, release, releaseAll, sweepExpired } from './draft-holds.js'
 import { checkParentInstance } from '../scenes/instance-parent.js'
+import { RelayLimiter, relayUserMessage } from './relay-limit.js'
 
 interface JoinOptions {
   sessionToken: string
@@ -76,11 +78,34 @@ export function runDraftSweep(now = Date.now()): void {
 }
 setInterval(() => runDraftSweep(), 30_000).unref()
 
+/**
+ * A client's scene_preset_update as the room relays it: `giveawayId` and the kiosk item list are taken out of its
+ * element and instance data (flat and nested `properties`), as persistPresetUpdate's extractProperties does when
+ * storing it. The client's own message is left as it was.
+ */
+export function withoutKioskKeys<M>(message: M): M {
+  if (!message || typeof message !== 'object') return message
+  const strip = (data: unknown): unknown => {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return data
+    const out: Record<string, unknown> = { ...(data as Record<string, unknown>) }
+    delete out.giveawayId
+    delete out[KIOSK_ITEMS_KEY]
+    if (out.properties && typeof out.properties === 'object' && !Array.isArray(out.properties)) out.properties = strip(out.properties)
+    return out
+  }
+  const m = { ...(message as Record<string, unknown>) }
+  if ('elementData' in m) m.elementData = strip(m.elementData)
+  if ('instanceData' in m) m.instanceData = strip(m.instanceData)
+  return m as M
+}
+
 export class VirviSceneRoom extends Room {
   private static activeRoomCount = 0
 
   private sceneId: string = ''
   private clientMeta: Map<string, ClientMeta> = new Map()
+  /** Open relay messages are rate-limited per client (LIV-156). */
+  private relayLimit = new RelayLimiter()
   /** Signed-in scene-pass connections, by session: they count as live presence for BEAT check-ins (beats/live.ts). */
   private beatLive: Map<string, { userId: string; since: number }> = new Map()
   /** Whether the scene has a BEAT in its card window (paid or live): presence is only written while it does (M-9). */
@@ -219,8 +244,9 @@ export class VirviSceneRoom extends Room {
       // Edits to a non-active preset (e.g. a booking clone during setup) are not broadcast
       if (!result.broadcast) return
 
-      // Broadcast to all OTHER clients in the room
-      this.broadcast('scene_preset_update', message, { except: client })
+      // Broadcast to all OTHER clients in the room, without what the room never stores (a kiosk's giveaway and items)
+      const relayed = withoutKioskKeys(message)
+      this.broadcast('scene_preset_update', relayed, { except: client })
 
       // Push to HTTP callbacks (Second Life, etc.)
       if (this.sceneId) {
@@ -228,7 +254,7 @@ export class VirviSceneRoom extends Room {
           action: 'config_update',
           elementId: result.target?.elementId || message.elementData?.sk || message.elementData?.id || message.id,
           element: message.element,
-          ...this.extractCompactPayload(message),
+          ...this.extractCompactPayload(relayed),
         }).catch(() => {})
       }
     })
@@ -345,7 +371,7 @@ export class VirviSceneRoom extends Room {
           })
 
           if (preset) {
-            const serialized = await withLiveStatus(serializePreset(preset))
+            const serialized = await withKioskPreset(await withLiveStatus(serializePreset(preset)))
             this.broadcast('scene_change_preset', {
               scenePreset: serialized,
               user: this.getClientMeta(client),
@@ -385,12 +411,16 @@ export class VirviSceneRoom extends Room {
 
     // ── Sound Locators ────────────────────────────────────────────────────
     this.onMessage('scene_sound_locator', (client, message) => {
+      if (!this.relayLimit.take(client.sessionId, 'scene_sound_locator')) return
       this.broadcast('scene_sound_locator', message, { except: client })
     })
 
     // ── User Messaging ────────────────────────────────────────────────────
+    // Open to everyone in the room by design (Multiplayer Events); limited per client, and only its id and data go on
     this.onMessage('user_message', (client, message) => {
-      this.broadcast('user_message', { ...message, type: 'inbound' }, { except: client })
+      const relay = relayUserMessage(message)
+      if (!relay || !this.relayLimit.take(client.sessionId, 'user_message')) return
+      this.broadcast('user_message', relay, { except: client })
     })
 
     // ── Moderator Actions ─────────────────────────────────────────────────
@@ -554,6 +584,7 @@ export class VirviSceneRoom extends Room {
   }
 
   onLeave(client: Client, consented: boolean) {
+    this.relayLimit.forget(client.sessionId)
     const meta = this.clientMeta.get(client.sessionId)
     console.log(`[VirviSceneRoom] ${meta?.clientType || 'unknown'} left: ${meta?.displayName || client.sessionId}`)
 
@@ -727,7 +758,7 @@ export class VirviSceneRoom extends Room {
           with: { elements: { with: { instances: true } } },
         })
         if (preset) {
-          this.broadcast('scene_change_preset', { scenePreset: await withLiveStatus(serializePreset(preset)), user: null })
+          this.broadcast('scene_change_preset', { scenePreset: await withKioskPreset(await withLiveStatus(serializePreset(preset))), user: null })
           await this.sendShowings()
         }
         return
@@ -771,7 +802,7 @@ export class VirviSceneRoom extends Room {
     this.broadcast('scene_preset_update', {
       action: 'upsert',
       element: element.type,
-      elementData: element.type === 'video' ? await withLiveVideo(serializeSingleElement(element)) : serializeSingleElement(element),
+      elementData: element.type === 'video' ? await withLiveVideo(serializeSingleElement(element)) : await withKioskElement(element.type, serializeSingleElement(element)),
     })
   }
 
@@ -846,7 +877,7 @@ export class VirviSceneRoom extends Room {
         return
       }
 
-      const serialized = await withLiveStatus(serializePreset(preset))
+      const serialized = await withKioskPreset(await withLiveStatus(serializePreset(preset)))
 
       client.send('scene_preset_update', {
         action: 'init',
@@ -987,6 +1018,10 @@ export class VirviSceneRoom extends Room {
       if (c?.ok) out.frame = c.value
       else delete out.frame
     }
+    // A giveaway kiosk's giveaway is picked in the dashboard only, where the server checks the caller manages it; the
+    // item list is the server's own (see giveaways/kiosk.ts). No element type takes either through the room.
+    delete out.giveawayId
+    delete out[KIOSK_ITEMS_KEY]
     return out
   }
 

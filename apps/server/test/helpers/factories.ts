@@ -81,7 +81,7 @@ export async function createScene(owner: TestUser, name = 'Venue Scene') {
 
 export async function createElement(
   presetId: string,
-  opts: { type?: 'image' | 'video' | 'sound' | 'widget' | 'model' | 'ad_space'; name?: string; properties?: Record<string, unknown> } = {},
+  opts: { type?: 'image' | 'video' | 'sound' | 'widget' | 'model' | 'ad_space' | 'claim_point'; name?: string; properties?: Record<string, unknown> } = {},
 ) {
   const [element] = await db
     .insert(sceneElements)

@@ -75,7 +75,7 @@ export default function PairClient() {
               type="button"
               onClick={approve}
               disabled={phase === 'approving'}
-              className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600 disabled:opacity-50 transition-colors"
+              className="rounded-lg bg-orange-700 px-4 py-2 text-sm font-medium text-white hover:bg-orange-800 disabled:opacity-50 transition-colors"
             >
               {phase === 'approving' ? 'Approving...' : 'Approve'}
             </button>

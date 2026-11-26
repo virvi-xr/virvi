@@ -5,7 +5,7 @@ import type { CatalogPack } from '@virvixr/shared'
 import { useAuth } from '@/lib/auth'
 import { useApi } from '@/lib/api'
 import { licenseLabel } from '@/lib/catalog'
-import { badgeClass, PageHeader, Skeleton, tableHeadBand } from '@/components/ui'
+import { badgeClass, PageHeader, Skeleton, tableHeadBand, TableScroll } from '@/components/ui'
 import { countLabel } from '@/lib/format'
 
 /** Admin: switch catalog packs on and off. Off hides a pack from browsing and new picks; placed models stay. */
@@ -50,7 +50,7 @@ export default function CatalogPacksPage() {
       {!packs ? (
         <Skeleton rows={2} className="h-12" />
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-800">
+        <TableScroll label="Catalog packs" className="rounded-lg border border-gray-800">
           <table className="w-full text-sm">
             <thead className={tableHeadBand}>
               <tr><th className="p-3">Pack</th><th className="p-3">Source</th><th className="p-3">License</th><th className="p-3 text-right">Models</th><th className="p-3 text-right">Available</th></tr>
@@ -76,7 +76,7 @@ export default function CatalogPacksPage() {
               ))}
             </tbody>
           </table>
-        </div>
+        </TableScroll>
       )}
     </div>
   )

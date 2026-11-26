@@ -20,7 +20,7 @@ export function Section({ title, action, state, onRetry, children }: {
       {state === 'error' && (
         <p className="text-sm text-gray-400" role="alert">
           Couldn&apos;t load —{' '}
-          <button type="button" onClick={onRetry} className="text-blue-400 hover:text-blue-300 underline-offset-2 hover:underline">
+          <button type="button" onClick={onRetry} className="text-blue-400 hover:text-blue-300 underline-offset-2 underline underline-offset-2">
             Retry
           </button>
         </p>

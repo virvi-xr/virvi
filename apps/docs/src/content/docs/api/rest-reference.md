@@ -179,7 +179,7 @@ Self-hosted servers refuse imports unless `SCENE_BUILD_RUNNER` is set (see [Envi
 | DELETE | `/api/events/:eventId/unlink-scene/:sceneId` | Yes | Unlink it |
 | GET | `/api/giveaways/availability` | Yes | Whether automatic giveaways are on, and whether your plan covers gas |
 | GET/POST | `/api/giveaways` | Yes | List or create giveaways (each gets its own wallet) |
-| GET | `/api/giveaways/creator-items?chain=` | Yes | Published wearables and emotes your wallets created |
+| GET | `/api/giveaways/creator-items?chain=` | Yes | Published wearables and emotes your wallets created or may mint |
 | GET/PATCH/DELETE | `/api/giveaways/:id` | Yes | One giveaway: read, edit or switch on, delete |
 | PUT | `/api/giveaways/:id/items` | Yes | Set its items (1 to 10) |
 | PUT | `/api/giveaways/:id/scenes` | Yes | Set the scenes it shows in |

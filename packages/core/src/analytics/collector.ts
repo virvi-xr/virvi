@@ -10,6 +10,7 @@ import {
 import { EventQueue } from './queue.js'
 import { Uploader } from './uploader.js'
 import type { AnalyticsTransport } from './transport.js'
+import type { ConsentGate } from './consent.js'
 
 export interface CollectorOptions {
   apiUrl: string
@@ -17,6 +18,11 @@ export interface CollectorOptions {
   transport: AnalyticsTransport
   scene: AnalyticsSceneRef
   visitor: { visitorId: string; isGuest: boolean; displayName?: string }
+  /**
+   * The visitor's decision on the analytics notice (GDPR notice; AnalyticsConsent): nothing is sent until `sending`, and
+   * after `declined` nothing is kept or sent.
+   */
+  consent: ConsentGate
   context: { platform: string; device?: string; realm: string; sdkVersion: string }
   now?: () => number
   uuid?: () => string
@@ -50,6 +56,7 @@ export class Collector {
   private noticeRequested = false
   private noticeShown = false
   private destroyed = false
+  private wasSending = false
 
   constructor(private opts: CollectorOptions) {
     this.now = opts.now ?? (() => Date.now())
@@ -77,6 +84,11 @@ export class Collector {
         if (r.notice) this.noticeRequested = true
       },
     })
+  }
+
+  /** The visitor's decision on the analytics notice; ad views follow it too. */
+  get consent(): ConsentGate {
+    return this.opts.consent
   }
 
   get sessionId(): string | null {
@@ -139,12 +151,22 @@ export class Collector {
       probe.pollEmotes()
     }
 
+    const { consent } = this.opts
+    if (consent.declined) {
+      // Declined: what was buffered goes, and nothing (the wallet notice included) follows
+      this.queue.clear()
+      return
+    }
+    if (!consent.sending) return // no decision yet: keep buffering
+
     if (this.noticeRequested && !this.noticeShown) {
       probe.showNotice(NOTICE_TEXT)
       this.noticeShown = true
     }
 
-    this.uploader.maybeFlush(leaving)
+    // The first frame allowed to send sends what was buffered
+    this.uploader.maybeFlush(leaving || !this.wasSending)
+    this.wasSending = true
   }
 
   track(name: string, props?: Record<string, unknown>): void {
@@ -164,7 +186,8 @@ export class Collector {
       this._inside = false
     }
     this.destroyed = true
-    await this.uploader.maybeFlush(true)
+    if (this.opts.consent.declined) this.queue.clear()
+    if (this.opts.consent.sending) await this.uploader.maybeFlush(true)
   }
 
   private enter(t: number): void {
@@ -188,7 +211,7 @@ export class Collector {
   }
 
   private emit(type: AnalyticsEvent['type'], data?: Record<string, unknown>): void {
-    if (!this._sessionId) return
+    if (!this._sessionId || this.opts.consent.declined) return
     this.queue.push(this._sessionId, { t: this.now(), type, seq: this.seq++, data })
   }
 }
