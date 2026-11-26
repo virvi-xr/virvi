@@ -90,6 +90,7 @@ import { mayManageDeletion } from '../scenes/deleted.js'
 import { parcelControl, type ParcelControl } from '../services/dcl/parcel-control.js'
 import { GRANT_COST_NOTE, grantMissing, grantTransactions, heldAsUpdateOperator, isAetheria } from '../services/dcl/parcel-grant.js'
 import { CatalystError, contentServerFor } from '../services/dcl/catalyst-client.js'
+import { recordSceneActivity, requestActor } from '../scenes/activity.js'
 
 /** Signed-fetch metadata Virvi sends on permission calls (see the header comment). */
 const PERMISSION_METADATA = '{}'
@@ -721,11 +722,16 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
     // On Genesis City parcels a moved, added or removed model is worth a deploy by itself: it updates the map and the
     // distant view (LIV-135). A World has neither, so there it isn't.
     const opts = { placementsDrift: dest.kind === 'parcels' }
+    const noteDeploy = (deploymentId: string) => dest.sceneId
+      ? recordSceneActivity(dest.sceneId, requestActor(request.user), 'deploy.started', { type: 'destination', id: dest.id, name: dest.worldName ?? `parcel ${dest.base}` }, { deploymentId, signed: dest.mode !== 'virvi' })
+      : Promise.resolve()
     if (dest.mode === 'virvi') {
       const deployment = await startVirviDeploy(dest.id, request.user.id, opts)
+      await noteDeploy(deployment.id)
       return reply.status(202).send({ deployment: publicDeployment(deployment) })
     }
     const { deployment, payload, expiresAt } = await prepareSignedDeploy(dest.id, request.user.id, opts)
+    await noteDeploy(deployment.id)
     return reply.send({ deployment: publicDeployment(deployment), payload, expiresAt })
   }))
 

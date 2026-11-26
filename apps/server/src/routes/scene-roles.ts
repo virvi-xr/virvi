@@ -7,6 +7,7 @@ import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess, isFullAccess, isHostAccess } from '../auth/permissions.js'
 import { verifiedWalletsOf } from '../analytics/claims.js'
 import { fromParam } from '../auth/scene-from.js'
+import { listSceneActivity, recordSceneActivity, requestActor } from '../scenes/activity.js'
 
 const WALLET_RE = /^0x[0-9a-f]{40}$/
 const ROLES = new Set(['cohost', 'editor', 'viewer'])
@@ -27,6 +28,9 @@ export default async function sceneRoleRoutes(app: FastifyInstance) {
     }
     return scene
   }
+
+  const walletName = async (userId: string | null) =>
+    userId ? (await db.query.users.findFirst({ where: eq(users.id, userId), columns: { displayName: true } }))?.displayName ?? null : null
 
   const activeRow = (sceneId: string, wallet: string) =>
     db.query.sceneRoles.findFirst({ where: and(eq(sceneRoles.sceneId, sceneId), eq(sceneRoles.walletAddress, wallet), isNull(sceneRoles.revokedAt)) })
@@ -60,6 +64,9 @@ export default async function sceneRoleRoutes(app: FastifyInstance) {
     const [row] = existing
       ? await db.update(sceneRoles).set({ role: role as 'cohost', userId: existing.userId ?? userId }).where(eq(sceneRoles.id, existing.id)).returning()
       : await db.insert(sceneRoles).values({ sceneId: scene.id, walletAddress: wallet, role: role as 'cohost', userId, grantedByUserId: request.user.id }).returning()
+    if (!existing || existing.role !== row.role) {
+      await recordSceneActivity(scene.id, requestActor(request.user), 'role.granted', { type: 'wallet', id: wallet, name: await walletName(row.userId) }, { role: row.role, ...(existing ? { from: existing.role } : {}) })
+    }
     return reply.status(201).send({ role: { wallet: row.walletAddress, role: row.role, userId: row.userId } })
   })
 
@@ -68,7 +75,8 @@ export default async function sceneRoleRoutes(app: FastifyInstance) {
     if (!scene) return
     const wallet = request.params.wallet.toLowerCase()
     if ((await verifiedWalletsOf(scene.ownerId)).includes(wallet)) return reply.status(403).send({ error: 'The host cannot be removed' })
-    await db.update(sceneRoles).set({ revokedAt: new Date() }).where(and(eq(sceneRoles.sceneId, scene.id), eq(sceneRoles.walletAddress, wallet), isNull(sceneRoles.revokedAt)))
+    const revoked = await db.update(sceneRoles).set({ revokedAt: new Date() }).where(and(eq(sceneRoles.sceneId, scene.id), eq(sceneRoles.walletAddress, wallet), isNull(sceneRoles.revokedAt))).returning()
+    if (revoked[0]) await recordSceneActivity(scene.id, requestActor(request.user), 'role.revoked', { type: 'wallet', id: wallet, name: await walletName(revoked[0].userId) }, { role: revoked[0].role })
     return reply.status(204).send()
   })
 
@@ -87,6 +95,23 @@ export default async function sceneRoleRoutes(app: FastifyInstance) {
       await tx.update(sceneRoles).set({ revokedAt: now }).where(and(eq(sceneRoles.sceneId, scene.id), eq(sceneRoles.walletAddress, previousWallet), isNull(sceneRoles.revokedAt)))
       await tx.insert(sceneRoles).values({ sceneId: scene.id, walletAddress: previousWallet, userId: scene.ownerId, role: 'cohost', grantedByUserId: scene.ownerId })
     })
+    await recordSceneActivity(scene.id, requestActor(request.user), 'host.transferred', { type: 'wallet', id: target.walletAddress, name: await walletName(target.userId) })
     return reply.send({ host: target.userId })
+  })
+
+  // ── The scene's activity log (LIV-32): host and co-hosts, newest first; ?before=<at>,<id> pages back ──
+  app.get<{ Params: { sceneId: string }; Querystring: { before?: string; limit?: string } }>('/api/scenes/:sceneId/activity', async (request, reply) => {
+    const scene = await guard(request, reply)
+    if (!scene) return
+    let before: { at: Date; id: string } | undefined
+    if (request.query.before) {
+      const [at, id] = request.query.before.split(',')
+      const when = new Date(at ?? '')
+      if (Number.isNaN(when.getTime()) || !id || !/^[0-9a-f-]{36}$/i.test(id)) return reply.status(400).send({ error: 'bad_cursor' })
+      before = { at: when, id }
+    }
+    const limit = request.query.limit ? Number(request.query.limit) : undefined
+    if (limit !== undefined && !Number.isInteger(limit)) return reply.status(400).send({ error: 'bad_limit' })
+    return reply.send(await listSceneActivity(scene.id, { before, limit }))
   })
 }

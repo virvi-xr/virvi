@@ -72,6 +72,7 @@ Changes made through these routes reach players in the scene in real time.
 | POST | `/api/scenes/:sceneId/roles` | Yes | Give a wallet a role |
 | DELETE | `/api/scenes/:sceneId/roles/:wallet` | Yes | Remove a wallet's role |
 | POST | `/api/scenes/:sceneId/transfer-host` | Yes | Hand the host role to a co-host |
+| GET | `/api/scenes/:sceneId/activity` | Yes | Who changed what, newest first (host and co-hosts). `{ entries, more }`; pass `?before=<at>,<id>` of the last entry for older ones |
 | GET/POST | `/api/scenes/:sceneId/collaborators` | Yes | List or invite account collaborators: `{ email, role }` |
 | PUT/DELETE | `/api/scenes/:sceneId/collaborators/:userId` | Yes | Change or remove one |
 

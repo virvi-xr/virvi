@@ -1553,6 +1553,34 @@ export const sceneRoles = pgTable(
   }),
 )
 
+/**
+ * Who changed what in a scene, and when (LIV-32). One row per change; repeat edits of the same thing by the same person
+ * within a minute are folded into one row (`count`), so dragging a model around doesn't fill the log. Written by
+ * recordSceneActivity (scenes/activity.ts), never in the way of the change itself.
+ */
+export const sceneActivity = pgTable(
+  'scene_activity',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sceneId: uuid('scene_id').notNull().references(() => scenes.id, { onDelete: 'cascade' }),
+    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+    actorWallet: text('actor_wallet'), // lowercased, when the change came from a wallet session
+    /** Where the change was made: 'dashboard' (the web app or the REST API) or 'in_world' (a scene's HUD) */
+    via: text('via').notNull(),
+    action: text('action').notNull(), // e.g. element.created, role.granted (SCENE_ACTIVITY_ACTIONS)
+    subjectType: text('subject_type'), // element type, 'preset', 'wallet', 'user', 'destination'…
+    subjectId: text('subject_id'),
+    subjectName: text('subject_name'),
+    detail: jsonb('detail').$type<Record<string, unknown>>(),
+    count: integer('count').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastAt: timestamp('last_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    bySceneTime: index('scene_activity_scene_time_idx').on(t.sceneId, t.lastAt),
+  }),
+)
+
 /** One tenure of a location being set up in Virvi. At most one active (ended_at IS NULL) per location. */
 export const locationSetups = pgTable(
   'location_setups',

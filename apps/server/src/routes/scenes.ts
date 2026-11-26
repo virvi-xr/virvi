@@ -36,6 +36,7 @@ import { SceneGone, ThumbnailError, bodyLimitFor, removeSceneThumbnail, setScene
 import { StoreMediaError } from '../media/store.js'
 import { SCENE_THUMBNAIL_MAX_BYTES } from '@virvixr/shared'
 import { commitRoomSet, deleteOrphanedRoomSets, insertRoomSet, prepareRoomSetForPlacement, RoomSetError, roomSetIdsByElement, sceneOwnedRoomSets, type PreparedRoomSet } from '../room-scan/sets.js'
+import { recordSceneActivity, requestActor, type SceneActivityAction } from '../scenes/activity.js'
 
 type ElementChange = Parameters<typeof publishElementChanged>[0]
 
@@ -63,7 +64,8 @@ async function dispatchElementCallbacks(e: ElementChange): Promise<void> {
 }
 
 /** After a REST write: broadcast to scene rooms, and push to platform callbacks (fire-and-forget, errors swallowed). */
-async function elementChanged(e: ElementChange): Promise<void> {
+async function elementChanged(e: ElementChange, activity?: { user: AuthUser; action: SceneActivityAction; name: string; detail?: Record<string, unknown> }): Promise<void> {
+  if (activity) await recordSceneActivity(e.sceneId, requestActor(activity.user), activity.action, { type: e.elementType, id: e.elementId, name: activity.name }, activity.detail)
   await publishElementChanged(e)
   await publishSceneTouched(e.sceneId)
   void dispatchElementCallbacks(e).catch((err) => console.error('[scenes] platform callback dispatch failed:', err))
@@ -496,6 +498,12 @@ export default async function sceneRoutes(app: FastifyInstance) {
       }
 
       const [updated] = await db.update(scenes).set(updates).where(eq(scenes.id, sceneId)).returning()
+      const changed = (['name', 'description'] as const).filter((k) => k in updates && updates[k] !== scene[k])
+      if (changed.length) await recordSceneActivity(sceneId, requestActor(request.user), 'scene.updated', { type: 'scene', id: sceneId, name: updated.name }, { changed, ...(changed.includes('name') ? { from: scene.name } : {}) })
+      if (activePresetId && activePresetId !== scene.activePresetId) {
+        const live = await db.query.scenePresets.findFirst({ where: eq(scenePresets.id, activePresetId), columns: { name: true } })
+        await recordSceneActivity(sceneId, requestActor(request.user), 'preset.activated', { type: 'preset', id: activePresetId, name: live?.name ?? null })
+      }
       if (activePresetId) await publishVenueEvent({ type: 'preset_changed', sceneId, presetId: activePresetId }).catch((err) => console.error('[scenes] preset_changed publish failed:', err))
       else if (activePresetId !== undefined) await publishSceneTouched(sceneId)
       return reply.send({ scene: updated })
@@ -516,6 +524,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
     if (typeof fileData !== 'string' || !fileData) return reply.status(400).send({ error: 'missing_file', message: 'Choose an image to upload.' })
     try {
       const scene = await setSceneThumbnail(sceneId, Buffer.from(fileData, 'base64'))
+      await recordSceneActivity(sceneId, requestActor(request.user), 'scene.thumbnail_changed', { type: 'scene', id: sceneId, name: scene.name })
       return reply.send({ scene })
     } catch (err) {
       if (err instanceof ThumbnailError) return reply.status(err.status).send({ error: err.code, message: err.message })
@@ -533,6 +542,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
     if (!hasScope(await accessFor(request, sceneId), 'scene.edit')) return reply.status(403).send({ error: 'Forbidden' })
     const scene = await removeSceneThumbnail(sceneId)
     if (!scene) return reply.status(404).send({ error: 'Scene not found' })
+    await recordSceneActivity(sceneId, requestActor(request.user), 'scene.thumbnail_changed', { type: 'scene', id: sceneId, name: scene.name }, { removed: true })
     return reply.send({ scene })
   })
 
@@ -562,7 +572,9 @@ export default async function sceneRoutes(app: FastifyInstance) {
         fromPresetId = from.id
       }
 
-      return reply.status(201).send({ preset: await createPreset(sceneId, name, fromPresetId) })
+      const preset = await createPreset(sceneId, name, fromPresetId)
+      await recordSceneActivity(sceneId, requestActor(request.user), 'preset.created', { type: 'preset', id: preset.id, name: preset.name }, fromPresetId ? { copied: true } : undefined)
+      return reply.status(201).send({ preset })
     },
   )
 
@@ -583,7 +595,9 @@ export default async function sceneRoutes(app: FastifyInstance) {
       if (!preset) return reply
       const name = cleanPresetName(request.body?.name)
       if (!name) return reply.status(400).send({ error: 'bad_name', message: `A preset name is required (up to ${PRESET_NAME_MAX} characters)` })
-      return reply.send({ preset: await renamePreset(preset, name) })
+      const renamed = await renamePreset(preset, name)
+      await recordSceneActivity(preset.sceneId, requestActor(request.user), 'preset.renamed', { type: 'preset', id: preset.id, name }, { from: preset.name })
+      return reply.send({ preset: renamed })
     },
   )
 
@@ -597,6 +611,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
     const roomSetsToDelete = await sceneOwnedRoomSets({ presetId: preset.id })
     await deletePreset(preset)
     await deleteOrphanedRoomSets(roomSetsToDelete)
+    await recordSceneActivity(preset.sceneId, requestActor(request.user), 'preset.deleted', { type: 'preset', id: preset.id, name: preset.name })
     return reply.status(204).send()
   })
 
@@ -607,6 +622,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
       const preset = await managedPreset(request, reply)
       if (!preset) return reply
       await activatePreset(preset.sceneId, preset.id)
+      await recordSceneActivity(preset.sceneId, requestActor(request.user), 'preset.activated', { type: 'preset', id: preset.id, name: preset.name })
       return reply.send({ activePresetId: preset.id })
     },
   )
@@ -678,7 +694,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
         elementId: element.id,
         elementType: element.type,
         deleted: false,
-      })
+      }, { user: request.user, action: 'element.created', name: element.name })
       return reply.status(201).send({ element: type === 'model' ? { ...element, roomSetId } : element })
     },
   )
@@ -731,7 +747,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
         elementId,
         elementType: updated.type,
         deleted: false,
-      })
+      }, { user: request.user, action: 'element.updated', name: updated.name, detail: { changed: [...fieldKeys, ...propertyKeys.map((k) => `properties.${k}`)].slice(0, 20) } })
       return reply.send({ element: updated })
     },
   )
@@ -764,7 +780,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
         .returning()
 
       // Rooms push the element's full state (enableLiveStream included) to connected clients
-      await elementChanged({ sceneId, presetId: element.presetId, elementId, elementType: updated.type, deleted: false })
+      await elementChanged({ sceneId, presetId: element.presetId, elementId, elementType: updated.type, deleted: false }, { user: request.user, action: enabled ? 'element.live_on' : 'element.live_off', name: updated.name })
       return reply.send({ element: updated })
     },
   )
@@ -796,7 +812,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
         elementId,
         elementType: element.type,
         deleted: true,
-      })
+      }, { user: request.user, action: 'element.deleted', name: element.name })
       return reply.status(204).send()
     },
   )
@@ -857,7 +873,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
         elementId,
         elementType: element.type,
         deleted: false,
-      })
+      }, { user: request.user, action: 'instance.added', name: element.name })
       return reply.status(201).send({ instance })
     },
   )
@@ -912,7 +928,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
         elementId: instance.elementId,
         elementType: instance.element.type,
         deleted: false,
-      })
+      }, { user: request.user, action: 'instance.updated', name: instance.element.name })
       return reply.send({ instance: updated })
     },
   )
@@ -941,7 +957,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
         elementId: instance.elementId,
         elementType: instance.element.type,
         deleted: false,
-      })
+      }, { user: request.user, action: 'instance.removed', name: instance.element.name })
       return reply.status(204).send()
     },
   )
@@ -976,7 +992,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
           elementId,
           elementType: element.type,
           deleted: false,
-        })
+        }, { user: request.user, action: 'instances.cleared', name: element.name, detail: { removed: deleted.length } })
       }
       return reply.send({ deleted: deleted.length })
     },
@@ -1084,6 +1100,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
           role: role as 'editor' | 'viewer',
         })
         .returning()
+      await recordSceneActivity(sceneId, requestActor(request.user), 'collaborator.added', { type: 'user', id: targetUser.id, name: targetUser.displayName }, { role: collab.role })
 
       return reply.status(201).send({
         collaborator: {
@@ -1136,6 +1153,10 @@ export default async function sceneRoutes(app: FastifyInstance) {
           ),
         )
         .returning()
+      if (existing.role !== updated.role) {
+        const who = await db.query.users.findFirst({ where: eq(users.id, userId), columns: { displayName: true } })
+        await recordSceneActivity(sceneId, requestActor(request.user), 'collaborator.changed', { type: 'user', id: userId, name: who?.displayName ?? null }, { role: updated.role, from: existing.role })
+      }
 
       return reply.send({ collaborator: updated })
     },
@@ -1176,6 +1197,8 @@ export default async function sceneRoutes(app: FastifyInstance) {
             eq(sceneCollaborators.userId, userId),
           ),
         )
+      const who = await db.query.users.findFirst({ where: eq(users.id, userId), columns: { displayName: true } })
+      await recordSceneActivity(sceneId, requestActor(request.user), 'collaborator.removed', { type: 'user', id: userId, name: who?.displayName ?? null }, { role: existing.role, ...(isSelf ? { left: true } : {}) })
 
       return reply.status(204).send()
     },

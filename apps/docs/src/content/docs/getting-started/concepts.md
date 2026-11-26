@@ -9,6 +9,20 @@ sidebar:
 
 A **scene** is the top-level container for a virtual space. It represents one deployable unit — a Decentraland parcel, a Hyperfy world, a Second Life region.
 
+### Activity
+
+The scene's **Activity** tab lists who changed what, and when. It covers:
+
+- items added, changed or deleted, and copies placed, moved or removed, whether in the dashboard or in-world;
+- the scene's name, description and thumbnail;
+- presets created, renamed, deleted or made live;
+- collaborators and wallet roles added, changed or removed, and the host handed over;
+- deploys, and the scene being deleted or restored.
+
+Each line names the person (their Virvi name, else their wallet) and says where they made the change: Dashboard, In-world or API. Repeat edits of one thing by one person within a minute show as one line with a count, so dragging a model around takes one line, not hundreds. Visitors' own actions (watching, clicking, claiming) aren't listed: those are in [Analytics](/docs/dashboard/analytics/).
+
+Only the host and co-hosts can see it. The log stays with the scene while it's in Trash, and is erased with it when the scene is deleted for good.
+
 ## Presets
 
 Each scene has one or more **presets** — named configurations of elements. Think of presets as "looks" for your scene. You might have a "Default" preset and a "Holiday" preset with different decorations. Switching presets is instant and syncs to all connected clients.

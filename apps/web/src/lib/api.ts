@@ -1,5 +1,6 @@
 'use client'
 import type { EmailStatus } from './email-verification'
+import type { SceneActivityEntry } from './scene-activity'
 import { createContext, useCallback, useContext, useMemo } from 'react'
 import { useAuth } from './auth'
 import { API_URL } from './config'
@@ -512,6 +513,8 @@ function useRealApi() {
     // Scene roles (wallet-based)
     getSceneRoles: (sceneId: string) =>
       apiFetch<{ host: { userId: string; displayName: string | null; wallets: string[] }; roles: { wallet: string; role: 'cohost' | 'editor' | 'viewer'; userId: string | null; displayName: string | null; createdAt: string }[] }>(`/api/scenes/${sceneId}/roles`),
+    getSceneActivity: (sceneId: string, before?: string) =>
+      apiFetch<{ entries: SceneActivityEntry[]; more: boolean }>(`/api/scenes/${sceneId}/activity${before ? `?before=${encodeURIComponent(before)}` : ''}`),
     addSceneRole: (sceneId: string, wallet: string, role: 'cohost' | 'editor' | 'viewer') =>
       apiFetch(`/api/scenes/${sceneId}/roles`, { method: 'POST', body: JSON.stringify({ wallet, role }) }),
     removeSceneRole: (sceneId: string, wallet: string) => apiFetch(`/api/scenes/${sceneId}/roles/${wallet}`, { method: 'DELETE' }),

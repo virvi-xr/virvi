@@ -31,6 +31,7 @@ import {
   publicRemoval, removalOptions, removalsOf, RemovalError, runRemoval, signRequestFor, startRemovals, submitRemovalSignature, type Removal,
 } from '../scenes/removals.js'
 import { sceneLimitError } from './scenes.js'
+import { recordSceneActivity, requestActor } from '../scenes/activity.js'
 
 const NOT_FOUND = { error: 'Scene not found' }
 
@@ -158,6 +159,7 @@ export default async function sceneDeleteRoutes(app: FastifyInstance) {
       if (remove.length && request.user.trial) return reply.status(403).send({ error: 'account_required', action: 'remove_deployments' })
       const now = new Date()
       if (!(await softDeleteScene(scene.id, request.user.id, now))) return reply.status(404).send(NOT_FOUND)
+      await recordSceneActivity(scene.id, requestActor(request.user), 'scene.deleted', { type: 'scene', id: scene.id, name: scene.name })
       // The scene is deleted whatever happens to these: a failure is listed with Retry
       const removals = remove.length ? await startRemovals(scene.id, remove, request.user.id, { seen }) : []
       return reply.send({
@@ -182,6 +184,7 @@ export default async function sceneDeleteRoutes(app: FastifyInstance) {
       throw err
     }
     if (!restored) return reply.status(404).send(NOT_FOUND)
+    await recordSceneActivity(scene.id, requestActor(request.user), 'scene.restored', { type: 'scene', id: scene.id, name: scene.name })
     return reply.send({ scene: restored.scene, notRestored: restored.notRestored.map((r) => publicRemoval(r)) })
   })
 

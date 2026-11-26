@@ -347,6 +347,7 @@ const CASES: Case[] = [
   { route: 'GET /api/scenes/:sceneId/roles', url: (f) => `/api/scenes/${f.scene.id}/roles` },
   { route: 'POST /api/scenes/:sceneId/roles', url: (f) => `/api/scenes/${f.scene.id}/roles`, body: (f) => ({ wallet: f.a.wallet, role: 'cohost' }) },
   { route: 'DELETE /api/scenes/:sceneId/roles/:wallet', url: (f) => `/api/scenes/${f.scene.id}/roles/${f.roleWallet}` },
+  { route: 'GET /api/scenes/:sceneId/activity', url: (f) => `/api/scenes/${f.scene.id}/activity` },
   { route: 'POST /api/scenes/:sceneId/transfer-host', url: (f) => `/api/scenes/${f.scene.id}/transfer-host`, body: (f) => ({ wallet: f.a.wallet }) },
   // scene library
   { route: 'GET /api/scenes/:sceneId/library', url: (f) => `/api/scenes/${f.scene.id}/library` },

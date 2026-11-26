@@ -22,6 +22,7 @@ import {
   kioskGiveawayOptions, kioskItemNote, kioskSaveError, kioskSettings,
 } from '@/lib/kiosk'
 import { SceneRoles } from './SceneRoles'
+import { SceneActivity } from './SceneActivity'
 import { Raffles } from './Raffles'
 import { SceneBeats } from '@/components/beats/SceneBeats'
 import { ArSpaces } from './ArSpaces'
@@ -48,7 +49,9 @@ import { offTypeLocked, sceneTabLocked } from '@/lib/trial-scene'
 // ---------------------------------------------------------------------------
 
 type ElementType = 'video' | 'image' | 'sound' | 'model' | 'widget' | 'ad_space' | 'claim_point'
-type TabKey = ElementType | 'moderation' | 'roles' | 'raffles' | 'ar' | 'settings'
+type TabKey = ElementType | 'moderation' | 'roles' | 'raffles' | 'ar' | 'activity' | 'settings'
+/** Tabs that aren't a list of one element type. */
+const PANEL_TABS = new Set<TabKey>(['moderation', 'roles', 'raffles', 'ar', 'activity', 'settings'])
 
 interface Instance {
   id: string
@@ -113,6 +116,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'roles', label: 'Roles' },
   { key: 'raffles', label: 'Raffles' },
   { key: 'ar', label: 'AR spaces' },
+  { key: 'activity', label: 'Activity' },
   { key: 'settings', label: 'Settings' },
 ]
 
@@ -1616,7 +1620,7 @@ export default function SceneEditorPage() {
   // Edits go to the preset chosen in the preset bar, else the live one; never just "the first preset"
   const activePreset = editingPreset(scene, editingPresetId)
   const elements = activePreset?.elements || []
-  const filteredElements = activeTab === 'moderation' || activeTab === 'roles' || activeTab === 'raffles' || activeTab === 'ar' ? [] : elements.filter(el => el.type === activeTab)
+  const filteredElements = PANEL_TABS.has(activeTab) ? [] : elements.filter(el => el.type === activeTab)
 
   // -----------------------------------------------------------------------
   // Update handlers
@@ -1926,7 +1930,7 @@ export default function SceneEditorPage() {
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-800 pb-px">
         {TABS.map(tab => {
-          const count = tab.key === 'moderation' || tab.key === 'roles' || tab.key === 'raffles' || tab.key === 'ar' || tab.key === 'settings' ? 0 : elements.filter(el => el.type === tab.key).length
+          const count = PANEL_TABS.has(tab.key) ? 0 : elements.filter(el => el.type === tab.key).length
           if (sceneTabLocked(tab.key, trial)) {
             return (
               <button key={tab.key} type="button" onClick={() => askSceneSignUp(tab.key, tab.label)}
@@ -1968,6 +1972,9 @@ export default function SceneEditorPage() {
       {/* AR spaces tab */}
       {activeTab === 'ar' && <ArSpaces sceneId={sceneId} />}
 
+      {/* Activity tab: who changed what (LIV-32) */}
+      {activeTab === 'activity' && <SceneActivity sceneId={sceneId} />}
+
       {/* Settings tab: the scene's thumbnail (LIV-88) */}
       {activeTab === 'settings' && (
         <>
@@ -2001,7 +2008,7 @@ export default function SceneEditorPage() {
       )}
 
       {/* Element list (video/image/model/sound) */}
-      {activeTab !== 'moderation' && activeTab !== 'widget' && activeTab !== 'roles' && activeTab !== 'raffles' && activeTab !== 'ar' && activeTab !== 'settings' && (
+      {!PANEL_TABS.has(activeTab) && activeTab !== 'widget' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-sm text-gray-400">{ELEMENT_TYPE_LABELS[activeTab as ElementType]}s ({filteredElements.length})</p>

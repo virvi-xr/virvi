@@ -39,6 +39,7 @@ import { screenShowingsMessages, SHOWINGS_REFRESH_MS } from '../scenes/showings.
 import { hold, holderOf, release, releaseAll, sweepExpired } from './draft-holds.js'
 import { checkParentInstance } from '../scenes/instance-parent.js'
 import { RelayLimiter, relayUserMessage } from './relay-limit.js'
+import { noteSceneActivity, roomActor, type SceneActivityAction } from '../scenes/activity.js'
 
 interface JoinOptions {
   sessionToken: string
@@ -237,7 +238,9 @@ export class VirviSceneRoom extends Room {
     this.guarded('scene_preset_update', async (client, message, result) => {
       console.log(`[VirviSceneRoom] scene_preset_update from ${client.sessionId}`, message.action)
 
+      const activity = await this.presetActivity(message, result.target).catch(() => null)
       await this.persistPresetUpdate(message, result.target)
+      if (activity && this.sceneId) noteSceneActivity(this.sceneId, roomActor(client.auth as Actor), activity.action, activity.subject)
       if (result.broadcast && this.sceneId) await publishSceneTouched(this.sceneId)
       client.send('scene_preset_update_ack', { action: message.action, id: message.elementData?.sk || message.id, sk: message.instanceData?.sk })
 
@@ -369,6 +372,7 @@ export class VirviSceneRoom extends Room {
             where: eq(scenePresets.id, presetId),
             with: { elements: { with: { instances: true } } },
           })
+          noteSceneActivity(this.sceneId, roomActor(client.auth as Actor), 'preset.activated', { type: 'preset', id: presetId, name: preset?.name ?? null })
 
           if (preset) {
             const serialized = await withKioskPreset(await withLiveStatus(serializePreset(preset)))
@@ -899,6 +903,30 @@ export class VirviSceneRoom extends Room {
         sceneSettings: [],
       })
     }
+  }
+
+  /** What a preset update will do, for the scene's activity log (LIV-32): read before the write, so a delete still has its name. */
+  private async presetActivity(message: any, target: GuardTarget = {}): Promise<{ action: SceneActivityAction; subject: { type: string | null; id: string | null; name: string | null } } | null> {
+    const { action, instance, elementData } = message
+    const of = (el: { id: string; type: string; name: string } | undefined) => (el ? { type: el.type, id: el.id, name: el.name } : null)
+    if (action === 'create' && !instance && elementData) {
+      const id = elementData.sk || elementData.id
+      return { action: 'element.created', subject: { type: message.element || 'custom', id: typeof id === 'string' ? id : null, name: elementData.name || message.element || 'Untitled' } }
+    }
+    if (!instance && target.elementId && (action === 'update' || action === 'delete')) {
+      const subject = of(await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, target.elementId), columns: { id: true, type: true, name: true } }))
+      return subject && { action: action === 'update' ? 'element.updated' : 'element.deleted', subject }
+    }
+    if (instance && action === 'create' && target.elementId) {
+      const subject = of(await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, target.elementId), columns: { id: true, type: true, name: true } }))
+      return subject && { action: 'instance.added', subject }
+    }
+    if (instance && target.instanceId && (action === 'update' || action === 'delete')) {
+      const row = await db.query.sceneElementInstances.findFirst({ where: eq(sceneElementInstances.id, target.instanceId), columns: { id: true }, with: { element: { columns: { id: true, type: true, name: true } } } })
+      const subject = of(row?.element)
+      return subject && { action: action === 'update' ? 'instance.updated' : 'instance.removed', subject }
+    }
+    return null
   }
 
   /**
