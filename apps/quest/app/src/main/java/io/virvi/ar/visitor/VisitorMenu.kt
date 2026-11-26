@@ -85,7 +85,7 @@ fun VisitorMenu(s: AppState, act: MenuActions, developer: Boolean) {
         Wide(VisitorCopy.REPORT_CANCEL, act::cancelReport, outlined = true)
         return@Column
       }
-      Wide(VisitorCopy.LOOK_AGAIN, act::lookAgain)
+      if (s.lookAgainShown) Wide(VisitorCopy.LOOK_AGAIN, act::lookAgain)
       Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         OCCLUSION_CHOICES.forEach { (o, label) ->
           val m = Modifier.weight(1f)

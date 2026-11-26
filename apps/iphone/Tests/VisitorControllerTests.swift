@@ -153,6 +153,16 @@ final class VisitorControllerTests: XCTestCase {
         XCTAssertEqual(outline.flashes.first?.diameterM ?? 0, 0.14, accuracy: 1e-9)
     }
 
+    func testTheMenuIsReachableFromTheScannerAndLookAgainOnlyOnceASpaceIsUp() async throws {
+        XCTAssertNotNil(controller.hint, "still on the scanner")
+        XCTAssertTrue(controller.menuButtonShown, "sign-in and My BEATs are reachable before any scan")
+        XCTAssertFalse(controller.lookAgainShown, "nothing to look at again yet")
+
+        try await seeRing(frames: 15)
+        XCTAssertTrue(controller.menuButtonShown)
+        XCTAssertTrue(controller.lookAgainShown)
+    }
+
     func testTheSessionBeingInterruptedHidesTheSceneAtOnce() async throws {
         try await seeRing(frames: 15)
         XCTAssertTrue(controller.sceneShown)

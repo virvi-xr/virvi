@@ -445,7 +445,7 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
   // ── panels and menu ──────────────────────────────────────────────────
 
   /**
-   * The hint card follows the head lazily; the "⋯" button (while a space is up, see `menuButtonShown`) sits 0.35 m
+   * The hint card follows the head lazily; the "⋯" button (always) sits 0.35 m
    * below the card's place; the menu stays where it opened.
    */
   private fun placePanels(head: Pose, now: Long) {

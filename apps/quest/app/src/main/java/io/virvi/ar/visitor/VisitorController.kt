@@ -436,7 +436,7 @@ class VisitorController(
     // The BEAT card (and its check-ins) belong to the space while its scene is shown; a moment of locking the same space
     // keeps them, and any other state clears them
     beats.tell(st)
-    ui.menuButtonShown = menuButtonShown(st, flow.spaceChosen)
+    ui.lookAgainShown = menuButtonShown(st, flow.spaceChosen)
     ui.reportSpaceId = flow.reportSpaceId
     ui.visitorState = st::class.simpleName ?: ""
     ui.itemCount = session.itemCount()

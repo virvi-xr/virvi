@@ -41,9 +41,11 @@ struct VisitorMenu: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            wide(VisitorCopy.LOOK_AGAIN, prominent: true) {
-                controller.lookAgain()
-                close()
+            if controller.lookAgainShown {
+                wide(VisitorCopy.LOOK_AGAIN, prominent: true) {
+                    controller.lookAgain()
+                    close()
+                }
             }
             if occlusionSupported {
                 Toggle(Self.HIDE_BEHIND, isOn: $occlusionOn)

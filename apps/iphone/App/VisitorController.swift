@@ -75,7 +75,10 @@ final class VisitorController {
     /// A failure while the space page has no name yet.
     private(set) var spaceProblem: String?
     private(set) var sceneShown = false
-    private(set) var menuButtonShown = false
+    /// The "⋯" button shows on every screen, so a visitor can sign in and open My BEATs before scanning anything.
+    private(set) var menuButtonShown = true
+    /// Whether the menu offers "Look again": only once a space is up.
+    private(set) var lookAgainShown = false
     /// The space a visitor may report, or nil.
     private(set) var reportSpaceId: String?
     /// The line the menu shows once a report has been tried.
@@ -557,7 +560,7 @@ final class VisitorController {
         set(\.spaceProblem, problem)
         set(\.hint, hintText(st, gather: gather, unreadableForMs: unreadableFor, problem: device))
         if case .shown = st { set(\.sceneShown, true) } else { set(\.sceneShown, false) }
-        set(\.menuButtonShown, VirviARKit.menuButtonShown(st, spaceChosen: flow.spaceChosen))
+        set(\.lookAgainShown, VirviARKit.menuButtonShown(st, spaceChosen: flow.spaceChosen))
         set(\.reportSpaceId, flow.reportSpaceId)
         // Locking the same space again (tracking lost for a moment) keeps its BEAT card; anything else lets it go
         switch st {

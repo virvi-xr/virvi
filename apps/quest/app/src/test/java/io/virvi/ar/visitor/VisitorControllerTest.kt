@@ -34,6 +34,7 @@ import kotlinx.coroutines.cancel
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -180,6 +181,16 @@ class VisitorControllerTest {
     feed.onSnapshot(ArFeedSnapshot("1", space, null))
     repeat(VisitorTuning.MIN_FRAMES) { frame() }
     assertTrue(ui.sceneShown)
+  }
+
+  @Test fun `the menu is reachable from the scanner, and Look again only once a space is up`() {
+    frame()
+    assertNotNull(ui.hint)
+    assertTrue("sign-in is reachable with hands before any scan", ui.menuButtonShown)
+    assertFalse("nothing to look at again yet", ui.lookAgainShown)
+    toShown()
+    assertTrue(ui.menuButtonShown)
+    assertTrue(ui.lookAgainShown)
   }
 
   @Test fun `showing the scene places it, then fades it in`() {

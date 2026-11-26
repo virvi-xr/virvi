@@ -123,6 +123,5 @@ struct VisitorScreen: View {
                 .presentationDetents([.height(menuHeight)])
         }
         .onChange(of: occlusionOn) { _, on in model.driver.setOcclusion(on) }
-        .onChange(of: controller.menuButtonShown) { _, shown in if !shown { menuOpen = false } }
     }
 }
