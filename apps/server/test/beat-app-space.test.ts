@@ -402,7 +402,7 @@ describe('BEATs in AR spaces with the Virvi app', () => {
     expect(inWorld.statusCode, inWorld.body).toBe(200)
     await markBeatLive(sceneId, p.user.id, 1)
     const tracked = (await rowOf(b.id, p.user.id)).lastSeenAt!.getTime()
-    for (let i = 1; i <= 6; i++) await checkInBeat(sceneId, b.id, p.user.id, new Date(tracked + i * 30 * S))
+    for (let i = 1; i <= 6; i++) await checkInBeat(sceneId, b.id, { userId: p.user.id, platform: 'decentraland', ip: '127.0.0.1' }, new Date(tracked + i * 30 * S))
     expect((await rowOf(b.id, p.user.id)).secondsPresent).toBe(180)
     await poll(p)
     const res = await track(p, b)
