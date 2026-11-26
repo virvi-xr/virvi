@@ -5,6 +5,7 @@ import type { EventAttendanceReport } from '@virvixr/shared'
 import type { useApi } from '@/lib/api'
 import { attendanceCsv, attendanceFileName, presentLabel } from '@/lib/analytics/attendance'
 import { downloadText } from '@/lib/download'
+import { TableScroll } from '@/components/ui'
 
 const SHOWN = 50
 
@@ -76,7 +77,7 @@ export default function EventAttendance({ event, api }: { event: { id: string; n
           {report.attendees.length === 0 ? (
             <p className="text-sm text-gray-500">Nobody has been in the linked scenes during the event{live ? ' yet' : ''}.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <TableScroll label="Who came">
               <table className="w-full text-left text-sm">
                 <thead className="text-xs text-gray-500">
                   <tr>
@@ -107,7 +108,7 @@ export default function EventAttendance({ event, api }: { event: { id: string; n
                   {all ? 'Show fewer' : `Show all ${report.attendees.length}`}
                 </button>
               )}
-            </div>
+            </TableScroll>
           )}
           {report.truncated && <p className="text-xs text-amber-400">The list shows the first {report.attendees.length} visitors by time spent. The numbers above count everyone.</p>}
           <p className="text-xs text-gray-500">Counts visits to this event’s linked scenes between its start and end. Names and wallets appear only where the scene shows wallets in Analytics and the visitor allowed it.</p>

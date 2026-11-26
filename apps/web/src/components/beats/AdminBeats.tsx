@@ -1,7 +1,7 @@
 'use client'
 import { BEAT_CHAIN_INFO, beatAddressUrl, type BeatChain } from '@virvixr/shared'
 import { CopyWallet } from '@/components/CopyWallet'
-import { Badge, ConfirmAction, tableHeadBand } from '@/components/ui'
+import { Badge, ConfirmAction, tableHeadBand, TableScroll } from '@/components/ui'
 import { BATCHES_NOTE, GIVEN_UP_NOTE, balanceLabel, clearPausePrompt, failReasonLabel, giveUpPrompt, lowGasDetail, pauseMessage, type AdminBeatChain, type AdminBeatsOverview } from '@/lib/admin-beats'
 
 const link = 'text-blue-400 underline underline-offset-2 hover:text-blue-300'
@@ -69,7 +69,7 @@ export function AdminBeatsView({ data, busy, onRetry, onClearPause, onGiveUp }: 
       <section className="rounded-lg border border-gray-800">
         <h2 className="border-b border-gray-800 px-3 py-2 text-sm font-semibold">Failed claims</h2>
         {data.failed.length === 0 ? <p className="p-3 text-sm text-gray-400">No failed claims.</p> : (
-          <div className="overflow-x-auto">
+          <TableScroll label="Failed claims">
             <table className="w-full text-sm">
               <thead className={tableHeadBand}><tr><th className="p-2">BEAT</th><th className="p-2">Wallet</th><th className="p-2">Reason</th><th className="p-2"><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>
@@ -78,12 +78,12 @@ export function AdminBeatsView({ data, busy, onRetry, onClearPause, onGiveUp }: 
                     <td className="p-2">{f.name}</td>
                     <td className="p-2"><CopyWallet wallet={f.wallet} /></td>
                     <td className="p-2 text-xs text-gray-300" title={f.failReason ?? undefined}>{failReasonLabel(f.failReason, f.retryable, f.retired)}</td>
-                    <td className="p-2 text-right">{f.retryable && <button type="button" className="text-xs text-blue-300 hover:underline disabled:opacity-50" disabled={busy} onClick={() => onRetry(f.beatId)}>Retry all failed for this BEAT</button>}</td>
+                    <td className="p-2 text-right">{f.retryable && <button type="button" className="text-xs text-blue-300 underline underline-offset-2 disabled:opacity-50" disabled={busy} onClick={() => onRetry(f.beatId)}>Retry all failed for this BEAT</button>}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableScroll>
         )}
       </section>
 
@@ -110,7 +110,7 @@ export function AdminBeatsView({ data, busy, onRetry, onClearPause, onGiveUp }: 
           <p className="text-xs text-gray-400">{BATCHES_NOTE}</p>
         </div>
         {data.batches.length === 0 ? <p className="p-3 text-sm text-gray-400">No transactions yet.</p> : (
-          <div className="overflow-x-auto">
+          <TableScroll label="Recent transactions">
             <table className="w-full text-sm">
               <thead className={tableHeadBand}><tr><th className="p-2">When</th><th className="p-2">Chain</th><th className="p-2">Kind</th><th className="p-2">Token</th><th className="p-2">Nonce</th><th className="p-2">Status</th><th className="p-2">Tries</th><th className="p-2">Transaction</th></tr></thead>
               <tbody>
@@ -128,7 +128,7 @@ export function AdminBeatsView({ data, busy, onRetry, onClearPause, onGiveUp }: 
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableScroll>
         )}
       </section>
     </div>

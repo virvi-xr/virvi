@@ -233,7 +233,7 @@ export function ArSpaces({ sceneId }: { sceneId: string }) {
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-gray-800 bg-gray-900 p-6">
-        <h3 className="text-sm font-medium text-gray-300 mb-1">AR spaces</h3>
+        <h2 className="text-sm font-medium text-gray-300 mb-1">AR spaces</h2>
         <p className="text-xs text-gray-500 mb-4">Real places that visitors can enter with a headset. Each floor has ARCs you print and mount.</p>
         {error && <div className="mb-3 rounded-lg bg-red-900/50 border border-red-700 px-4 py-2 text-sm text-red-300">{error}</div>}
         <form className="flex flex-wrap gap-2" onSubmit={(e) => {

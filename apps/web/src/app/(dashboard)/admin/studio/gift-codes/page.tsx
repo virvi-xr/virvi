@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useApi } from '@/lib/api'
-import { Badge, ConfirmAction, PageHeader, PrimaryButton, Skeleton, type Tone } from '@/components/ui'
+import { Badge, ConfirmAction, PageHeader, PrimaryButton, Skeleton, type Tone, TableScroll } from '@/components/ui'
 import { giftCodeStatus, type AdminGiftCode } from '@/lib/studio'
 
 const dateFmt = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' })
@@ -142,7 +142,7 @@ export default function AdminGiftCodesPage() {
         {!codes ? <Skeleton rows={2} className="h-12" /> : codes.length === 0 ? (
           <p className="text-gray-400">No codes yet.</p>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-gray-800">
+          <TableScroll label="Gift codes" className="rounded-lg border border-gray-800">
             <table className="w-full text-left text-sm">
               <thead className="bg-gray-900 text-xs text-gray-500">
                 <tr>
@@ -184,7 +184,7 @@ export default function AdminGiftCodesPage() {
                 })}
               </tbody>
             </table>
-          </div>
+          </TableScroll>
         )}
       </section>
     </div>

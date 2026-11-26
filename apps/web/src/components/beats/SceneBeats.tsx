@@ -29,7 +29,7 @@ export function SceneBeats({ sceneId }: { sceneId: string }) {
       <div className="mb-4 flex items-center justify-between">
         <h3 className="text-sm font-medium text-gray-300">BEATs</h3>
         {availability.canCreate && (
-          <Link href={newBeatHref(sceneId)} className="rounded-md bg-orange-600 px-3 py-1.5 text-sm text-white hover:bg-orange-500">New BEAT</Link>
+          <Link href={newBeatHref(sceneId)} className="rounded-md bg-orange-700 px-3 py-1.5 text-sm text-white hover:bg-orange-800">New BEAT</Link>
         )}
       </div>
       <BeatsNotice a={availability} />

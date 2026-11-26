@@ -13,6 +13,9 @@ export default function NewBeatPage() {
   return (
     <Suspense fallback={<Skeleton />}>
       <div className="mx-auto max-w-3xl">
+        {/* Above the gate, so the page keeps its title while BEATs are closed or not set up */}
+        <PageHeader crumbs={[{ label: 'BEATs', href: '/beats' }, 'New BEAT']} title="New BEAT"
+          subtitle="Visitors who stay long enough claim one, and it's sent to their wallet." />
         <BeatsGate>{(a) => <NewBeat availability={a} />}</BeatsGate>
       </div>
     </Suspense>
@@ -33,7 +36,7 @@ function NewBeat({ availability }: { availability: BeatAvailability }) {
 
   // While the network isn't set up, the gate's notice above says why; there is no form to show
   if (availability.reason === 'not_configured') return null
-  if (!availability.canCreate) return <p className="text-sm text-gray-400">{CREATE_CLOSED} <a href="mailto:support@virvi.io" className="text-blue-300 hover:underline">support@virvi.io</a></p>
+  if (!availability.canCreate) return <p className="text-sm text-gray-400">{CREATE_CLOSED} <a href="mailto:support@virvi.io" className="text-blue-300 underline underline-offset-2">support@virvi.io</a></p>
 
   const review = async (f: BeatInput) => {
     setInput(f); setBusy(true); setError(null)
@@ -47,8 +50,6 @@ function NewBeat({ availability }: { availability: BeatAvailability }) {
 
   return (
     <>
-      <PageHeader crumbs={[{ label: 'BEATs', href: '/beats' }, 'New BEAT']} title="New BEAT"
-        subtitle="Visitors who stay long enough claim one, and it's sent to their wallet." />
       {step === 'review' && draftId
         ? <BeatReview beatId={draftId} test={availability.test} summary={draft ? reviewSummary(draft) : undefined} onPaid={() => router.push(beatHref(draftId))} onBack={() => setStep('form')} />
         : <BeatForm initial={input} error={error} busy={busy} submitLabel="Review" busyLabel="Saving…" onSubmit={review} />}

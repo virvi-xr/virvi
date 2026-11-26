@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useApi } from '@/lib/api'
-import { Badge, PageHeader, Skeleton, tableHeadBand } from '@/components/ui'
+import { Badge, PageHeader, Skeleton, tableHeadBand, TableScroll } from '@/components/ui'
 import {
   barHeights, hourlyBuckets, kindLabel, sinceLabel,
   type ErrorDetail, type ErrorSettings, type ErrorSignatureSummary, type ErrorsOverview, type ErrorThresholds,
@@ -48,12 +48,12 @@ function SigTable({ title, rows, onOpen, empty, extra }: { title: string; rows: 
     <section className="rounded-lg border border-gray-800">
       <h2 className="border-b border-gray-800 px-3 py-2 text-sm font-semibold">{title}</h2>
       {rows.length === 0 ? <p className="p-3 text-sm text-gray-500">{empty}</p> : (
-        <div className="overflow-x-auto">
+        <TableScroll label={title}>
           <table className="w-full text-sm">
             <thead className={tableHeadBand}><tr><th className="p-2">Signature</th><th className="p-2 text-right">Users</th><th className="p-2 text-right">Count</th><th className="p-2 text-right">Last seen</th></tr></thead>
             <tbody>{rows.map((s) => <SigLine key={s.id} s={s} onOpen={onOpen} extra={extra?.(s)} />)}</tbody>
           </table>
-        </div>
+        </TableScroll>
       )}
     </section>
   )

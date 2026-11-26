@@ -398,7 +398,7 @@ function AssetDetail({ assetId, onDeleted }: { assetId: string; onDeleted: (id: 
                 <p className="text-sm text-gray-400">
                   {asset.author ? <>Shared by <span className="text-gray-200">{asset.author}</span>. </> : null}
                   {sharedNote(asset)}
-                  {shareLicense(asset.license)?.url && <> <a href={shareLicense(asset.license)!.url!} target="_blank" rel="noopener noreferrer" className="text-blue-300 hover:underline">Full license</a></>}
+                  {shareLicense(asset.license)?.url && <> <a href={shareLicense(asset.license)!.url!} target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">Full license</a></>}
                 </p>
               )}
               {asset.mine && asset.takenDownAt && (

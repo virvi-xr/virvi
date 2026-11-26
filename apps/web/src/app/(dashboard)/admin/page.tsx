@@ -5,7 +5,7 @@ import { useApi, type AdminArReport } from '@/lib/api'
 import { reportReasonLabel } from '@/lib/ar'
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { ConfirmAction, PageHeader, Skeleton, tableHead } from '@/components/ui'
+import { ConfirmAction, PageHeader, Skeleton, tableHead, TableScroll } from '@/components/ui'
 import { StatCard } from '@/components/analytics/StatCard'
 import AssetReports from './AssetReports'
 import { adminPrivacyLabel, adminTermsLabel } from '@/lib/privacy'
@@ -212,7 +212,7 @@ export default function AdminPage() {
         ) : reports.length === 0 ? (
           <p className="text-sm text-gray-400">{reportsResolved ? 'No resolved reports.' : 'No open reports.'}</p>
         ) : (
-          <div className="overflow-x-auto">
+          <TableScroll label="Space reports">
             <table className="w-full text-sm text-left">
               <thead className={`${tableHead} border-b border-gray-800`}>
                 <tr>
@@ -246,7 +246,7 @@ export default function AdminPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableScroll>
         )}
       </div>
 
@@ -299,7 +299,7 @@ export default function AdminPage() {
             <Skeleton rows={2} className="h-12" />
           ) : (
             <>
-              <div className="overflow-x-auto">
+              <TableScroll label="Users">
                 <table className="w-full text-sm text-left">
                   <thead className={`${tableHead} border-b border-gray-800`}>
                     <tr>
@@ -357,7 +357,7 @@ export default function AdminPage() {
                     )}
                   </tbody>
                 </table>
-              </div>
+              </TableScroll>
 
               {/* Pagination */}
               {usersTotal > PAGE_SIZE && (
@@ -399,7 +399,7 @@ export default function AdminPage() {
             <Skeleton rows={2} className="h-12" />
           ) : (
             <>
-              <div className="overflow-x-auto">
+              <TableScroll label="Organizations">
                 <table className="w-full text-sm text-left">
                   <thead className={`${tableHead} border-b border-gray-800`}>
                     <tr>
@@ -442,7 +442,7 @@ export default function AdminPage() {
                     )}
                   </tbody>
                 </table>
-              </div>
+              </TableScroll>
 
               {/* Pagination */}
               {orgsTotal > PAGE_SIZE && (

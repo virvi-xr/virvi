@@ -4,7 +4,7 @@
 import { useState } from 'react'
 import type { PublicBeat } from '@virvixr/shared'
 import { claimantRow, claimantsHeading, claimantWallets, hasClaimed, type BeatClaimant } from '@/lib/beats'
-import { ConfirmAction, tableHeadBand } from '@/components/ui'
+import { ConfirmAction, tableHeadBand, TableScroll } from '@/components/ui'
 
 /** Copies the full wallet of every claim that took a BEAT, one per line (not visitors still attending). */
 export function copyWallets(list: BeatClaimant[], clipboard: Pick<Clipboard, 'writeText'> | undefined = typeof navigator === 'undefined' ? undefined : navigator.clipboard) {
@@ -47,7 +47,7 @@ export function Claimants({ claimants, beat, error, busy, onRetry, onRemove }: {
           {onRetry && <button type="button" onClick={onRetry} className="rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700">Try again</button>}
         </div>
       ) : claimants.length === 0 ? <p className="px-4 pb-4 text-sm text-gray-400">No one has started tracking yet.</p> : (
-        <div className="overflow-x-auto">
+        <TableScroll label="Attendees">
           <table className="w-full text-sm">
             <thead className={tableHeadBand}>
               <tr>
@@ -65,9 +65,9 @@ export function Claimants({ claimants, beat, error, busy, onRetry, onRemove }: {
                   <td className={`px-4 py-2 ${r.name ? 'text-gray-100' : 'italic text-gray-400'}`}>{r.name ?? 'No name'}</td>
                   <td className="px-4 py-2 text-gray-300">{r.status}</td>
                   <td className="px-4 py-2">
-                    {r.txUrl ? <a href={r.txUrl} target="_blank" rel="noopener noreferrer" className="text-blue-300 hover:underline">View</a>
+                    {r.txUrl ? <a href={r.txUrl} target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">View</a>
                       : <span className="text-gray-400"><span aria-hidden="true">—</span><span className="sr-only">No transaction</span></span>}
-                    {r.reissueTxUrl && <a href={r.reissueTxUrl} target="_blank" rel="noopener noreferrer" className="ml-3 text-blue-300 hover:underline">Reissue</a>}
+                    {r.reissueTxUrl && <a href={r.reissueTxUrl} target="_blank" rel="noopener noreferrer" className="ml-3 text-blue-300 underline underline-offset-2">Reissue</a>}
                   </td>
                   {anyHeld && (
                     <td className="px-4 py-2 text-right">
@@ -84,7 +84,7 @@ export function Claimants({ claimants, beat, error, busy, onRetry, onRemove }: {
               ))}
             </tbody>
           </table>
-        </div>
+        </TableScroll>
       )}
     </section>
   )

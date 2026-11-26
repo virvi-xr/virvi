@@ -212,7 +212,7 @@ function ElementHeader({ element, onUpdateElement, onDelete }: {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3">
-        <h4 className="font-semibold">{element.name}</h4>
+        <h2 className="font-semibold">{element.name}</h2>
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-2 text-sm text-gray-400">
             <input type="checkbox" checked={element.enabled}
@@ -1163,7 +1163,7 @@ function WidgetElementEditor({ element, onUpdateElement, onDelete }: {
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
       <div className="flex items-center justify-between">
-        <h4 className="font-semibold">{element.name}</h4>
+        <h2 className="font-semibold">{element.name}</h2>
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-2 text-sm text-gray-400">
             <input type="checkbox" checked={element.enabled}
@@ -1241,7 +1241,7 @@ function ModerationPanel({ sendMessage }: { sendMessage: (type: string, payload:
     <div className="space-y-6">
       {/* Send Message */}
       <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
-        <h4 className="font-semibold">Send Message</h4>
+        <h2 className="font-semibold">Send Message</h2>
         <div className="flex flex-col gap-1">
           <span className="text-xs text-gray-500">Message Text</span>
           <textarea aria-label="Type a message to display in-world" value={msgText} onChange={e => setMsgText(e.target.value)}
@@ -1266,7 +1266,7 @@ function ModerationPanel({ sendMessage }: { sendMessage: (type: string, payload:
 
       {/* Crash User */}
       <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
-        <h4 className="font-semibold">Crash User</h4>
+        <h2 className="font-semibold">Crash User</h2>
         <div className="flex items-end gap-4">
           <div className="flex-1">
             <TextInput label="Wallet / User ID" value={crashTarget} onChange={setCrashTarget} />
@@ -1281,7 +1281,7 @@ function ModerationPanel({ sendMessage }: { sendMessage: (type: string, payload:
 
       {/* Recent Actions */}
       <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-3">
-        <h4 className="font-semibold">Recent Actions</h4>
+        <h2 className="font-semibold">Recent Actions</h2>
         {actions.length === 0 ? (
           <p className="text-gray-500 text-sm">No moderation actions yet.</p>
         ) : (
@@ -1391,7 +1391,7 @@ function CollaboratorsSection({ sceneId, api, currentUserId }: {
 
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
-      <h3 className="text-lg font-semibold">Collaborators</h3>
+      <h2 className="text-lg font-semibold">Collaborators</h2>
 
       {error && (
         <div className="rounded-md bg-red-900/30 border border-red-800 px-3 py-2 text-sm text-red-400">
@@ -1943,7 +1943,7 @@ export default function SceneEditorPage() {
                   ? 'bg-gray-800 text-white border-b-2 border-blue-500'
                   : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/50'
               }`}>
-              {tab.label} {count > 0 && <span className="ml-1 text-xs text-gray-500">({count})</span>}
+              {tab.label} {count > 0 && <span className="ml-1 text-xs text-gray-400">({count})</span>}
             </button>
           )
         })}

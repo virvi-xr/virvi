@@ -124,6 +124,30 @@ describe('accessibility (LIV-42)', () => {
   })
 })
 
+describe('signed-in dashboard pages (axe scan, LIV-42)', () => {
+  it('a table that scrolls sideways is a named region the keyboard can reach (TableScroll)', () => {
+    // A bare overflow-x-auto div can't take focus, so keyboard users can't scroll it. <pre> blocks are left out.
+    const offenders = tsxFiles(SRC).filter((f) => /<div className="overflow-x-auto[ "]/.test(readFileSync(f, 'utf8'))).map((f) => relative(SRC, f))
+    expect(offenders).toEqual([])
+  })
+
+  it('white text never sits on orange-500 or orange-600 (2.8:1 and 3.6:1); orange-700 passes', () => {
+    const offenders = tsxFiles(SRC).filter((f) => /bg-orange-[56]00[^'"`]*text-white|text-white[^'"`]*\sbg-orange-[56]00/.test(readFileSync(f, 'utf8'))).map((f) => relative(SRC, f))
+    expect(offenders).toEqual([])
+  })
+
+  it('breadcrumb steps are list items, so a link is not set in gray text told apart only by color', () => {
+    const ui = readFileSync(join(SRC, 'components/ui.tsx'), 'utf8')
+    expect(ui).toMatch(/aria-label="Breadcrumb"[\s\S]*?<ol[\s\S]*?<li/)
+  })
+
+  it('headings on the scene page start at h2 under the title (no h4 in its tabs)', () => {
+    const dir = join(SRC, 'app/(dashboard)/scenes/[sceneId]')
+    const h4 = readdirSync(dir).filter((f) => f.endsWith('.tsx')).filter((f) => /<h4[\s>]/.test(readFileSync(join(dir, f), 'utf8')))
+    expect(h4).toEqual([])
+  })
+})
+
 describe('public pages have a main landmark', () => {
   // Pages outside the dashboard (whose layout has its own <main>), or the component each one renders. Redirect-only and
   // hand-off pages are left out. An axe scan of the built site found these missing (LIV-42).
@@ -137,7 +161,7 @@ describe('public pages have a main landmark', () => {
   })
 
   it('inline links are underlined, not told apart by color alone', () => {
-    const offenders = tsxFiles(SRC).filter((f) => /text-blue-400 hover:underline/.test(readFileSync(f, 'utf8'))).map((f) => relative(SRC, f))
+    const offenders = tsxFiles(SRC).filter((f) => /text-blue-[34]00[^'"`]*hover:underline/.test(readFileSync(f, 'utf8'))).map((f) => relative(SRC, f))
     expect(offenders).toEqual([])
   })
 })

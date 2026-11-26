@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { GIVEAWAY_CLAIM_STATUSES } from '@virvixr/shared'
 import { useApi } from '@/lib/api'
 import { CLAIM_STATUS_LABELS, dropsError, type GiveawayClaimRow, type HostGiveaway } from '@/lib/drops'
-import { Badge, Skeleton, tableHead, type Tone } from '@/components/ui'
+import { Badge, Skeleton, tableHead, type Tone, TableScroll } from '@/components/ui'
 
 const TONES: Record<GiveawayClaimRow['status'], Tone> = { present: 'neutral', waiting: 'info', minting: 'warning', sent: 'success', failed: 'danger' }
 
@@ -47,7 +47,7 @@ export function ClaimsTable({ giveaway: g }: { giveaway: HostGiveaway }) {
       {!claims ? <Skeleton rows={2} className="h-12" /> : claims.length === 0 ? (
         <p className="text-sm text-gray-500">No claims yet.</p>
       ) : (
-        <div className="overflow-x-auto">
+        <TableScroll label="Claims">
           <table className="w-full text-sm">
             <thead className={tableHead}>
               <tr className="border-b border-gray-800">
@@ -73,7 +73,7 @@ export function ClaimsTable({ giveaway: g }: { giveaway: HostGiveaway }) {
               })}
             </tbody>
           </table>
-        </div>
+        </TableScroll>
       )}
       {cursor && (
         <button type="button" onClick={more} disabled={loadingMore} className="mt-3 rounded-md bg-gray-800 px-3 py-1.5 text-sm hover:bg-gray-700 disabled:opacity-50">

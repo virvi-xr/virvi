@@ -71,7 +71,7 @@ export function PresetSchedules({ api, sceneId, presets }: { api: Api; sceneId: 
     <div className="mb-4 rounded-lg border border-gray-800 bg-gray-900">
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
         className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm font-medium text-gray-200 hover:bg-white/[0.02]">
-        <span>Schedule {schedules && schedules.length > 0 && <span className="ml-1 text-xs text-gray-500">({schedules.length})</span>}</span>
+        <span>Schedule {schedules && schedules.length > 0 && <span className="ml-1 text-xs text-gray-400">({schedules.length})</span>}</span>
         <span className="text-xs text-gray-500">{open ? 'Hide' : 'Switch presets automatically at set times'}</span>
       </button>
       {open && (
