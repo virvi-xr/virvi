@@ -25,7 +25,7 @@ export const DCL_HUD_VERSION = '2.22.0'
  * moves only once a release is on npm, so nobody is told to update to a version they can't install. 2.20.0 is what
  * the published 2.21.0 reported.
  */
-export const DCL_HUD_LATEST = '2.21.1'
+export const DCL_HUD_LATEST = '2.22.0'
 
 /** "2.13.0" → [2, 13, 0]; null for anything that isn't three whole numbers. */
 export function parseHudVersion(v: unknown): [number, number, number] | null {
