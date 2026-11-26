@@ -50,7 +50,7 @@ export default function AppSignInPage() {
           <>
             <p className="mb-4 text-sm text-gray-200">Signed in as {user.displayName || user.email || 'your account'}.</p>
             <button type="button" onClick={handOff}
-              className="mb-3 w-full rounded-lg bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600 transition-colors">
+              className="mb-3 w-full rounded-lg bg-orange-700 px-4 py-2 text-sm font-medium text-white hover:bg-orange-800 transition-colors">
               Continue to the Virvi app
             </button>
             <p className="text-sm text-gray-400">

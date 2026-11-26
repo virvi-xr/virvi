@@ -81,7 +81,7 @@ function Pair() {
             <input aria-label="Headset code" value={typed} onChange={e => setTyped(e.target.value)} autoComplete="off" autoCapitalize="characters"
               className="mb-3 w-full rounded-lg bg-gray-800 px-4 py-2 font-mono text-white outline-none focus:ring-2 focus:ring-blue-500" />
             <button type="submit" disabled={!normalizePairingCode(typed)}
-              className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600 disabled:opacity-50 transition-colors">Continue</button>
+              className="rounded-lg bg-orange-700 px-4 py-2 text-sm font-medium text-white hover:bg-orange-800 disabled:opacity-50 transition-colors">Continue</button>
           </form>
         )}
         {code && (
@@ -98,7 +98,7 @@ function Pair() {
                   <p className="mb-2 text-sm text-gray-200">{copy.device}</p>
                   <p className="mb-4 rounded-lg border border-yellow-700 bg-yellow-900/40 px-4 py-2 text-sm text-yellow-200">{copy.warning}</p>
                   <button type="button" onClick={approve} disabled={phase === 'approving'}
-                    className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600 disabled:opacity-50 transition-colors">
+                    className="rounded-lg bg-orange-700 px-4 py-2 text-sm font-medium text-white hover:bg-orange-800 disabled:opacity-50 transition-colors">
                     {phase === 'approving' ? 'Signing in...' : copy.confirm}
                   </button>
                 </>
