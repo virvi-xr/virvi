@@ -30,8 +30,8 @@ const RESOLVERS: Array<[param: string, from: SceneFrom]> = [
   ['raffleId', fromRaffle],
 ]
 
-/** The resolvers for the scene-naming params in a route's url. */
-function resolversFor(url: string): SceneFrom[] {
+/** The resolvers for the scene-naming params in a route's url (also used for scene-limited API keys, LIV-170). */
+export function resolversFor(url: string): SceneFrom[] {
   return RESOLVERS.filter(([p]) => new RegExp(`:${p}(?:/|$)`).test(url)).map(([, from]) => from)
 }
 

@@ -371,8 +371,10 @@ export default async function sceneRoutes(app: FastifyInstance) {
       ...[...shared, ...extra].map((s) => ({ ...s, relationship: best.get(s.id)!, canDelete: canDelete(s), ...org(s) })),
       ...orgScenes.map((s) => ({ ...s, relationship: 'org_admin' as const, canDelete: true, ...org(s) })),
     ]
-    // A scene pass sees only its own scene (the guard already required a bound sceneId).
-    return reply.send({ scenes: isScenePass(request.user) ? list.filter((s) => s.id === request.user.sceneId) : list })
+    // A scene pass sees only its own scene (the guard already required a bound sceneId); a scene-limited key, its own (LIV-170)
+    const keyScenes = request.user.keyScenes
+    const visible = isScenePass(request.user) ? list.filter((s) => s.id === request.user.sceneId) : keyScenes ? list.filter((s) => keyScenes.includes(s.id)) : list
+    return reply.send({ scenes: visible })
   })
 
   // ── POST /api/scenes — create scene ──────────────────────────────────────

@@ -3,12 +3,18 @@ import { randomBytes, createHash } from 'node:crypto'
 import { eq, and, isNull } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { apiKeys, organizations, orgMembers } from '../db/schema.js'
-import { authenticate, isReadOnlyKey } from '../middleware/auth.js'
+import { authenticate, isReadOnlyKey, keySceneIds } from '../middleware/auth.js'
+import { getSceneAccess } from '../auth/permissions.js'
+import { actorFromClaims } from '../auth/actor.js'
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 interface CreateKeyBody {
   name: string
   /** 'read' makes a read-only key (LIV-170); 'full' (the default) acts as the account. */
   access?: 'read' | 'full'
+  /** Limit the key to these scenes (LIV-170): it can't be used for anything else. Each must be one the account can edit or view. */
+  sceneIds?: string[]
   orgId?: string
   expiresAt?: string // ISO date string
 }
@@ -36,6 +42,18 @@ export default async function apiKeyRoutes(app: FastifyInstance) {
       const { name, orgId, expiresAt } = request.body
       const access = request.body.access ?? 'full'
       if (access !== 'read' && access !== 'full') return reply.status(400).send({ error: "access must be 'read' or 'full'" })
+      const rawScenes = request.body.sceneIds
+      let sceneIds: string[] = []
+      if (rawScenes !== undefined) {
+        if (!Array.isArray(rawScenes) || rawScenes.length > 50 || !rawScenes.every((x) => typeof x === 'string' && UUID.test(x))) {
+          return reply.status(400).send({ error: 'sceneIds must be a list of up to 50 scene ids' })
+        }
+        sceneIds = [...new Set(rawScenes)]
+        // Only scenes the account can open: a key never names someone else's scene
+        for (const sceneId of sceneIds) {
+          if ((await getSceneAccess(actorFromClaims(request.user), sceneId)).level === 'none') return reply.status(404).send({ error: 'scene_not_found', message: 'One of those scenes was not found.' })
+        }
+      }
 
       if (request.user.viaApiKey) {
         return reply.status(403).send({ error: 'API keys cannot create API keys' })
@@ -72,7 +90,7 @@ export default async function apiKeyRoutes(app: FastifyInstance) {
           name,
           keyHash,
           keyPrefix,
-          scopes: access === 'read' ? ['read'] : null,
+          scopes: access === 'read' || sceneIds.length ? [...(access === 'read' ? ['read'] : ['full']), ...sceneIds.map((id) => `scene:${id}`)] : null,
           expiresAt: expiresAt ? new Date(expiresAt) : null,
         })
         .returning()
@@ -85,6 +103,7 @@ export default async function apiKeyRoutes(app: FastifyInstance) {
         expiresAt: apiKey.expiresAt,
         createdAt: apiKey.createdAt,
         access,
+        sceneIds,
       })
     },
   )
@@ -108,7 +127,7 @@ export default async function apiKeyRoutes(app: FastifyInstance) {
         .from(apiKeys)
         .where(eq(apiKeys.userId, request.user.id))
 
-      return reply.send({ keys: keys.map(({ scopes, ...k }) => ({ ...k, access: isReadOnlyKey(scopes) ? 'read' : 'full' })) })
+      return reply.send({ keys: keys.map(({ scopes, ...k }) => ({ ...k, access: isReadOnlyKey(scopes) ? 'read' : 'full', sceneIds: keySceneIds(scopes) ?? [] })) })
     },
   )
 

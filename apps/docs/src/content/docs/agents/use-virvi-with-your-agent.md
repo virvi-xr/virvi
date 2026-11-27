@@ -24,7 +24,7 @@ If your agent can't browse, download `llms-full.txt` and add it to the conversat
 
 Agents that support the Model Context Protocol (MCP), such as Claude, Cursor and others, can connect to Virvi directly and work on your scenes with tools, without writing requests themselves.
 
-1. In the dashboard, open **Settings → API Keys** and create a key. Choose **Read only** if the agent should only look, or **Full access** to let it change things.
+1. In the dashboard, open **Settings → API Keys** and create a key. Choose **Read only** if the agent should only look, or **Full access** to let it change things. Tick **Only some scenes** and pick them to keep the agent to those scenes: it then can't see or change anything else, including your other scenes, media, events and the Design Studio.
 2. Add a remote MCP server to your agent, with the URL `https://api.virvi.io/mcp` (on a self-hosted install, your server's address followed by `/mcp`) and the header `Authorization: Bearer <your key>`.
 
 The key acts as your account: the agent can do exactly what you can, through the same checks as the dashboard and the REST API, and its changes show in a scene's activity log as **API**. A read-only key gets only the read tools. Delete the key in Settings to cut the agent off.

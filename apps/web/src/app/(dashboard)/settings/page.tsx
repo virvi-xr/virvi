@@ -58,6 +58,10 @@ export default function SettingsPage() {
   const [apiKeysLoading, setApiKeysLoading] = useState(true)
   const [newKeyName, setNewKeyName] = useState('')
   const [newKeyAccess, setNewKeyAccess] = useState<'read' | 'full'>('full')
+  /** LIV-170: limit the new key to some scenes; null while the account's scenes haven't been loaded */
+  const [keyLimited, setKeyLimited] = useState(false)
+  const [keySceneChoices, setKeySceneChoices] = useState<Array<{ id: string; name: string }> | null>(null)
+  const [keyScenes, setKeyScenes] = useState<string[]>([])
   const [createdKey, setCreatedKey] = useState<string | null>(null)
   const [keyCopied, setKeyCopied] = useState(false)
   const [showCreateKey, setShowCreateKey] = useState(false)
@@ -116,10 +120,13 @@ export default function SettingsPage() {
     setError(null)
     try {
       // The reply is the new row plus the raw key, shown once
-      const { key, ...apiKey } = await api.createApiKey(newKeyName.trim(), newKeyAccess)
+      if (keyLimited && keyScenes.length === 0) { setError('Choose at least one scene, or turn off "Only some scenes".'); return }
+      const { key, ...apiKey } = await api.createApiKey(newKeyName.trim(), newKeyAccess, keyLimited ? keyScenes : [])
       setApiKeys(prev => [{ ...apiKey, lastUsedAt: null }, ...prev])
       setCreatedKey(key)
       setNewKeyAccess('full')
+      setKeyLimited(false)
+      setKeyScenes([])
       setKeyCopied(false)
       setNewKeyName('')
       setShowCreateKey(false)
@@ -626,6 +633,33 @@ export default function SettingsPage() {
             </select>
             <button type="submit" className="rounded-md bg-blue-600 px-4 py-2 text-sm hover:bg-blue-700">Create</button>
             <button type="button" onClick={() => setShowCreateKey(false)} className="rounded-md bg-gray-800 px-4 py-2 text-sm hover:bg-gray-700">Cancel</button>
+            <div className="basis-full space-y-2">
+              <label className="flex items-center gap-2 text-sm text-gray-300">
+                <input type="checkbox" checked={keyLimited} onChange={e => {
+                  setKeyLimited(e.target.checked)
+                  if (e.target.checked && !keySceneChoices) {
+                    api.getScenes().then((d) => setKeySceneChoices((d.scenes ?? []).map((sc: any) => ({ id: sc.id, name: sc.name }))), () => setKeySceneChoices([]))
+                  }
+                }} />
+                Only some scenes (the key can't touch anything else, including media and events)
+              </label>
+              {keyLimited && (
+                keySceneChoices === null ? <p className="text-xs text-gray-400">Loading your scenes…</p>
+                : keySceneChoices.length === 0 ? <p className="text-xs text-gray-400">You have no scenes yet.</p>
+                : (
+                  <fieldset className="flex flex-wrap gap-x-4 gap-y-1">
+                    <legend className="sr-only">Scenes the key can use</legend>
+                    {keySceneChoices.map((sc) => (
+                      <label key={sc.id} className="flex items-center gap-1.5 text-sm text-gray-300">
+                        <input type="checkbox" checked={keyScenes.includes(sc.id)}
+                          onChange={e => setKeyScenes(e.target.checked ? [...keyScenes, sc.id] : keyScenes.filter((x) => x !== sc.id))} />
+                        {sc.name}
+                      </label>
+                    ))}
+                  </fieldset>
+                )
+              )}
+            </div>
           </form>
         )}
 
@@ -638,7 +672,7 @@ export default function SettingsPage() {
             {apiKeys.map(key => (
               <div key={key.id} className="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900 p-4">
                 <div className="min-w-0">
-                  <p className="font-medium text-white">{key.name}{key.access === 'read' && <span className="ml-2 rounded bg-gray-800 px-2 py-0.5 text-xs font-normal text-gray-300">Read only</span>}</p>
+                  <p className="font-medium text-white">{key.name}{key.access === 'read' && <span className="ml-2 rounded bg-gray-800 px-2 py-0.5 text-xs font-normal text-gray-300">Read only</span>}{key.sceneIds?.length > 0 && <span className="ml-2 rounded bg-gray-800 px-2 py-0.5 text-xs font-normal text-gray-300">{key.sceneIds.length === 1 ? '1 scene' : `${key.sceneIds.length} scenes`}</span>}</p>
                   <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-400">
                     <span className="font-mono">{key.keyPrefix ? `${key.keyPrefix}...` : '---'}</span>
                     <span>Created {key.createdAt ? new Date(key.createdAt).toLocaleDateString() : '---'}</span>

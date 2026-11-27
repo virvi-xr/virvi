@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyReply, FastifyInstance } from 'fastify'
+import { resolversFor } from '../auth/deleted-scene-guard.js'
 import { recordTrialBlocked } from '../auth/trial-events.js'
 import { createHash } from 'node:crypto'
 import { eq } from 'drizzle-orm'
@@ -34,6 +35,8 @@ export interface AuthUser {
   viaApiKey?: boolean
   /** A read-only API key (LIV-170): every request but GET and HEAD is refused. */
   readOnlyKey?: boolean
+  /** A scene-limited API key (LIV-170): the only scenes it may touch. */
+  keyScenes?: string[]
   kind?: 'account' | 'scene' | 'trial'
   /** True for a signed-out visitor's trial session (kind 'trial'), set only on routes that opt in with `config.trial`. */
   trial?: boolean
@@ -70,6 +73,36 @@ declare module '@fastify/jwt' {
  */
 /** API key scopes (LIV-170): ['read'] is read-only; null (keys made before scopes) or ['full'] acts as the account. */
 export const isReadOnlyKey = (scopes: string[] | null | undefined): boolean => !!scopes && scopes.includes('read') && !scopes.includes('full')
+
+/** A scene-limited key's scenes ('scene:<id>' scopes), or null for a key that may use every scene of its account. */
+export function keySceneIds(scopes: string[] | null | undefined): string[] | null {
+  const ids = (scopes ?? []).filter((s) => s.startsWith('scene:')).map((s) => s.slice(6))
+  return ids.length ? ids : null
+}
+
+/**
+ * Routes a scene-limited key may use though they name no scene: the scene list (filtered to its scenes) and the MCP
+ * server (each tool's own requests run as the same key, so they are checked here again).
+ */
+const SCENE_KEY_OPEN = new Set(['GET /api/scenes', 'POST /mcp', 'GET /mcp', 'DELETE /mcp'])
+
+/**
+ * Default deny for a scene-limited key: the route must name its scene through its url params (scene, preset,
+ * element, copy, schedule, showing or raffle ids, as the Trash guard reads them) and every one must be the key's.
+ * Account-wide routes (media, events, Design Studio, keys) and routes that take a scene in the body are refused.
+ */
+async function sceneKeyMayUse(request: FastifyRequest, allowed: string[]): Promise<boolean> {
+  const url = request.routeOptions.url ?? ''
+  if (SCENE_KEY_OPEN.has(`${request.method} ${url}`)) return true
+  const from = resolversFor(url)
+  if (!from.length) return false
+  for (const f of from) {
+    let sceneId: string | null = null
+    try { sceneId = await f(request) } catch { sceneId = null }
+    if (!sceneId || !allowed.includes(sceneId)) return false
+  }
+  return true
+}
 
 export async function authenticate(request: FastifyRequest, reply: FastifyReply) {
   try {
@@ -121,6 +154,11 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
         return reply.status(403).send({ error: 'read_only_key', message: 'This API key can only read. Make a key with full access to change things.' })
       }
 
+      const keyScenes = keySceneIds(apiKey.scopes)
+      if (keyScenes && !(await sceneKeyMayUse(request, keyScenes))) {
+        return reply.status(403).send({ error: 'key_scene_limited', message: "This API key can only be used for the scenes it was made for." })
+      }
+
       request.user = {
         id: user.id,
         email: user.email,
@@ -130,6 +168,7 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
         verified: true,
         viaApiKey: true,
         ...(readOnlyKey ? { readOnlyKey: true } : {}),
+        ...(keyScenes ? { keyScenes } : {}),
       }
       return
     }

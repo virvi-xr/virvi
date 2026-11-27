@@ -222,7 +222,7 @@ See [Command Center](/docs/dashboard/command-center/).
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/api/keys` | Yes (account, not a key) | Create a key; returned once. `access`: `full` (default) or `read` (read-only: every request but `GET` gets 403 `read_only_key`) |
+| POST | `/api/keys` | Yes (account, not a key) | Create a key; returned once. `access`: `full` (default) or `read` (read-only: every request but `GET` gets 403 `read_only_key`). `sceneIds`: limit the key to those scenes (up to 50, each one you can open); it then works only on routes whose URL names one of them, plus `GET /api/scenes` (filtered) and `/mcp`, and gets 403 `key_scene_limited` everywhere else |
 | GET | `/api/keys` | Yes | List your keys |
 | DELETE | `/api/keys/:keyId` | Yes | Delete a key |
 | POST | `/mcp` | Yes (a key) | The MCP server (Streamable HTTP, JSON-RPC, stateless). See [Use Virvi with your agent](/docs/agents/use-virvi-with-your-agent/#connect-with-mcp) |
