@@ -18,7 +18,7 @@ export const REDEPLOY_REQUIRED = 'redeploy_required'
  * HUD released before 2.14.0. (2.20.0 and 2.21.0 went out reporting the release before theirs: 2.19.0 and 2.20.0.)
  */
 export const HUD_VERSION_HEADER = 'x-virvi-hud-version'
-export const DCL_HUD_VERSION = '2.23.0'
+export const DCL_HUD_VERSION = '2.24.0'
 
 /**
  * The newest version a published HUD reports, which the dashboard compares scenes against. Unlike DCL_HUD_VERSION it

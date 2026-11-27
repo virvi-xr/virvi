@@ -30,12 +30,28 @@ export function isNetworkError(err: unknown): boolean {
  * while offline and is re-signed on reconnect), then reads as disconnected. A 403 is always the server's refusal.
  */
 export const WALLET_BLOCKED = 'This wallet can no longer use Virvi.'
+/** LIV-32: a tenant's edit outside their area, when the server's own wording (which names the area) isn't to hand. */
+export const OUTSIDE_AREA = 'That is outside your area. Keep your items inside it.'
+
+/** The server's outside_area message (it names the area), or the general one. */
+function outsideAreaText(err: unknown): string | null {
+  const text = err instanceof Error ? err.message : String(err)
+  if (!/"error"\s*:\s*"outside_area"/.test(text)) return null
+  try {
+    const body = JSON.parse(text.replace(/^HTTP \d+:\s*/, '')) as { message?: unknown }
+    return typeof body.message === 'string' && body.message ? body.message : OUTSIDE_AREA
+  } catch {
+    return OUTSIDE_AREA
+  }
+}
 
 export function friendlyEditError(err: unknown, opts: { connected?: boolean } = {}): string {
   const status = httpStatusOf(err)
   const connected = opts.connected !== false
   // LIV-11: a wallet blocked after a BEAT reissue (or by an admin) is refused everywhere
   if (/"error"\s*:\s*"wallet_blocked"/.test(err instanceof Error ? err.message : String(err))) return WALLET_BLOCKED
+  const outside = outsideAreaText(err)
+  if (outside) return outside
   if (status === 403) return NO_PERMISSION
   if (status === 426) return REDEPLOY
   if (status === 401) return connected ? SIGNED_OUT : DISCONNECTED

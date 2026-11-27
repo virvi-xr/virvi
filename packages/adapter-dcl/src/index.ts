@@ -20,7 +20,7 @@ import { startSceneGiveaways } from './giveaway/connect.js'
 import { pickHostRaffle, presentNow, raffleHostError, type HUDRaffle } from './raffle/host.js'
 import { locationKeyFor } from '@virvixr/shared'
 import { hudUpdateNotice } from './hud/update-notice.js'
-import type { VirviInitConfig, VirviStorage } from '@virvixr/shared'
+import type { EditArea, VirviInitConfig, VirviStorage } from '@virvixr/shared'
 
 // Setup-status re-checks while Decentraland's directory is unavailable (~2.5 min).
 const OWNER_CHECK_BACKOFF_MS = [10_000, 20_000, 40_000, 80_000]
@@ -273,6 +273,8 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
 
     // In-world transform tools: one edit mode per Virvi, only for members who can edit (HUD actions drive it)
     let editMode: DclEditMode | null = null
+    // LIV-32: a tenant (an editor limited to an area) comes in as 'viewer' with the areas they may edit inside
+    let editAreas: EditArea[] | null = null
     // Live library + missing-model subscriptions of the current connected handler (replaced on reinstall)
     let offLibrary: (() => void)[] = []
     // The scene room is up: false from a drop until a (re)connect finishes. Edits wait for it.
@@ -291,7 +293,7 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
       const sceneId = virvi.binding?.sceneId ?? configuredSceneId
       let currentRole: SceneRole = role
       const managesRoles = () => currentRole === 'host' || currentRole === 'cohost'
-      const edits = () => currentRole !== 'viewer'
+      const edits = () => currentRole !== 'viewer' || (!!editAreas && editAreas.length > 0)
       const ensureEditMode = () => {
         if (edits() && !editMode) editMode = new DclEditMode(virvi, adapter)
         if (editMode) {
@@ -350,9 +352,12 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
       const refreshRole = async () => {
         const status = await probe.getSetupStatus(sceneRef, adapter)
         if (status.state !== 'member' || (status.sceneId !== configuredSceneId && status.sceneId !== sceneId)) return
-        if (status.role === currentRole) return
+        const areas = status.editAreas ?? null
+        if (status.role === currentRole && JSON.stringify(areas) === JSON.stringify(editAreas)) return
         currentRole = status.role
+        editAreas = areas
         renderer?.setSceneRole(currentRole)
+        renderer?.setEditAreas(editAreas)
         ensureEditMode()
         if (managesRoles()) void refresh()
       }
@@ -822,7 +827,8 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
       await virvi.authenticate({ env: 'prod', ...config })
       ensureRenderer()
       renderer?.setSceneRole(role)
-      renderer?.setUpdateNotice(role === 'viewer' ? null : updateNotice)
+      renderer?.setEditAreas(editAreas)
+      renderer?.setUpdateNotice(role === 'viewer' && !editAreas ? null : updateNotice)
       renderer?.updateConnectionState('connecting', { sceneId })
       renderer?.setCurrentScene(sceneId, sceneRef.title || 'Scene')
       // Installed before connecting so the error screen's Retry works even if this first connect fails
@@ -888,6 +894,7 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
     const act = (status: SetupStatus): boolean => {
       if (status.state === 'member') {
         updateNotice = hudUpdateNotice(status)
+        editAreas = status.editAreas ?? null
         connectInBackground(status.sceneId, status.role)
       }
       else if (status.state === 'eligible') offerSetup()

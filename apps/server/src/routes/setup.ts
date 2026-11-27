@@ -12,7 +12,8 @@ import { controls, verifiedWalletsOf } from '../analytics/claims.js'
 import { TokenBucketLimiter, checkRequesterLimits } from '../analytics/limiter.js'
 import { virviDeploysDcl } from '../scenes/hud-version.js'
 import { getActiveSetup, releaseIfRedeployed, setUpLocation, SetupError } from '../setup/setups.js'
-import { sceneRoleFor } from '../auth/scene-roles.js'
+import { sceneRoleAccess } from '../auth/scene-roles.js'
+import type { EditArea } from '@virvixr/shared'
 import { config } from '../config.js'
 
 let limiter = new TokenBucketLimiter()
@@ -47,11 +48,16 @@ async function locate(ref: AnalyticsSceneRef, wallet: string) {
   return { resolved, scene, setup }
 }
 
-async function roleOf(sceneId: string, wallet: string): Promise<'host' | 'cohost' | 'editor' | 'viewer' | null> {
+/**
+ * The wallet's role, and a tenant's areas (LIV-32). A tenant is 'viewer' to HUDs that predate areas (they then show
+ * nothing to edit, which the server refuses anyway); a HUD that reads `editAreas` lets them edit inside those.
+ */
+async function roleOf(sceneId: string, wallet: string): Promise<{ role: 'host' | 'cohost' | 'editor' | 'viewer' | null; editAreas: EditArea[] | null }> {
   const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId) })
-  if (scene && (await verifiedWalletsOf(scene.ownerId)).includes(wallet)) return 'host'
+  if (scene && (await verifiedWalletsOf(scene.ownerId)).includes(wallet)) return { role: 'host', editAreas: null }
   // Signed-fetch caller: no user, so match scene roles by wallet only.
-  return sceneRoleFor(sceneId, { userId: null, role: 'viewer', wallet, verified: true }, { walletOnly: true })
+  const r = await sceneRoleAccess(sceneId, { userId: null, role: 'viewer', wallet, verified: true }, { walletOnly: true })
+  return { role: r.role, editAreas: r.tenant ? r.areas : null }
 }
 
 async function hostShort(sceneId: string): Promise<string> {
@@ -76,11 +82,12 @@ export default async function setupRoutes(app: FastifyInstance) {
       // Set up for a deleted scene (LIV-83): nothing to show or join until it's restored
       if (setup && (await isSceneDeleted(setup.virviSceneId))) return reply.send({ state: 'none' })
       if (setup) {
-        const role = await roleOf(setup.virviSceneId, wallet)
+        const { role, editAreas } = await roleOf(setup.virviSceneId, wallet)
         // LIV-13: the newest published HUD, so the HUD can tell people who work on the scene that it's behind
         if (role) {
           return reply.send({
             state: 'member', sceneId: setup.virviSceneId, role,
+            ...(editAreas ? { editAreas } : {}),
             hudLatest: DCL_HUD_LATEST, virviDeploys: await virviDeploysDcl(setup.virviSceneId),
           })
         }

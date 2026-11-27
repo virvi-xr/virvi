@@ -1,11 +1,12 @@
-import type { Scene, AuthProof, VirviPlatformAdapter, AnalyticsSceneRef, SceneLibraryItemData, AdServeRequest, AdServeResponse, AdEventBatch, PublicRaffle, RaffleMode, RaffleStatus, VisitorBeat, VisitorGiveaway } from '@virvixr/shared'
+import type { Scene, AuthProof, EditArea, VirviPlatformAdapter, AnalyticsSceneRef, SceneLibraryItemData, AdServeRequest, AdServeResponse, AdEventBatch, PublicRaffle, RaffleMode, RaffleStatus, VisitorBeat, VisitorGiveaway } from '@virvixr/shared'
 import type { AuthResponse, MediaAsset } from './types.js'
 import { VirviAuth } from './auth.js'
 
 export type SetupStatus =
   | { state: 'eligible' }
   /** `hudLatest`: the newest published @virvixr/dcl; `virviDeploys`: whether a Virvi redeploy can update it (LIV-13). */
-  | { state: 'member'; sceneId: string; role: 'host' | 'cohost' | 'editor' | 'viewer'; hudLatest?: string; virviDeploys?: boolean }
+  /** `editAreas`: a tenant (LIV-32), 'viewer' to older HUDs, who may edit inside these areas. */
+  | { state: 'member'; sceneId: string; role: 'host' | 'cohost' | 'editor' | 'viewer'; editAreas?: EditArea[]; hudLatest?: string; virviDeploys?: boolean }
   | { state: 'taken'; host: string; sceneId?: string }
   /** `sceneId` is present when the location is set up — visitors connect content-only. */
   | { state: 'none'; sceneId?: string }
@@ -14,6 +15,8 @@ export type SetupStatus =
 export interface SceneRoleEntry {
   wallet: string
   role: 'cohost' | 'editor' | 'viewer'
+  /** An editor limited to an area (LIV-32), or null. */
+  area?: EditArea | null
   userId: string | null
   displayName?: string | null
   createdAt?: string

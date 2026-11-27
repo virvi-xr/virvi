@@ -178,3 +178,17 @@ describe('createReconnector', () => {
     expect(r.reconnecting).toBe(false)
   })
 })
+
+describe('tenants: edits outside the area (LIV-32)', () => {
+  it("uses the server's wording, which names the area", async () => {
+    const { friendlyEditError, OUTSIDE_AREA } = await import('../src/edit-errors')
+    const body = JSON.stringify({ error: 'outside_area', message: 'You can only edit inside your area: x 0 to 16, z 0 to 16.' })
+    expect(friendlyEditError(new Error(`HTTP 403: ${body}`))).toBe('You can only edit inside your area: x 0 to 16, z 0 to 16.')
+    expect(friendlyEditError(new Error('HTTP 403: {"error":"outside_area"}'))).toBe(OUTSIDE_AREA)
+    expect(friendlyEditError(new Error('HTTP 403: {"error":"Forbidden"}'))).toBe("You don't have permission to edit this scene.")
+  })
+  it("tells a tenant where they can edit", async () => {
+    const { tenantAreaLine } = await import('../src/tenant-area')
+    expect(tenantAreaLine([{ minX: 0, maxX: 16, minZ: 0, maxZ: 16 }])).toBe('You can edit inside x 0 to 16, z 0 to 16. Items with a copy elsewhere stay with the host.')
+  })
+})

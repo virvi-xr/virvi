@@ -11,6 +11,10 @@ When a scene is behind, its page in the dashboard says which version it runs, li
 
 No release so far has needed changes to scene code, so none is marked as breaking.
 
+## 2.24.0 — unreleased
+
+- **Editing in an area:** an editor whose role is limited to an area of the scene (a tenant) can edit from the HUD. They can place, move and remove items inside their area, and the Layout panel says where it is. An edit outside the area is refused with a message naming the area. Presets, streams and raffles stay with the host, co-hosts and full editors.
+
 ## 2.23.0 — 2026-11-27
 
 - **Sound plays:** the scene records when a sound starts playing, by the sound's name, for the scene's analytics. The Analytics page lists each sound's plays under Screens and sounds. Visitors who decline analytics aren't recorded, as before.

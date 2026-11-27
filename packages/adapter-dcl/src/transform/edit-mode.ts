@@ -11,6 +11,7 @@ import { Gizmo } from './gizmo.js'
 import { EditInput, type EditHost } from './input.js'
 import { Outline } from './outline.js'
 import { MARKER_SIZE, Picks, entityPosition, follow, type Pick } from './picks.js'
+import { OUTSIDE_AREA } from '../edit-errors.js'
 
 export interface DclEditModeState {
   active: boolean
@@ -217,7 +218,7 @@ export class DclEditMode implements EditHost {
     this.savingSk = null
     // No takeSave: the session stays dirty, the draft stays previewed, Save / Revert stay on
     const code = err instanceof Error ? err.message : 'server_error'
-    if (this.session.selected?.sk === sk) this.message = code === 'not_connected' ? NOT_CONNECTED : `Save failed — ${code}`
+    if (this.session.selected?.sk === sk) this.message = code === 'not_connected' ? NOT_CONNECTED : code === 'outside_area' ? OUTSIDE_AREA : `Save failed — ${code}`
     else if (this.message === SAVING) this.message = null
     this.changed()
   }
@@ -460,7 +461,15 @@ export class DclEditMode implements EditHost {
 
   /** Save errors arrive through editing.save's promise; this only handles a refused draft. */
   private onError(e: { code?: string; messageType?: string }): void {
-    if (e?.messageType !== 'transform_draft' || e.code !== 'forbidden') return
+    if (e?.messageType !== 'transform_draft' || (e.code !== 'forbidden' && e.code !== 'outside_area')) return
+    // LIV-32: a tenant dragging something outside their area is refused for that item only
+    if (e.code === 'outside_area') {
+      this.sentDraftFor = null
+      if (!this._active) return
+      this.message = OUTSIDE_AREA
+      this.changed()
+      return
+    }
     this.draftsForbidden = true
     this.sentDraftFor = null // the server never gave us the hold
     if (!this._active) return

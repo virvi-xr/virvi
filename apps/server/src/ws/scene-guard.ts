@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { sceneElementInstances, sceneElements, scenePresets, scenes, venues } from '../db/schema.js'
-import { canWriteElement, diffKeys, hasScope, type SceneAccess, type SceneScope } from '../auth/permissions.js'
+import { canWriteElement, diffKeys, hasScope, tenantMayChangeItem, tenantMayPlace, type SceneAccess, type SceneScope } from '../auth/permissions.js'
 
 /** The element/instance ids the guard authorized; the room must act on these, not re-derive them. */
 export interface GuardTarget {
@@ -11,11 +11,19 @@ export interface GuardTarget {
 
 export type GuardResult =
   | { ok: true; broadcast: boolean; target?: GuardTarget }
-  | { ok: false; code: 'forbidden' | 'not_found' }
+  | { ok: false; code: 'forbidden' | 'not_found' | 'outside_area' }
 
 const OK_BROADCAST: GuardResult = { ok: true, broadcast: true }
 const FORBIDDEN: GuardResult = { ok: false, code: 'forbidden' }
 const NOT_FOUND: GuardResult = { ok: false, code: 'not_found' }
+/** A tenant's edit outside their area (LIV-32); the HUD names the area. */
+const OUTSIDE: GuardResult = { ok: false, code: 'outside_area' }
+const TENANT_TYPES = new Set(['model', 'image', 'video', 'sound'])
+
+/** An item's copies, for a tenant's "every copy is inside" check. */
+const copiesOf = (elementId: string) =>
+  db.select({ position: sceneElementInstances.position, parentInstanceId: sceneElementInstances.parentInstanceId })
+    .from(sceneElementInstances).where(eq(sceneElementInstances.elementId, elementId))
 
 /** Field keys of an element update message, matching VirviSceneRoom.persistPresetUpdate. */
 const ELEMENT_FIELDS = ['name', 'enabled', 'customId', 'clickEvent'] as const
@@ -84,7 +92,7 @@ export async function authorizeSceneMessage(access: SceneAccess, sceneId: string
     }
     case 'transform_draft':
     case 'transform_end': {
-      if (!hasScope(access, 'scene.edit')) return FORBIDDEN
+      if (!hasScope(access, 'scene.edit') && access.level !== 'tenant') return FORBIDDEN
       // Same lookup as the instance case of scene_preset_update; any preset of this scene is fine.
       const sk = message?.sk
       if (typeof sk !== 'string' || !sk) return NOT_FOUND
@@ -93,6 +101,8 @@ export async function authorizeSceneMessage(access: SceneAccess, sceneId: string
         with: { element: { with: { preset: true } } },
       })
       if (!inst || inst.element.preset.sceneId !== sceneId) return NOT_FOUND
+      // A tenant drags only copies inside their area; where it lands is checked when it's saved
+      if (access.level === 'tenant' && !tenantMayPlace(access, inst.position, inst.parentInstanceId)) return OUTSIDE
       return { ok: true, broadcast: false, target: { instanceId: inst.id } }
     }
     case 'scene_preset_update':
@@ -106,6 +116,7 @@ export async function authorizeSceneMessage(access: SceneAccess, sceneId: string
 const DELETE_ACTIONS = new Set(['delete', 'delete_instance', 'delete_element'])
 
 async function authorizePresetUpdate(access: SceneAccess, sceneId: string, message: any): Promise<GuardResult> {
+  if (access.level === 'tenant') return authorizeTenantUpdate(access, sceneId, message)
   const { action, instance, elementData, instanceData, id } = message
   if (action !== 'update' || instance) {
     // create/delete of anything, or any instance change: scene editors only
@@ -151,4 +162,39 @@ async function authorizePresetUpdate(access: SceneAccess, sceneId: string, messa
 async function isActive(sceneId: string, presetId: string) {
   const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { activePresetId: true } })
   return scene?.activePresetId === presetId
+}
+
+/**
+ * A tenant's scene_preset_update (LIV-32), the room's form of the REST rules: plain media created; copies placed, moved
+ * and removed inside the area (top-level only); an item changed or deleted when every copy is inside.
+ */
+async function authorizeTenantUpdate(access: SceneAccess, sceneId: string, message: any): Promise<GuardResult> {
+  const { action, instance, element, elementData, instanceData, id } = message
+  const isInstance = !!instance || action === 'delete_instance'
+  if (action === 'create' && !isInstance) return TENANT_TYPES.has(element) ? OK_BROADCAST : FORBIDDEN
+  if (isInstance) {
+    if (action === 'create') {
+      const elementId = instanceData?.elementId || elementData?.sk || elementData?.id
+      if (!elementId) return NOT_FOUND
+      const el = await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, elementId), with: { preset: true } })
+      if (!el || el.preset.sceneId !== sceneId) return NOT_FOUND
+      if (!tenantMayPlace(access, instanceData?.position, instanceData?.parent)) return OUTSIDE
+      return { ok: true, broadcast: await isActive(sceneId, el.presetId), target: { elementId: el.id } }
+    }
+    const instanceId = instanceData?.sk || instanceData?.id || id
+    if (!instanceId) return NOT_FOUND
+    const inst = await db.query.sceneElementInstances.findFirst({ where: eq(sceneElementInstances.id, instanceId), with: { element: { with: { preset: true } } } })
+    if (!inst || inst.element.preset.sceneId !== sceneId) return NOT_FOUND
+    if (!tenantMayPlace(access, inst.position, inst.parentInstanceId)) return OUTSIDE
+    if (action === 'update' && instanceData?.position !== undefined && !tenantMayPlace(access, instanceData.position, null)) return OUTSIDE
+    if (action !== 'update' && !DELETE_ACTIONS.has(action)) return FORBIDDEN
+    return { ok: true, broadcast: await isActive(sceneId, inst.element.presetId), target: { instanceId: inst.id } }
+  }
+  if (action !== 'update' && !DELETE_ACTIONS.has(action)) return FORBIDDEN
+  const elementId = elementData?.sk || elementData?.id || id
+  if (!elementId) return NOT_FOUND
+  const el = await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, elementId), with: { preset: true } })
+  if (!el || el.preset.sceneId !== sceneId) return NOT_FOUND
+  if (!tenantMayChangeItem(access, await copiesOf(el.id))) return OUTSIDE
+  return { ok: true, broadcast: await isActive(sceneId, el.presetId), target: { elementId: el.id } }
 }

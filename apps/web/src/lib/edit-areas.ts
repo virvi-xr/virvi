@@ -21,5 +21,5 @@ export const areaLine = (a: EditArea) => `Only inside ${describeEditArea(a)}`
 export function tenantNote(areas: EditArea[]): string {
   if (!areas.length) return 'Your editor role is limited to an area that is no longer valid, so you can view this scene but not edit it. Ask the host to set your area again.'
   const where = areas.map(describeEditArea).join('; ')
-  return `You can add, move and remove items inside your area (${where}). Changes elsewhere, presets and the scene's settings are for the host. In Decentraland, edit from this page for now.`
+  return `You can add, move and remove items inside your area (${where}). Changes elsewhere, presets and the scene's settings are for the host. In Decentraland, the HUD lets you edit there once the scene has Virvi's next update; until then, edit from this page.`
 }

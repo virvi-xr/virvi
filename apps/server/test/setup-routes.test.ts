@@ -86,6 +86,13 @@ describe('setup routes', () => {
     expect((await status(VISITOR)).json()).toEqual({ state: 'member', sceneId, role: 'editor', hudLatest: DCL_HUD_LATEST, virviDeploys: false })
   })
 
+  it("a tenant (an editor limited to an area) is a viewer to older HUDs, with its areas for newer ones (LIV-32)", async () => {
+    const { sceneId } = (await setup(OWNER)).json()
+    const area = { minX: 0, maxX: 16, minZ: 0, maxZ: 16 }
+    await db.insert(sceneRoles).values({ sceneId, walletAddress: VISITOR, role: 'editor', area })
+    expect((await status(VISITOR)).json()).toEqual({ state: 'member', sceneId, role: 'viewer', editAreas: [area], hudLatest: DCL_HUD_LATEST, virviDeploys: false })
+  })
+
   it('two controllers pressing at once → exactly one setup', async () => {
     const [a, b] = await Promise.all([setup(OWNER), setup(OP)])
     expect([a.statusCode, b.statusCode].sort()).toEqual([200, 409])

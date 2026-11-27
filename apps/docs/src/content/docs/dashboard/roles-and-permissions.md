@@ -55,7 +55,7 @@ Everything else stays with you and your co-hosts and editors. That includes item
 
 **Change area** moves it, and **Edit everywhere** removes the limit. A role change in the HUD keeps the area, and making the tenant a co-host or viewer removes it. If the same person also has an unlimited editor role, through another wallet or a collaborator invite, the stronger one wins.
 
-For now, tenants edit from the dashboard. Editing inside an area from the Decentraland HUD comes with the next `@virvixr/dcl` release.
+Tenants edit from the dashboard, and in Decentraland from the HUD in scenes on `@virvixr/dcl` 2.24.0 or later, where the Layout panel shows their area. Older scenes show a tenant nothing to edit in-world until they're redeployed. Hyperfy and the headset apps don't offer tenants editing yet.
 
 ## In-world
 

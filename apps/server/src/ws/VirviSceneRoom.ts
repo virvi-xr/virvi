@@ -442,7 +442,7 @@ export class VirviSceneRoom extends Room {
     let canHost = false
     try {
       const access = await this.getAccess(client)
-      canHost = isFullAccess(access) || access.level === 'editor'
+      canHost = isFullAccess(access) || access.level === 'editor' || access.level === 'tenant'
     } catch {
       canHost = false
     }

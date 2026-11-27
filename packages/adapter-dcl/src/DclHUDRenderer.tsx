@@ -28,7 +28,8 @@ import type {
   Scene,
 } from '@virvixr/shared'
 import { HUDPanelType } from '@virvixr/shared'
-import type { EntityHandle, WorldStatus } from '@virvixr/shared'
+import type { EditArea, EntityHandle, WorldStatus } from '@virvixr/shared'
+import { tenantAreaLine } from './tenant-area.js'
 import type { VirviConnectionState, HUDMediaStatus } from '@virvixr/core'
 import type { UploadToken } from '@virvixr/client'
 import { nearbyPlayers } from './players.js'
@@ -75,6 +76,8 @@ interface HUDState {
   /** LIV-13: a newer @virvixr/dcl is out; shown under the tabs to people who can redeploy */
   updateNotice: string | null
   sceneRole: SceneRole | null
+  /** LIV-32: a tenant's areas (they come in as 'viewer'); null for everyone else. */
+  editAreas: EditArea[] | null
   roles: RolesData
   rolesError: string | null
   roleDraftWallet: string
@@ -149,8 +152,13 @@ type SceneRole = 'host' | 'cohost' | 'editor' | 'viewer'
 export type HUDMediaItem = { id: string; name: string; kind: 'image' | 'model'; status: HUDMediaStatus; error?: string }
 export type UploadViewState = { open: boolean; loading: boolean; error: string | null; token: UploadToken | null }
 export type { HUDLayoutItem } from './layout.js'
-const canEdit = () => state.sceneRole === 'host' || state.sceneRole === 'cohost' || state.sceneRole === 'editor'
-type RolesData = { hostWallets: string[]; roles: { wallet: string; role: string; displayName?: string | null }[] }
+/** Host, co-hosts and editors: the whole scene (presets, streams, raffles). */
+const canEditAll = () => state.sceneRole === 'host' || state.sceneRole === 'cohost' || state.sceneRole === 'editor'
+/** A tenant (LIV-32) edits items inside their area; the server refuses the rest and says so. */
+const isTenant = () => !canEditAll() && !!state.editAreas && state.editAreas.length > 0
+/** May place, move and remove items: everyone who edits, tenants included. */
+const canEdit = () => canEditAll() || isTenant()
+type RolesData = { hostWallets: string[]; roles: { wallet: string; role: string; area?: EditArea | null; displayName?: string | null }[] }
 
 const state: HUDState = {
   connectionState: 'idle',
@@ -179,6 +187,7 @@ const state: HUDState = {
   setupMessage: null,
   updateNotice: null,
   sceneRole: null,
+  editAreas: null,
   roles: { hostWallets: [], roles: [] },
   rolesError: null,
   roleDraftWallet: '',
@@ -625,7 +634,7 @@ function RolesPanel() {
           <UiEntity key={r.wallet}
             uiTransform={{ width: '100%', height: 30, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: { left: 8, right: 4 }, margin: { bottom: 2 } }}
             uiBackground={{ color: C.bgCard }}>
-            <Label value={`${r.displayName || shortWallet(r.wallet)} — ${roleLabel(r.role)}`} fontSize={12} color={C.text}
+            <Label value={`${r.displayName || shortWallet(r.wallet)} — ${roleLabel(r.role)}${r.role === 'editor' && r.area ? ' (area)' : ''}`} fontSize={12} color={C.text}
               textAlign="middle-left" uiTransform={{ width: 170 }} />
             <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center' }}>
               {isHost && r.role === 'cohost' && (
@@ -740,7 +749,7 @@ function NavBar() {
   const tabs: Array<{ type: HUDPanelType | typeof ACTION_STATS; label: string }> = [
     ...panels,
     ...(hasRoles ? [{ type: HUDPanelType.ROLES, label: 'Roles' }] : []),
-    ...(canEdit() ? [{ type: HUDPanelType.RAFFLE, label: 'Raffle' }] : []),
+    ...(canEditAll() ? [{ type: HUDPanelType.RAFFLE, label: 'Raffle' }] : []),
     // The HUD only renders the NavBar for connected role holders, so every role gets Stats
     { type: ACTION_STATS, label: 'Stats' },
   ]
@@ -783,13 +792,13 @@ function NavBar() {
               state.streamPicking = null
               state.showingsFor = null
               state.offImagePicking = null
-              if (opened && canEdit()) onSceneAction?.('streams_refresh')
+              if (opened && canEditAll()) onSceneAction?.('streams_refresh')
             } else if (p.type === HUDPanelType.RAFFLE) {
               if (opened) onSceneAction?.('raffle_refresh')
             } else if (p.type === HUDPanelType.EVENT_CONTROL) {
               state.presetConfirm = null
               state.presetDraft = null
-              if (opened && canEdit()) onSceneAction?.('presets_refresh')
+              if (opened && canEditAll()) onSceneAction?.('presets_refresh')
               onPanelAction?.(p.type, 'open')
             } else {
               onPanelAction?.(p.type, 'open')
@@ -838,6 +847,9 @@ function SceneLayoutPanel() {
       />
       <UiEntity uiTransform={{ width: '100%', padding: 8, flexDirection: 'column' }}>
         <EditMessage />
+        {isTenant() && (
+          <Label value={tenantAreaLine(state.editAreas!)} fontSize={10} color={C.textDim} textAlign="top-left" uiTransform={{ width: '100%', height: 28, margin: { bottom: 4 } }} />
+        )}
         {editable && (
           <UiEntity uiTransform={{ width: '100%', margin: { bottom: 6 } }}>
             <Button label="Edit layout" color={C.accent} height={30} fontSize={11}
@@ -1345,7 +1357,7 @@ function EventControlPanel() {
             </UiEntity>
           ))
         )}
-        {canEdit() && <PresetsSection />}
+        {canEditAll() && <PresetsSection />}
       </UiEntity>
     </UiEntity>
   )
@@ -1512,7 +1524,7 @@ function StreamControlPanel() {
     <UiEntity uiTransform={{ width: '100%', flexDirection: 'column' }}>
       <PanelHeader title="Stream" subtitle="Each screen's live stream and off image" onClose={() => { state.activePanel = null }} />
       <UiEntity uiTransform={{ padding: 8, flexDirection: 'column' }}>
-        {!canEdit() ? (
+        {!canEditAll() ? (
           <Label value="Only the host, co-hosts and editors can change streams" fontSize={11} color={C.textDim} uiTransform={{ height: 24 }} />
         ) : (
           <UiEntity uiTransform={{ width: '100%', flexDirection: 'column' }}>
@@ -1844,7 +1856,7 @@ function VirviHUD() {
                 {state.activePanel === HUDPanelType.WORLD_STATUS && <WorldStatusPanel />}
                 {state.activePanel === HUDPanelType.NOTIFICATIONS && <NotificationsPanel />}
                 {state.activePanel === HUDPanelType.ROLES && <RolesPanel />}
-                {state.activePanel === HUDPanelType.RAFFLE && canEdit() && <RafflePanel />}
+                {state.activePanel === HUDPanelType.RAFFLE && canEditAll() && <RafflePanel />}
               </UiEntity>
             )
           }
@@ -1960,6 +1972,11 @@ export class DclHUDRenderer implements HUDRenderer {
     state.setupMessage = message ?? null
     state.connectionState = 'idle'
     state.hudVisible = true
+  }
+
+  /** LIV-32: a tenant's areas, from the setup status; null for everyone else. */
+  setEditAreas(areas: EditArea[] | null): void {
+    state.editAreas = areas && areas.length ? areas : null
   }
 
   setSceneRole(role: SceneRole): void {
