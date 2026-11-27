@@ -11,6 +11,8 @@ func shortWallet(_ wallet: String) -> String {
 /// and what went wrong, in the package's words (`BeatCard`).
 struct BeatCardView: View {
     let model: BeatModel
+    /// The card's own Close: on the camera view; a BEAT's page has its back button instead.
+    var showsClose = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -35,7 +37,7 @@ struct BeatCardView: View {
                 if model.locationDenied { settingsButton }
                 if case .counting = model.card.state { wide(BeatModel.STOP_TRACKING) { model.stopTracking() } }
             }
-            if model.origin?.isEvent == true { wide(VisitorCopy.CLOSE) { model.closeEvent() } }
+            if showsClose, model.origin?.isEvent == true { wide(VisitorCopy.CLOSE) { model.closeEvent() } }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)

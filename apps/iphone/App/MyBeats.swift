@@ -30,7 +30,7 @@ final class MyBeatsModel {
     private(set) var phase: Phase = .idle
     @ObservationIgnored private let api: AppBeatApi
     @ObservationIgnored private let wallClock: () -> Int64
-    /// Set by the app: opens a BEAT's card on the camera view.
+    /// Set by the app: puts a BEAT's card up for its page.
     @ObservationIgnored var openCard: (AppBeatCard) -> Void = { _ in }
 
     init(api: AppBeatApi, wallClock: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }) {
@@ -45,7 +45,8 @@ final class MyBeatsModel {
     }
 
     func load() async {
-        phase = .loading
+        // A reload keeps the list on screen until the answer comes
+        if case .loaded = phase {} else { phase = .loading }
         switch await api.mine() {
         case .ok(let cards):
             phase = .loaded(cards.map { c in
@@ -60,42 +61,5 @@ final class MyBeatsModel {
             })
         case .error(let e): phase = .failed(e.message)
         }
-    }
-}
-
-struct MyBeatsView: View {
-    let model: MyBeatsModel
-    let close: () -> Void
-    /// A row's card was opened: the sheets make way for the camera view.
-    var opened: () -> Void = {}
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(MyBeatsModel.TITLE).font(.title3.weight(.semibold))
-            switch model.phase {
-            case .idle, .loading: ProgressView().frame(maxWidth: .infinity)
-            case .failed(let message): Text(message).foregroundStyle(.secondary)
-            case .loaded(let rows):
-                if rows.isEmpty { Text(MyBeatsModel.EMPTY).foregroundStyle(.secondary) }
-                else {
-                    List(rows) { row in
-                        let line = VStack(alignment: .leading, spacing: 2) {
-                            Text(row.name).font(.headline)
-                            if let s = row.status { Text(s).font(.subheadline).foregroundStyle(.secondary) }
-                        }
-                        if row.opens {
-                            Button { model.open(row); opened() } label: { line }.buttonStyle(.plain)
-                        } else {
-                            line
-                        }
-                    }
-                    .listStyle(.plain)
-                }
-            }
-            Button(action: close) { Text(VisitorCopy.CLOSE).frame(maxWidth: .infinity) }
-                .buttonStyle(.bordered).controlSize(.large)
-        }
-        .padding(16)
-        .task { await model.load() }
     }
 }

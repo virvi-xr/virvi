@@ -24,6 +24,7 @@ final class AppModel {
     let session: AppSession
     let myBeats: MyBeatsModel
     let beats: BeatModel
+    let nav = AppNav()
     private let network = NWPathMonitor()
     /// Kept for the app's life: the notification centre holds its delegate weakly.
     private let notifications: ClaimNotificationRouter
@@ -46,8 +47,12 @@ final class AppModel {
         signIn.onChange = { [weak beats] in beats?.accountChanged() }
         myBeats = MyBeatsModel(api: beatApi)
         myBeats.openCard = { [weak beats] card in beats?.openBeat(card) }
-        // Set before launch finishes, so a tap on a reminder that launches the app reaches it
-        notifications = ClaimNotificationRouter { [weak beats] id in Task { await beats?.openBeat(id: id) } }
+        // Set before launch finishes, so a tap on a reminder that launches the app reaches it: the BEAT's page opens
+        let nav = nav
+        notifications = ClaimNotificationRouter { [weak beats] id in
+            nav.showBeat(id)
+            Task { await beats?.openBeat(id: id) }
+        }
         UNUserNotificationCenter.current().delegate = notifications
         controller = VisitorController(api: api, view: RealitySceneView(arView: arView), outline: RingOutline(arView: arView),
                                        beats: beats)
@@ -60,9 +65,22 @@ final class AppModel {
         network.start(queue: DispatchQueue(label: "io.virvi.ar.network"))
     }
 
+    /// A space link opens the camera on that space.
     func open(_ url: URL) {
-        if let code = spaceCode(fromLink: url) { controller.openSpace(code: code) }
+        guard let code = spaceCode(fromLink: url) else { return }
+        nav.scan()
+        controller.openSpace(code: code)
     }
+
+    /// Runs the camera only while the Scan tab is up and the app is active.
+    func syncCamera(active: Bool) {
+        let on = nav.cameraRuns(active: active)
+        guard on != cameraOn else { return }
+        cameraOn = on
+        if on { driver.start() } else { driver.pause() }
+    }
+
+    private var cameraOn = false
 }
 
 @main
@@ -73,21 +91,39 @@ struct VirviARApp: App {
     var body: some SwiftUI.Scene {
         WindowGroup {
             // SwiftUI hands universal links to `onOpenURL` too; one handler, so a link is looked up once.
-            VisitorScreen(model: model)
+            RootView(model: model, nav: model.nav)
                 .onOpenURL { model.open($0) }
+                .onChange(of: model.nav.tab) { model.syncCamera(active: phase == .active) }
         }
         // `initial`: the phase may already be active when the scene appears. Starting twice is harmless.
         .onChange(of: phase, initial: true) { _, p in
             switch p {
             case .active:
-                model.driver.start()
+                model.syncCamera(active: true)
                 // An in-person claim may have finished counting while the app was away
                 model.beats.appBecameActive()
             case .background:
-                model.driver.pause()
+                model.syncCamera(active: false)
                 model.controller.flushAnalytics()
             default: break
             }
+        }
+    }
+}
+
+/// The two tabs: BEATs (where the app opens) and Scan (the camera).
+struct RootView: View {
+    let model: AppModel
+    @Bindable var nav: AppNav
+
+    var body: some View {
+        TabView(selection: $nav.tab) {
+            BeatsHome(model: model, nav: nav)
+                .tabItem { Label(HomeCopy.TITLE, systemImage: "star.circle") }
+                .tag(AppTab.beats)
+            VisitorScreen(model: model)
+                .tabItem { Label(HomeCopy.SCAN_TAB, systemImage: "viewfinder") }
+                .tag(AppTab.scan)
         }
     }
 }
@@ -107,7 +143,8 @@ struct VisitorScreen: View {
             VStack {
                 HStack {
                     Spacer()
-                    if controller.menuButtonShown {
+                    // Only when it has something to offer beyond Close
+                    if controller.lookAgainShown || controller.reportSpaceId != nil || ArSessionDriver.supportsOcclusion {
                         MenuButton { menuOpen = true }.padding(.trailing, 16).padding(.top, 8)
                     }
                 }
@@ -116,7 +153,7 @@ struct VisitorScreen: View {
             }
         }
         .sheet(isPresented: $menuOpen) {
-            VisitorMenu(controller: controller, signIn: model.signIn, myBeats: model.myBeats, occlusionSupported: ArSessionDriver.supportsOcclusion,
+            VisitorMenu(controller: controller, occlusionSupported: ArSessionDriver.supportsOcclusion,
                         occlusionOn: $occlusionOn) { menuOpen = false }
                 .fixedSize(horizontal: false, vertical: true)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { menuHeight = $0 }
