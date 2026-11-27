@@ -27,7 +27,7 @@ Agents that support the Model Context Protocol (MCP), such as Claude, Cursor and
 1. In the dashboard, open **Settings → API Keys** and create a key. Choose **Read only** if the agent should only look, or **Full access** to let it change things. Tick **Only some scenes** and pick them to keep the agent to those scenes: it then can't see or change anything else, including your other scenes, media, events and the Design Studio.
 2. Add a remote MCP server to your agent, with the URL `https://api.virvi.io/mcp` (on a self-hosted install, your server's address followed by `/mcp`) and the header `Authorization: Bearer <your key>`.
 
-The key acts as your account: the agent can do exactly what you can, through the same checks as the dashboard and the REST API, and its changes show in a scene's activity log as **API**. A read-only key gets only the read tools. Delete the key in Settings to cut the agent off.
+The key acts as your account: the agent can do exactly what you can, through the same checks as the dashboard and the REST API, and its changes show in a scene's activity log as **API**. A read-only key gets only the read tools. **Activity** next to the key in Settings lists what agents did with it: each tool, the scene it named, and whether it worked (the last 100 calls, kept 90 days). Delete the key in Settings to cut the agent off; its activity goes with it.
 
 The tools are the same ones the dashboard's [Assistant](/docs/dashboard/assistant/) uses, so they behave the same way:
 

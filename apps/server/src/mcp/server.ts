@@ -6,6 +6,7 @@ import { runTool } from '../assistant/tools/run.js'
 import { callerCtx } from '../assistant/context.js'
 import { config } from '../config.js'
 import { OWN_TOOLS, ToolError, type Call } from './tools.js'
+import { recordMcpCall, sceneOfArgs } from './calls.js'
 
 /**
  * The Virvi MCP server (LIV-170): Model Context Protocol over Streamable HTTP at POST /mcp, stateless (every request
@@ -92,20 +93,27 @@ export default async function mcpRoutes(app: FastifyInstance, opts: { version: s
         const own = OWN_TOOLS.find((t) => t.name === name)
         const shared = own ? undefined : assistantTools().find((t) => t.name === name)
         if ((!own && !shared) || (readOnly && (own ? own.write : shared!.effect !== 'read'))) return rpcError(id, -32602, `Unknown tool: ${name}`)
+        // Every call made with a key is logged for the key's owner (Settings → API Keys → Activity)
+        const log = (ok: boolean, error: string | null) => request.user.apiKeyId
+          ? recordMcpCall({ apiKeyId: request.user.apiKeyId, userId: request.user.id, tool: name, sceneId: sceneOfArgs(args), ok, error })
+          : Promise.resolve()
+        const fail = async (text: string) => { await log(false, text); return result(id, { content: [{ type: 'text', text }], isError: true }) }
         try {
+          let out: Record<string, unknown>
           if (own) {
-            const out = await own.run(args, call(request))
-            return result(id, { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }], structuredContent: out, isError: false })
+            out = (await own.run(args, call(request))) as Record<string, unknown>
+          } else {
+            // The assistant's runner: checks the input, runs the route as this caller, and redacts others' emails and wallets
+            const r = await runTool(await callerCtx(app, request), name, args)
+            if (!r.ok) return fail(r.error)
+            out = (r.summary && typeof r.summary === 'object' && !Array.isArray(r.summary) ? r.summary : { result: r.summary }) as Record<string, unknown>
           }
-          // The assistant's runner: checks the input, runs the route as this caller, and redacts others' emails and wallets
-          const r = await runTool(await callerCtx(app, request), name, args)
-          if (!r.ok) return result(id, { content: [{ type: 'text', text: r.error }], isError: true })
-          const out = (r.summary && typeof r.summary === 'object' && !Array.isArray(r.summary) ? r.summary : { result: r.summary }) as Record<string, unknown>
+          await log(true, null)
           return result(id, { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }], structuredContent: out, isError: false })
         } catch (err) {
-          if (err instanceof ToolError) return result(id, { content: [{ type: 'text', text: err.message }], isError: true })
+          if (err instanceof ToolError) return fail(err.message)
           request.log.error({ err, tool: name }, 'mcp tool failed')
-          return result(id, { content: [{ type: 'text', text: "Something went wrong on Virvi's side. Try again." }], isError: true })
+          return fail("Something went wrong on Virvi's side. Try again.")
         }
       }
       default:

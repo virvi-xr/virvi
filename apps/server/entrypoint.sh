@@ -163,6 +163,13 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS hyperfy_worlds_slug_uq ON hyperfy_worlds (slug) WHERE purged_at IS NULL\`;
         console.log('[virvi-server] hyperfy worlds ensured');
       } catch(e) { console.log('[virvi-server] hyperfy worlds:', e.message); }
+      // MCP call log (LIV-170); matches mcpCalls in src/db/schema.ts
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS mcp_calls (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), api_key_id UUID NOT NULL CONSTRAINT mcp_calls_api_key_id_api_keys_id_fk REFERENCES api_keys(id) ON DELETE CASCADE, user_id UUID NOT NULL CONSTRAINT mcp_calls_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, tool TEXT NOT NULL, scene_id UUID, ok BOOLEAN NOT NULL, error TEXT, at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE INDEX IF NOT EXISTS mcp_calls_key_at_idx ON mcp_calls (api_key_id, at DESC)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS mcp_calls_at_idx ON mcp_calls (at)\`;
+        console.log('[virvi-server] mcp call log ensured');
+      } catch(e) { console.log('[virvi-server] mcp call log:', e.message); }
       // Getting-started checklist (LIV-37); matches users.onboardingDismissedAt in src/db/schema.ts
       try {
         await sql\`ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_dismissed_at TIMESTAMPTZ\`;

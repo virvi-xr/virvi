@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { sceneElementInstances, sceneActivity } from '../src/db/schema.js'
+import { mcpCalls, sceneElementInstances, sceneActivity } from '../src/db/schema.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, createElement, createInstance, tokenFor, type TestUser } from './helpers/factories.js'
 
@@ -119,5 +119,37 @@ describe('MCP docs', () => {
     const { TOOLS } = await import('../src/assistant/tools/index.js')
     const gated = new Set(Object.values(TOOLS).filter((t) => t.available && !t.available()).map((t) => t.name))
     expect([...documented].filter((n) => !offered.has(n) && !gated.has(n))).toEqual([])
+  })
+})
+
+describe('MCP call log (LIV-170)', () => {
+  let app: Awaited<ReturnType<typeof testApp>>
+  beforeEach(async () => { await resetDb(); app = await testApp() })
+  afterEach(() => app.close())
+
+  it("logs each tool call against its key, for the key's owner only", async () => {
+    const owner = await createUser()
+    const { scene } = await createScene(owner, 'Club')
+    const made = (await app.inject({ method: 'POST', url: '/api/keys', headers: { authorization: `Bearer ${tokenFor(owner)}` }, payload: { name: 'agent' } })).json()
+    const call = (name: string, args: Record<string, unknown>) => app.inject({
+      method: 'POST', url: '/mcp', headers: { authorization: `Bearer ${made.key}` },
+      payload: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } },
+    })
+    await call('get_scene', { sceneId: scene.id })
+    await call('get_scene_activity', { sceneId: 'nope' })
+    await app.inject({ method: 'POST', url: '/mcp', headers: { authorization: `Bearer ${made.key}` }, payload: { jsonrpc: '2.0', id: 2, method: 'tools/list' } })
+
+    const res = await app.inject({ method: 'GET', url: `/api/keys/${made.id}/calls`, headers: { authorization: `Bearer ${tokenFor(owner)}` } })
+    expect(res.statusCode).toBe(200)
+    const calls = res.json().calls
+    expect(calls).toHaveLength(2) // tools/list isn't a tool call
+    expect(calls[1]).toMatchObject({ tool: 'get_scene', sceneId: scene.id, sceneName: 'Club', ok: true, error: null })
+    expect(calls[0]).toMatchObject({ tool: 'get_scene_activity', sceneId: null, ok: false })
+    expect(calls[0].error).toMatch(/must be an id/)
+    const other = await createUser()
+    expect((await app.inject({ method: 'GET', url: `/api/keys/${made.id}/calls`, headers: { authorization: `Bearer ${tokenFor(other)}` } })).statusCode).toBe(404)
+    // Deleting the key deletes its log
+    await app.inject({ method: 'DELETE', url: `/api/keys/${made.id}`, headers: { authorization: `Bearer ${tokenFor(owner)}` } })
+    expect(await db.select().from(mcpCalls)).toHaveLength(0)
   })
 })

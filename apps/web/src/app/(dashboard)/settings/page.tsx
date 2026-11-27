@@ -62,6 +62,15 @@ export default function SettingsPage() {
   const [keyLimited, setKeyLimited] = useState(false)
   const [keySceneChoices, setKeySceneChoices] = useState<Array<{ id: string; name: string }> | null>(null)
   const [keyScenes, setKeyScenes] = useState<string[]>([])
+  /** LIV-170: the key whose MCP activity is open, and its calls (null while loading) */
+  const [activityFor, setActivityFor] = useState<string | null>(null)
+  const [keyCalls, setKeyCalls] = useState<Awaited<ReturnType<typeof api.getApiKeyCalls>>['calls'] | null>(null)
+  const toggleActivity = (keyId: string) => {
+    if (activityFor === keyId) return setActivityFor(null)
+    setActivityFor(keyId)
+    setKeyCalls(null)
+    api.getApiKeyCalls(keyId).then((d) => setKeyCalls(d.calls), () => setKeyCalls([]))
+  }
   const [createdKey, setCreatedKey] = useState<string | null>(null)
   const [keyCopied, setKeyCopied] = useState(false)
   const [showCreateKey, setShowCreateKey] = useState(false)
@@ -670,7 +679,7 @@ export default function SettingsPage() {
         ) : (
           <div className="space-y-3">
             {apiKeys.map(key => (
-              <div key={key.id} className="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900 p-4">
+              <div key={key.id} className="flex flex-wrap items-center justify-between gap-y-3 rounded-lg border border-gray-800 bg-gray-900 p-4">
                 <div className="min-w-0">
                   <p className="font-medium text-white">{key.name}{key.access === 'read' && <span className="ml-2 rounded bg-gray-800 px-2 py-0.5 text-xs font-normal text-gray-300">Read only</span>}{key.sceneIds?.length > 0 && <span className="ml-2 rounded bg-gray-800 px-2 py-0.5 text-xs font-normal text-gray-300">{key.sceneIds.length === 1 ? '1 scene' : `${key.sceneIds.length} scenes`}</span>}</p>
                   <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-400">
@@ -679,7 +688,9 @@ export default function SettingsPage() {
                     <span>Last used {key.lastUsedAt ? new Date(key.lastUsedAt).toLocaleDateString() : 'Never'}</span>
                   </div>
                 </div>
-                <div className="shrink-0 ml-4">
+                <div className="shrink-0 ml-4 flex items-center gap-2">
+                  <button type="button" onClick={() => toggleActivity(key.id)} aria-expanded={activityFor === key.id}
+                    className="rounded-md bg-gray-800 px-3 py-1.5 text-xs hover:bg-gray-700">{activityFor === key.id ? 'Hide activity' : 'Activity'}</button>
                   {deletingKeyId === key.id ? (
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-red-400">Delete?</span>
@@ -699,6 +710,25 @@ export default function SettingsPage() {
                     </button>
                   )}
                 </div>
+                {activityFor === key.id && (
+                  <div className="basis-full border-t border-gray-800 pt-3 text-sm">
+                    <p className="mb-2 text-xs text-gray-400">What an AI agent did with this key through Virvi&apos;s MCP server, newest first (the last 100, kept 90 days).</p>
+                    {keyCalls === null ? <p className="text-xs text-gray-400">Loading…</p>
+                    : keyCalls.length === 0 ? <p className="text-xs text-gray-400">No agent has used this key yet.</p>
+                    : (
+                      <ul className="space-y-1">
+                        {keyCalls.map((c, i) => (
+                          <li key={i} className="flex flex-wrap gap-x-3 text-xs">
+                            <span className="text-gray-400">{new Date(c.at).toLocaleString()}</span>
+                            <span className="font-mono text-gray-200">{c.tool}</span>
+                            {c.sceneName && <span className="text-gray-300">{c.sceneName}</span>}
+                            <span className={c.ok ? 'text-green-300' : 'text-red-300'}>{c.ok ? 'Done' : `Refused: ${c.error ?? 'failed'}`}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>

@@ -5,6 +5,7 @@ import { db } from '../db/connection.js'
 import { apiKeys, organizations, orgMembers } from '../db/schema.js'
 import { authenticate, isReadOnlyKey, keySceneIds } from '../middleware/auth.js'
 import { getSceneAccess } from '../auth/permissions.js'
+import { callsOfKey } from '../mcp/calls.js'
 import { actorFromClaims } from '../auth/actor.js'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -130,6 +131,14 @@ export default async function apiKeyRoutes(app: FastifyInstance) {
       return reply.send({ keys: keys.map(({ scopes, ...k }) => ({ ...k, access: isReadOnlyKey(scopes) ? 'read' : 'full', sceneIds: keySceneIds(scopes) ?? [] })) })
     },
   )
+
+  // ── GET /api/keys/:keyId/calls — a key's recent MCP tool calls (LIV-170) ──
+
+  app.get<{ Params: { keyId: string } }>('/api/keys/:keyId/calls', { preHandler: [authenticate] }, async (request, reply) => {
+    const calls = await callsOfKey(request.user.id, request.params.keyId)
+    if (!calls) return reply.status(404).send({ error: 'API key not found' })
+    return reply.send({ calls })
+  })
 
   // ── DELETE /api/keys/:keyId — Delete an API key ─────────────────────────
 

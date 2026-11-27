@@ -1209,6 +1209,24 @@ export const apiKeys = pgTable('api_keys', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+/**
+ * Every MCP tool call made with an API key (LIV-170): the tool, the scene it named, and whether it worked. The key's
+ * owner reads them in Settings; kept 90 days, and they go with the key.
+ */
+export const mcpCalls = pgTable('mcp_calls', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  apiKeyId: uuid('api_key_id').notNull().references(() => apiKeys.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  tool: text('tool').notNull(),
+  sceneId: uuid('scene_id'),
+  ok: boolean('ok').notNull(),
+  error: text('error'),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  keyAtIdx: index('mcp_calls_key_at_idx').on(t.apiKeyId, t.at.desc()),
+  atIdx: index('mcp_calls_at_idx').on(t.at),
+}))
+
 export const apiKeysRelations = relations(apiKeys, ({ one }) => ({
   user: one(users, {
     fields: [apiKeys.userId],

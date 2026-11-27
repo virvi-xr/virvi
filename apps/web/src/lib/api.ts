@@ -633,6 +633,9 @@ function useRealApi() {
         method: 'POST', body: JSON.stringify({ name, access, ...(sceneIds.length ? { sceneIds } : {}) }),
       }),
     deleteApiKey: (keyId: string) => apiFetch(`/api/keys/${keyId}`, { method: 'DELETE' }),
+    /** LIV-170: the key's recent MCP tool calls, newest first. */
+    getApiKeyCalls: (keyId: string) =>
+      apiFetch<{ calls: Array<{ tool: string; sceneId: string | null; sceneName: string | null; ok: boolean; error: string | null; at: string }> }>(`/api/keys/${keyId}/calls`),
 
     // Analytics (locations)
     getAnalyticsLocations: () => apiFetch<{ scenes: AnalyticsLocation[] }>('/api/analytics/locations'),

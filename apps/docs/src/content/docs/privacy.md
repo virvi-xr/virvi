@@ -86,5 +86,7 @@ When something goes wrong on virvi.io, the page (if you allowed it; see Your cho
 
 The Virvi Assistant on the dashboard keeps your conversations with it until you delete them. To write its replies, what you type and the dashboard information it looks up for you (such as your scenes and their settings) are processed by Anthropic. When the assistant changes something for you, we keep a record of the change so you can undo it. That record stays after you delete the conversation, without the message text. See the [assistant guide](/docs/dashboard/assistant/) for what it can do.
 
+**AI agents with an API key:** when an agent you connect uses Virvi through its MCP server, Virvi records each tool it used, the scene it named, whether it worked and when, against that key. You see this under Settings, API Keys, Activity. It's kept 90 days and goes when you delete the key.
+
 ## Advertiser early access
 When you ask for advertising early access on virvi.io, Virvi stores the email address, name, company or project, website and message you enter, and the time you sent the form. It's used only to contact you about advertising on Virvi. If you send the form again with the same email, the new answers replace the old ones (fields you leave blank keep what you sent before). Your IP address is used briefly to limit repeated submissions and is not stored. To be removed from the list, email sales@virvi.io.

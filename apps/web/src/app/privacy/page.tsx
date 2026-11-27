@@ -274,6 +274,11 @@ export default function PrivacyPage() {
           <a href="/docs/dashboard/assistant/" className="text-blue-400 underline underline-offset-2 hover:text-blue-300">assistant guide</a>{' '}
           for what it can do.
         </p>
+        <p>
+          <strong>AI agents with an API key:</strong> when an agent you connect uses Virvi through its MCP server, Virvi records each tool it used,
+          the scene it named, whether it worked and when, against that key. You see this under Settings, API Keys, Activity. It&apos;s kept 90 days
+          and goes when you delete the key.
+        </p>
 
         <h2>Advertiser early access</h2>
         <p>

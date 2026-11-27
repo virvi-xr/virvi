@@ -529,6 +529,7 @@ const CASES: Case[] = [
   { route: 'DELETE /api/media/:assetId', url: (f) => `/api/media/${f.media.id}` },
   { route: 'DELETE /api/hooks/:hookId', url: (f) => `/api/hooks/${f.hook.id}` },
   { route: 'DELETE /api/keys/:keyId', url: (f) => `/api/keys/${f.bKey.id}` },
+  { route: 'GET /api/keys/:keyId/calls', url: (f) => `/api/keys/${f.bKey.id}/calls` },
   // analytics
   { route: 'GET /api/analytics/locations/:id/summary', url: (f) => `/api/analytics/locations/${f.location.id}/summary` },
   { route: 'GET /api/analytics/locations/:id/timeseries', url: (f) => `/api/analytics/locations/${f.location.id}/timeseries` },

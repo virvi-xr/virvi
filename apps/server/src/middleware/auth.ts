@@ -37,6 +37,8 @@ export interface AuthUser {
   readOnlyKey?: boolean
   /** A scene-limited API key (LIV-170): the only scenes it may touch. */
   keyScenes?: string[]
+  /** The API key this request signed in with (LIV-170: MCP calls are logged against it). */
+  apiKeyId?: string
   kind?: 'account' | 'scene' | 'trial'
   /** True for a signed-out visitor's trial session (kind 'trial'), set only on routes that opt in with `config.trial`. */
   trial?: boolean
@@ -167,6 +169,7 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
         kind: 'account',
         verified: true,
         viaApiKey: true,
+        apiKeyId: apiKey.id,
         ...(readOnlyKey ? { readOnlyKey: true } : {}),
         ...(keyScenes ? { keyScenes } : {}),
       }
