@@ -14,6 +14,7 @@ export function Footer({ onAdvertise }: { onAdvertise: () => void }) {
         {privacy && <a href={privacy} className="hover:text-white">Privacy</a>}
         <a href={terms} className="hover:text-white">Terms</a>
         <a href="/transparency/" className="hover:text-white">Transparency</a>
+        <a href="/status/" className="hover:text-white">Status</a>
         <a href="/about/" className="hover:text-white">About</a>
       </div>
     </footer>

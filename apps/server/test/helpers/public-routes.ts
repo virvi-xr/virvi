@@ -62,6 +62,7 @@ export const PUBLIC_EXACT = [
   'GET /api/beats/metadata/:chain/:file', // public: BEAT token metadata and contract.json for wallets and marketplaces (LIV-11); dark unless BEAT_ENABLED
   'GET /api/wallets/:address/beats', // public: the BEATs a wallet holds, for virvi.io/w/<wallet> (LIV-185); only what the chain shows, never accounts or names
   'GET /api/health', // health check
+  'GET /api/status', // public status page (LIV-40): component states, uptime and incidents, nothing personal
   'GET /api/transparency', // what this server says it runs (LIV-165): public by design
   'GET /.well-known/security.txt', // security contact (LIV-165)
   'GET /api/instance', // public: install mode and version (no secrets)

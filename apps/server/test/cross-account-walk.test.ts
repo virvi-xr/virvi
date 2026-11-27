@@ -593,6 +593,8 @@ const CASES: Case[] = [
   { route: 'POST /api/admin/beats/reissue-requests/:id/unlink-wallet', url: (f) => `/api/admin/beats/reissue-requests/${f.reissueRequest.id}/unlink-wallet`, body: (f) => ({ wallet: f.b.wallet }) },
   { route: 'DELETE /api/beats/reissue-requests/:id', url: (f) => `/api/beats/reissue-requests/${f.reissueRequest.id}` },
   { route: 'PATCH /api/admin/errors/:id', url: () => `/api/admin/errors/${AD_ID}`, body: () => ({ resolved: true }) },
+  { route: 'POST /api/admin/status/incidents/:id/updates', url: () => `/api/admin/status/incidents/${AD_ID}/updates`, body: () => ({ status: 'resolved', body: 'pwned' }) },
+  { route: 'DELETE /api/admin/status/incidents/:id', url: () => `/api/admin/status/incidents/${AD_ID}` },
   { route: 'GET /api/admin/errors/reports/:reportId/screenshot', url: () => `/api/admin/errors/reports/${AD_ID}/screenshot` },
   { route: 'GET /api/ad-spaces/:elementId', url: (f) => `/api/ad-spaces/${f.adSpace.id}` },
   { route: 'GET /api/ad-spaces/:elementId/report', url: (f) => `/api/ad-spaces/${f.adSpace.id}/report` },

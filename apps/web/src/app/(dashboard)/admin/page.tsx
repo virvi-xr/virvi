@@ -175,6 +175,7 @@ export default function AdminPage() {
             <Link href="/admin/beats" className="rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm hover:border-gray-700">BEATs</Link>
             <Link href="/admin/catalog" className="rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm hover:border-gray-700">Catalog packs</Link>
             <Link href="/admin/errors" className="rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm hover:border-gray-700">Errors</Link>
+            <Link href="/admin/status" className="rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm hover:border-gray-700">Status page</Link>
             <Link href="/admin/summit" className="rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm hover:border-gray-700">Summit</Link>
             <Link href="/admin/studio" className="rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm hover:border-gray-700">Studio flags</Link>
             <Link href="/admin/studio/gift-codes" className="rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm hover:border-gray-700">Gift codes</Link>

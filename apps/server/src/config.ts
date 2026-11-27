@@ -662,6 +662,8 @@ export const config = {
   errorFlushMs: intEnv('ERROR_FLUSH_MS', 2000),
   // Retention purge and Linear filing passes; disabled in tests
   errorJobsEnabled: env('ERROR_JOBS') !== 'false',
+  // The status page's once-a-minute checks (LIV-40); disabled in tests
+  statusChecksEnabled: env('STATUS_CHECKS') !== 'false',
   // Filing to Linear is off until both are set. Env only: never logged, never returned
   linearApiKey: env('LINEAR_API_KEY') || null,
   linearTeamId: env('LINEAR_TEAM_ID') || null,

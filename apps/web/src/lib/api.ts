@@ -1,6 +1,7 @@
 'use client'
 import type { EmailStatus } from './email-verification'
 import type { SceneActivityEntry } from './scene-activity'
+import type { StatusPage } from './status'
 import { createContext, useCallback, useContext, useMemo } from 'react'
 import { useAuth } from './auth'
 import { API_URL } from './config'
@@ -913,6 +914,12 @@ function useRealApi() {
     getAdminCatalogPacks: () => apiFetch<{ packs: CatalogPack[] }>('/api/admin/catalog/packs'),
     // Errors (admin, LIV-66)
     getAdminErrors: () => apiFetch<ErrorsOverview>('/api/admin/errors'),
+    getStatus: () => apiFetch<StatusPage>('/api/status'),
+    createStatusIncident: (body: { title: string; body: string; status: string; kind: 'incident' | 'maintenance'; components: string[] }) =>
+      apiFetch('/api/admin/status/incidents', { method: 'POST', body: JSON.stringify(body) }),
+    addStatusUpdate: (id: string, body: { status: string; body: string }) =>
+      apiFetch(`/api/admin/status/incidents/${id}/updates`, { method: 'POST', body: JSON.stringify(body) }),
+    deleteStatusIncident: (id: string) => apiFetch(`/api/admin/status/incidents/${id}`, { method: 'DELETE' }),
     getAdminBeats: () => apiFetch<AdminBeatsOverview>('/api/admin/beats'),
     retryAdminBeatsFailed: (beatId?: string) =>
       apiFetch<{ retried: number; skippedClosed: number }>('/api/admin/beats/retry-failed', { method: 'POST', userAction: true, body: JSON.stringify(beatId ? { beatId } : {}) }),

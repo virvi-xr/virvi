@@ -31,6 +31,7 @@ This page covers the routes most integrations need. Admin and internal routes ar
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/api/health` | No | `200` with `{ status, mode, version, timestamp, checks, uptime }`; `503` when Postgres doesn't answer |
+| GET | `/api/status` | No | The [status page](/docs/security/status/)'s data: `{ state, components, incidents, since, generatedAt }`, cached 30 s |
 | GET | `/api/instance` | No | `{ mode, version, ... }` plus branding on self-hosted installs |
 
 ## Scenes, presets and elements

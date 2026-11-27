@@ -1581,6 +1581,53 @@ export const sceneActivity = pgTable(
   }),
 )
 
+/**
+ * The public status page (LIV-40): one row per component per minute the server checked it. A minute with no row for
+ * `api` is a minute the server wasn't running, so gaps count as downtime. Kept for 90 days (purgeStatus).
+ */
+export const statusChecks = pgTable(
+  'status_checks',
+  {
+    component: text('component').notNull(),
+    minute: timestamp('minute', { withTimezone: true }).notNull(),
+    /** 'up', 'degraded' or 'down' */
+    state: text('state').notNull(),
+    detail: text('detail'),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.component, t.minute] }) }),
+)
+
+/** An incident posted to the status page by a site admin (LIV-40), with its timeline in statusIncidentUpdates. */
+export const statusIncidents = pgTable(
+  'status_incidents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    title: text('title').notNull(),
+    /** investigating, identified, monitoring or resolved: the latest update's */
+    status: text('status').notNull(),
+    /** maintenance (planned) or incident */
+    kind: text('kind').notNull().default('incident'),
+    components: jsonb('components').$type<string[]>().notNull().default([]),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  },
+  (t) => ({ byCreated: index('status_incidents_created_idx').on(t.createdAt) }),
+)
+
+export const statusIncidentUpdates = pgTable(
+  'status_incident_updates',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    incidentId: uuid('incident_id').notNull().references(() => statusIncidents.id, { onDelete: 'cascade' }),
+    status: text('status').notNull(),
+    body: text('body').notNull(),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ byIncident: index('status_incident_updates_incident_idx').on(t.incidentId, t.createdAt) }),
+)
+
 /** One tenure of a location being set up in Virvi. At most one active (ended_at IS NULL) per location. */
 export const locationSetups = pgTable(
   'location_setups',
