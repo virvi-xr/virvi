@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify'
+import { schemaStatus } from './db/schema-check.js'
 import fastifyCors from '@fastify/cors'
 import fastifyStatic from '@fastify/static'
 import fastifySwagger from '@fastify/swagger'
@@ -81,6 +82,7 @@ import assistantShowRoutes from './routes/assistant-shows.js'
 import adminErrorRoutes from './routes/admin-errors.js'
 import statusRoutes from './routes/status.js'
 import collectionRoutes from './routes/collection.js'
+import onboardingRoutes from './routes/onboarding.js'
 import adminBeatRoutes from './routes/admin-beats.js'
 import { recordServerResponse } from './errors/record.js'
 import { errorUserHash } from './errors/user-hash.js'
@@ -324,6 +326,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(adminErrorRoutes)
   await app.register(statusRoutes)
   await app.register(collectionRoutes)
+  await app.register(onboardingRoutes)
   await app.register(adminBeatRoutes)
 
   // GET /api/instance (mode, version, branding) and the admin branding routes
@@ -356,6 +359,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
         postgres: postgresStatus,
         redis: redisStatus,
         storage: config.storageProvider,
+        // Every table and column schema.ts declares exists; reported, not failed on, so a deploy still goes out
+        schema: postgresStatus === 'ok' ? await schemaStatus() : 'unknown',
       },
       uptime: process.uptime(),
     }

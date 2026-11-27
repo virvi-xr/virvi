@@ -163,6 +163,11 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS hyperfy_worlds_slug_uq ON hyperfy_worlds (slug) WHERE purged_at IS NULL\`;
         console.log('[virvi-server] hyperfy worlds ensured');
       } catch(e) { console.log('[virvi-server] hyperfy worlds:', e.message); }
+      // Getting-started checklist (LIV-37); matches users.onboardingDismissedAt in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_dismissed_at TIMESTAMPTZ\`;
+        console.log('[virvi-server] onboarding column ensured');
+      } catch(e) { console.log('[virvi-server] onboarding column:', e.message); }
       // Notification settings (LIV-30): the bell's muted notice groups; matches notificationSettings in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS notification_settings (user_id UUID PRIMARY KEY CONSTRAINT notification_settings_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, muted TEXT[] NOT NULL DEFAULT '{}'::text[], updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;

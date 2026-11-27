@@ -44,6 +44,10 @@ import { beatApiPath, sceneBeatsPath, type BeatAvailability, type BeatCheckoutRe
 // ── New Scene Wizard and Decentraland Worlds ────────────────────────────────
 
 /** One notice group in Settings (LIV-30). */
+import type { Onboarding } from './onboarding'
+/** LIV-37: where new accounts stop, for admins. */
+export interface OnboardingFunnel { days: number; accounts: number; dismissed: number; steps: Array<{ id: string; accounts: number }> }
+
 export interface NotificationGroupSetting { id: string; label: string; description: string; on: boolean }
 
 export interface WizardAsset {
@@ -529,6 +533,10 @@ function useRealApi() {
     getSceneRoles: (sceneId: string) =>
       apiFetch<{ host: { userId: string; displayName: string | null; wallets: string[] }; roles: { wallet: string; role: 'cohost' | 'editor' | 'viewer'; area: EditArea | null; userId: string | null; displayName: string | null; createdAt: string }[] }>(`/api/scenes/${sceneId}/roles`),
     getCollection: () => apiFetch<Collection>('/api/collection'),
+    /** LIV-37: the getting-started checklist. */
+    getOnboarding: () => apiFetch<Onboarding>('/api/me/onboarding'),
+    dismissOnboarding: (dismissed: boolean) => apiFetch<Onboarding>('/api/me/onboarding/dismiss', { method: 'POST', body: JSON.stringify({ dismissed }) }),
+    getOnboardingFunnel: (days = 90) => apiFetch<OnboardingFunnel>(`/api/admin/onboarding?days=${days}`),
     getSceneHealth: (sceneId: string) => apiFetch<SceneHealth>(`/api/scenes/${sceneId}/health`),
     getSceneActivity: (sceneId: string, before?: string) =>
       apiFetch<{ entries: SceneActivityEntry[]; more: boolean }>(`/api/scenes/${sceneId}/activity${before ? `?before=${encodeURIComponent(before)}` : ''}`),

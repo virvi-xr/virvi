@@ -150,6 +150,8 @@ export const users = pgTable('users', {
   trialDeviceHash: text('trial_device_hash'),
   /** Scene imports this trial has started, failed ones included (TRIAL_IMPORTS caps it; reserveTrialImport). */
   trialImports: integer('trial_imports').notNull().default(0),
+  /** When the account hid the getting-started checklist (LIV-37); null shows it until every step is done. */
+  onboardingDismissedAt: timestamp('onboarding_dismissed_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({

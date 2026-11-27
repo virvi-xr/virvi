@@ -2,7 +2,7 @@
 title: Quickstart
 description: Run your own Virvi server with Docker in a few minutes, or set up a local development checkout.
 sidebar:
-  order: 2
+  order: 4
 ---
 
 Using hosted Virvi? Sign in at [virvi.io](https://virvi.io) and skip to [Next steps](#next-steps).

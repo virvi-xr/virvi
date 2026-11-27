@@ -7,6 +7,7 @@ import Link from 'next/link'
 import SceneEditorPage from './[sceneId]/client'
 import { ArrowUpRightIcon, CheckIcon, CopyIcon, GridIcon, ListIcon, PlusIcon, ScenesIcon, TrashIcon, UploadIcon } from '@/components/icons'
 import { StudioTabs } from '@/components/studio/StudioTabs'
+import { GettingStarted } from '@/components/GettingStarted'
 import { DeleteSceneDialog } from '@/components/scenes/DeleteSceneDialog'
 import { RecentlyDeleted } from '@/components/scenes/RecentlyDeleted'
 import { deletedToast, restoredNote, type DeletedScene } from '@/lib/scene-delete'
@@ -148,6 +149,8 @@ function ScenesContent() {
           </div>
         }
       />
+
+      <GettingStarted />
 
       {showCreate && actions.includes('blank') && (
         <form onSubmit={handleCreate} className="mb-6 flex flex-wrap gap-2 rounded-lg border border-gray-800 bg-gray-900 p-3">
