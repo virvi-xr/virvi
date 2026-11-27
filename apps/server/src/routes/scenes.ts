@@ -37,6 +37,7 @@ import { StoreMediaError } from '../media/store.js'
 import { SCENE_THUMBNAIL_MAX_BYTES } from '@virvixr/shared'
 import { commitRoomSet, deleteOrphanedRoomSets, insertRoomSet, prepareRoomSetForPlacement, RoomSetError, roomSetIdsByElement, sceneOwnedRoomSets, type PreparedRoomSet } from '../room-scan/sets.js'
 import { recordSceneActivity, requestActor, type SceneActivityAction } from '../scenes/activity.js'
+import { sceneHealth } from '../scenes/health.js'
 
 type ElementChange = Parameters<typeof publishElementChanged>[0]
 
@@ -544,6 +545,16 @@ export default async function sceneRoutes(app: FastifyInstance) {
     if (!scene) return reply.status(404).send({ error: 'Scene not found' })
     await recordSceneActivity(sceneId, requestActor(request.user), 'scene.thumbnail_changed', { type: 'scene', id: sceneId, name: scene.name }, { removed: true })
     return reply.send({ scene })
+  })
+
+  // ── GET /api/scenes/:sceneId/health — triangles, entities and size against Decentraland's limits (LIV-41) ──
+  app.get<{ Params: { sceneId: string } }>('/api/scenes/:sceneId/health', async (request, reply) => {
+    const { sceneId } = request.params
+    if (!UUID_RE.test(sceneId) || !(await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { id: true } }))) {
+      return reply.status(404).send({ error: 'Scene not found' })
+    }
+    if (!hasScope(await accessFor(request, sceneId), 'scene.edit')) return reply.status(403).send({ error: 'Forbidden' })
+    return reply.send(await sceneHealth(sceneId))
   })
 
   // DELETE /api/scenes/:sceneId (LIV-83: soft delete, restore, purge) is in routes/scene-delete.ts

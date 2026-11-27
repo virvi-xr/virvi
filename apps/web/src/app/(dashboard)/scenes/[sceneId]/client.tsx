@@ -23,6 +23,7 @@ import {
 } from '@/lib/kiosk'
 import { SceneRoles } from './SceneRoles'
 import { SceneActivity } from './SceneActivity'
+import { SceneHealth } from './SceneHealth'
 import { Raffles } from './Raffles'
 import { SceneBeats } from '@/components/beats/SceneBeats'
 import { ArSpaces } from './ArSpaces'
@@ -49,9 +50,9 @@ import { offTypeLocked, sceneTabLocked } from '@/lib/trial-scene'
 // ---------------------------------------------------------------------------
 
 type ElementType = 'video' | 'image' | 'sound' | 'model' | 'widget' | 'ad_space' | 'claim_point'
-type TabKey = ElementType | 'moderation' | 'roles' | 'raffles' | 'ar' | 'activity' | 'settings'
+type TabKey = ElementType | 'moderation' | 'roles' | 'raffles' | 'ar' | 'performance' | 'activity' | 'settings'
 /** Tabs that aren't a list of one element type. */
-const PANEL_TABS = new Set<TabKey>(['moderation', 'roles', 'raffles', 'ar', 'activity', 'settings'])
+const PANEL_TABS = new Set<TabKey>(['moderation', 'roles', 'raffles', 'ar', 'performance', 'activity', 'settings'])
 
 interface Instance {
   id: string
@@ -116,6 +117,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'roles', label: 'Roles' },
   { key: 'raffles', label: 'Raffles' },
   { key: 'ar', label: 'AR spaces' },
+  { key: 'performance', label: 'Performance' },
   { key: 'activity', label: 'Activity' },
   { key: 'settings', label: 'Settings' },
 ]
@@ -1971,6 +1973,9 @@ export default function SceneEditorPage() {
 
       {/* AR spaces tab */}
       {activeTab === 'ar' && <ArSpaces sceneId={sceneId} />}
+
+      {/* Performance tab: the scene against Decentraland's limits (LIV-41) */}
+      {activeTab === 'performance' && <SceneHealth sceneId={sceneId} />}
 
       {/* Activity tab: who changed what (LIV-32) */}
       {activeTab === 'activity' && <SceneActivity sceneId={sceneId} />}

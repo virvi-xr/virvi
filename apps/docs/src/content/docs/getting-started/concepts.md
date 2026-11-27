@@ -9,6 +9,16 @@ sidebar:
 
 A **scene** is the top-level container for a virtual space. It represents one deployable unit — a Decentraland parcel, a Hyperfy world, a Second Life region.
 
+### Performance
+
+The scene's **Performance** tab compares the live preset with Decentraland's limits for each place the scene deploys to. If it isn't set up to deploy yet, it uses one parcel's limits. It shows:
+
+- **Triangles:** 10,000 per parcel, counted for every placed copy. A scene over this still deploys, but may run slowly for visitors.
+- **Entities:** 200 per parcel, less 20 that Virvi's runtime needs. Every placed model copy counts, and so do picture frames (4 to 8 per framed copy). Decentraland refuses a deploy over this.
+- **File size:** 15 MB per parcel in Genesis City. A World's storage belongs to its owner's wallet, so there's no fixed figure; it's checked when you deploy.
+
+Each one reads within budget, close (80% or more), or over. The tab lists the models with the most triangles and the largest files, and suggests what to change, such as a lower-detail model or smaller textures. Models that haven't been measured yet count as 0, and the tab says how many there are. Texture memory isn't measured yet.
+
 ### Activity
 
 The scene's **Activity** tab lists who changed what, and when. It covers:
