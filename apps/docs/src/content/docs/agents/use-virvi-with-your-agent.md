@@ -29,19 +29,19 @@ Agents that support the Model Context Protocol (MCP), such as Claude, Cursor and
 
 The key acts as your account: the agent can do exactly what you can, through the same checks as the dashboard and the REST API, and its changes show in a scene's activity log as **API**. A read-only key gets only the read tools. Delete the key in Settings to cut the agent off.
 
-| Tool | What it does |
-|------|--------------|
-| `list_scenes` | Your scenes and those shared with you |
-| `get_scene` | A scene's presets, items and copies, with positions in metres |
-| `get_scene_performance` | How the scene compares with Decentraland's limits, and suggested fixes |
-| `get_scene_activity` | Who changed what, and when (hosts and co-hosts) |
-| `list_events` | Your events |
-| `list_media` | Your media library, with URLs to use in items |
-| `list_analytics_locations`, `get_analytics_summary` | Visitor totals for a place, under the dashboard's privacy rules |
-| `set_live_preset` | Switch which preset is live (full-access keys) |
-| `update_item` | Rename, show or hide an item, or change some of its properties (full-access keys) |
-| `place_copy`, `move_copy` | Place or move a copy of an item (full-access keys) |
-| `remove_copy` | Remove a copy; the agent is told to check with you first (full-access keys) |
+The tools are the same ones the dashboard's [Assistant](/docs/dashboard/assistant/) uses, so they behave the same way:
+
+| Area | Read | Change (full-access keys) |
+|------|------|---------------------------|
+| Scenes | `list_scenes`, `get_scene`, `get_scene_publishing`, `get_scene_performance`, `get_scene_activity`, `get_scene_errors` | `create_scene`, `update_scene` |
+| Presets and schedules | `get_preset_schedules` | `create_preset`, `rename_preset`, `activate_preset`, `create_preset_schedule`, `update_preset_schedule` |
+| Items and placements | `list_scene_library`, `list_scene_streams` | `create_element`, `update_element`, `set_element_live`, `add_instance`, `update_instance`, `remove_instance`, `add_to_library`, `rename_library_item` |
+| Events and shows | `list_events`, `get_event`, `list_showings`, `list_shows`, `get_show` | `create_event`, `update_event`, `link_event_scene`, `create_showing`, `start_show`, `attach_to_show`, `close_show` |
+| Media and Design Studio | `list_media`, `list_designs`, `get_design`, `get_studio_usage`, `get_finalize_quote` | `create_design` |
+| Rewards | `list_scene_raffles`, `get_beat` | `create_beat_draft`, `create_giveaway` |
+| Analytics and account | `list_analytics_locations`, `get_analytics_summary`, `get_plan`, `list_orgs`, `list_scene_collaborators`, `get_deploy_status`, `explain_deploy_failure`, `search_help` | |
+
+What costs money or shows something publicly isn't offered through MCP: sending Studio prompts, finalizing, paying for a BEAT, creating or changing raffles, redeploying, and inviting collaborators. Do those in the dashboard, where you confirm them. `remove_instance` can't be undone, so the agent is told to check with you first. Other people's emails and wallets are hidden in results, as they are for the Assistant.
 
 Signing in with your Virvi account through the agent, instead of a key, comes later, along with more tools (events, schedules, uploads, the Design Studio).
 

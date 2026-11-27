@@ -1,4 +1,5 @@
 // Virvi Assistant (LIV-155): conversations, the streamed turn, plan approval and undo.
+import { callerCtx } from '../assistant/context.js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm'
 import type { AssistantAccess, AssistantActivityItem, AssistantPageContext, AssistantStreamEvent } from '@virvixr/shared'
@@ -68,18 +69,15 @@ async function undoGuard(request: FastifyRequest, reply: FastifyReply) {
   if (!config.assistantEnabled) return reply.status(404).send({ error: 'assistant_unavailable' })
 }
 
-/** The caller as the tools run them: their own email and wallets are theirs to see (redaction keeps them). */
+/** The caller as the tools run them (assistant/context.ts, shared with the MCP server). */
 async function toolCtx(app: FastifyInstance, request: FastifyRequest, conversationId: string | null): Promise<ToolCtx> {
-  const [me] = await db.select({ email: users.email }).from(users).where(eq(users.id, request.user.id))
-  const wallets = await db.select({ w: userAuthMethods.identifier }).from(userAuthMethods)
-    .where(and(eq(userAuthMethods.userId, request.user.id), eq(userAuthMethods.type, 'wallet')))
   let walletRefs: string[] = []
   if (conversationId) {
     const [conv] = await db.select({ refs: assistantConversations.walletRefs }).from(assistantConversations)
       .where(and(eq(assistantConversations.id, conversationId), eq(assistantConversations.userId, request.user.id)))
     walletRefs = conv?.refs ?? []
   }
-  return { app, request, user: request.user, self: { email: me?.email ?? request.user.email ?? null, wallets: wallets.map((r) => r.w) }, walletRefs }
+  return callerCtx(app, request, walletRefs)
 }
 
 const str = (v: unknown, max: number) => (typeof v === 'string' && v.length <= max ? v : undefined)
