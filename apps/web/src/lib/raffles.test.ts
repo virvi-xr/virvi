@@ -185,3 +185,16 @@ describe('scheduled opening', () => {
     expect(scheduleLine({ ...draft, status: 'open', opensAt: '2026-11-23T18:30:00.000Z' }, fmt)).toBeNull()
   })
 })
+
+describe('my raffle entries (LIV-55)', () => {
+  it('says where each entry stands', async () => {
+    const { myEntryStatus, WITHDRAW_PROMPT } = await import('./raffles')
+    expect(myEntryStatus({ status: 'drawn', won: true })).toBe('You won')
+    expect(myEntryStatus({ status: 'closed', won: true })).toBe('You won')
+    expect(myEntryStatus({ status: 'open', won: false })).toBe('Entered: not drawn yet')
+    expect(myEntryStatus({ status: 'drawn', won: false })).toBe('Drawn: not picked this time')
+    expect(myEntryStatus({ status: 'closed', won: false })).toBe('Ended: not picked')
+    expect(myEntryStatus({ status: 'cancelled', won: false })).toBe('Cancelled by the host')
+    expect(WITHDRAW_PROMPT('Friday raffle')).toBe("Withdraw from Friday raffle? Your entry and time in the scene are deleted, and you can't be picked.")
+  })
+})

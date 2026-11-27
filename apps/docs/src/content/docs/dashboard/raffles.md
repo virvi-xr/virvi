@@ -55,7 +55,7 @@ Only visitors who are signed in with a verified wallet can enter, and only from 
 
 > Your display name (or a shortened wallet address if you have no name) will be shown on the raffle wheel to everyone in this scene, and your name and wallet will be shared with the host so they can deliver your prize. You can withdraw until the draw.
 
-They can also read your rules. Names are cleaned up to at most 40 characters. Entrants can withdraw while the raffle is open or drawn, and a withdrawn entry is deleted. A withdrawn winner stays in that draw's record, shows as "Removed entrant" and is left out of later draws.
+They can also read your rules. Names are cleaned up to at most 40 characters. Entrants can withdraw while the raffle is open or drawn, in the scene or on virvi.io under **Settings → Raffle entries**, and a withdrawn entry is deleted. That list also shows entrants every raffle they entered and whether they won, with the prize. A withdrawn winner stays in that draw's record, shows as "Removed entrant" and is left out of later draws.
 
 ## Delivering prizes
 

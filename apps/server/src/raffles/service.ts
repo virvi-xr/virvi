@@ -451,11 +451,15 @@ export async function checkInRaffle(raffleId: string, userId: string, now = new 
 
 /** The user's raffle entries, newest first. */
 export async function myRaffleEntries(userId: string) {
-  const rows = await db.select({ entryId: raffleEntries.id, raffleId: raffles.id, sceneName: scenes.name, raffleName: raffles.name, status: raffles.status, enteredAt: raffleEntries.createdAt })
+  const rows = await db.select({ entryId: raffleEntries.id, raffleId: raffles.id, sceneName: scenes.name, raffleName: raffles.name, prize: raffles.prize, status: raffles.status, enteredAt: raffleEntries.createdAt })
     .from(raffleEntries).innerJoin(raffles, eq(raffleEntries.raffleId, raffles.id)).innerJoin(scenes, eq(raffles.sceneId, scenes.id))
     .where(eq(raffleEntries.userId, userId)).orderBy(desc(raffleEntries.createdAt), desc(raffleEntries.id))
   const won = await wonEntryIds([...new Set(rows.map((r) => r.raffleId))])
-  return rows.map(({ entryId, ...r }) => ({ raffleId: r.raffleId, sceneName: r.sceneName, raffleName: r.raffleName, status: r.status, won: won.has(entryId), enteredAt: r.enteredAt }))
+  // The prize is shown in-world to everyone in the scene; canWithdraw: the raffle still takes withdrawals (settings page)
+  return rows.map(({ entryId, ...r }) => ({
+    raffleId: r.raffleId, sceneName: r.sceneName, raffleName: r.raffleName, prize: r.prize, status: r.status, won: won.has(entryId),
+    canWithdraw: ACTIVE.includes(r.status), enteredAt: r.enteredAt,
+  }))
 }
 
 // ── raffle_changed, at most once every 2 s per scene ─────────────────────────

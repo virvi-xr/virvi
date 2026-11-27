@@ -297,9 +297,27 @@ describe('raffle visitor routes (LIV-55)', () => {
     const user = (await db.query.users.findFirst({ where: (u, { eq }) => eq(u.id, v.user.id) }))!
     const res = await call('GET', '/api/me/raffle-entries', tokenFor({ ...(user as any), wallet: v.wallet }))
     expect(res.statusCode, res.body).toBe(200)
-    expect(res.json().entries).toEqual([{ raffleId: r.id, sceneName: 'Venue Scene', raffleName: 'Friday raffle', status: 'drawn', won: true, enteredAt: entry.createdAt.toISOString() }])
+    expect(res.json().entries).toEqual([{ raffleId: r.id, sceneName: 'Venue Scene', raffleName: 'Friday raffle', prize: r.prize, status: 'drawn', won: true, canWithdraw: true, enteredAt: entry.createdAt.toISOString() }])
     // Someone else's list is empty; a scene pass is refused (normal sign-in only)
     expect((await call('GET', '/api/me/raffle-entries', tokenFor(host))).json().entries).toEqual([])
     expect((await call('GET', '/api/me/raffle-entries', v.token)).statusCode).toBe(403)
+  })
+
+  it('from the dashboard, a visitor withdraws their own entry while the raffle runs, and not once it has ended (LIV-55)', async () => {
+    const r = await raffle()
+    const v = await visitorPass()
+    await enter(r.id, v.token)
+    const user = (await db.query.users.findFirst({ where: (u, { eq }) => eq(u.id, v.user.id) }))!
+    const session = tokenFor({ ...(user as any), wallet: v.wallet })
+    expect((await call('GET', '/api/me/raffle-entries', session)).json().entries[0]).toMatchObject({ status: 'open', won: false, canWithdraw: true })
+    // Another account has no entry to withdraw
+    expect((await call('DELETE', `/api/raffles/${r.id}/entry`, tokenFor(host))).statusCode).toBe(404)
+    expect((await call('DELETE', `/api/raffles/${r.id}/entry`, session)).statusCode).toBe(204)
+    expect((await call('GET', '/api/me/raffle-entries', session)).json().entries).toEqual([])
+
+    await enter(r.id, v.token)
+    await db.update(raffles).set({ status: 'closed' }).where(eq(raffles.id, r.id))
+    expect((await call('GET', '/api/me/raffle-entries', session)).json().entries[0]).toMatchObject({ status: 'closed', canWithdraw: false })
+    expect((await call('DELETE', `/api/raffles/${r.id}/entry`, session)).statusCode).toBe(409)
   })
 })

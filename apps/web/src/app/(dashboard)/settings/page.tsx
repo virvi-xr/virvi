@@ -11,6 +11,7 @@ import { useDialog } from '@/lib/use-dialog'
 import { LinkedWallets } from './LinkedWallets'
 import { EmailVerification } from './EmailVerification'
 import { MoveBeats } from './MoveBeats'
+import { RaffleEntries } from './RaffleEntries'
 import { LinkedHyperfySessions } from './LinkedHyperfySessions'
 import { PairedHeadsets } from './PairedHeadsets'
 import { Badge, PageHeader, PlatformBadge, Skeleton, tableHeadBand, TableScroll } from '@/components/ui'
@@ -339,6 +340,8 @@ export default function SettingsPage() {
           <LinkedWallets />
 
           <MoveBeats />
+
+          <RaffleEntries />
 
           <PrivacySetting />
 

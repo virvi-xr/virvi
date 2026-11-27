@@ -195,3 +195,30 @@ export function minutesPresent(seconds: number): string {
   const m = Math.round(seconds / 6) / 10
   return String(m)
 }
+
+/** One of the visitor's own entries, from GET /api/me/raffle-entries (LIV-55). */
+export interface MyRaffleEntry {
+  raffleId: string
+  sceneName: string
+  raffleName: string
+  prize: string
+  status: RaffleStatus
+  won: boolean
+  canWithdraw: boolean
+  enteredAt: string
+}
+
+/** What the visitor's own entry stands at: won, waiting on the draw, or over. */
+export function myEntryStatus(e: Pick<MyRaffleEntry, 'status' | 'won'>): string {
+  if (e.won) return 'You won'
+  switch (e.status) {
+    case 'draft':
+    case 'open': return 'Entered: not drawn yet'
+    case 'drawn': return 'Drawn: not picked this time'
+    case 'closed': return 'Ended: not picked'
+    case 'cancelled': return 'Cancelled by the host'
+  }
+}
+
+export const WITHDRAW_PROMPT = (name: string) => `Withdraw from ${name}? Your entry and time in the scene are deleted, and you can't be picked.`
+

@@ -34,7 +34,7 @@ import { overlayDemoApi, type DemoApi } from './demo/store'
 import type { DeletePlan, DeletedScene, DeleteResult, Removal, RemovalSignRequest } from './scene-delete'
 import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, HeatmapData, LayoutItem, LiveData, TimeseriesPoint } from './analytics/types'
 import { ratingsQuery, type AdminLesson, type AdminRating, type Digest, type KindDefaults, type LessonsList, type ratingBody, type ReviewFilters, type StudioRevision } from './studio-ratings'
-import type { HostRaffle, RaffleDetail, RaffleSnapshotRow, RaffleWinner, drawBody, editBody, raffleBody } from './raffles'
+import type { HostRaffle, MyRaffleEntry, RaffleDetail, RaffleSnapshotRow, RaffleWinner, drawBody, editBody, raffleBody } from './raffles'
 import type { AdminBeatsOverview } from './admin-beats'
 import type { TermsStatus } from './terms'
 import { PRIVACY_NOTICE_VERSION, type PrivacyDecision, type PrivacyDecisionVia, type PrivacyStatus } from '@virvixr/shared'
@@ -463,6 +463,8 @@ function useRealApi() {
     },
 
     // Raffles (LIV-55)
+    myRaffleEntries: () => apiFetch<{ entries: MyRaffleEntry[] }>('/api/me/raffle-entries'),
+    withdrawRaffleEntry: (raffleId: string) => apiFetch<void>(`/api/raffles/${raffleId}/entry`, { method: 'DELETE', userAction: true }),
     listRaffles: (sceneId: string) => apiFetch<{ raffles: HostRaffle[] }>(`/api/scenes/${sceneId}/raffles`),
     createRaffle: (sceneId: string, body: ReturnType<typeof raffleBody>) =>
       apiFetch<{ raffle: HostRaffle }>(`/api/scenes/${sceneId}/raffles`, { method: 'POST', userAction: true, body: JSON.stringify(body) }),

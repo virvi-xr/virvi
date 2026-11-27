@@ -111,7 +111,7 @@ export default function PrivacyPage() {
             Check-ins stop when you withdraw or the raffle ends, and only your total time present and when you were last seen are kept.
           </li>
           <li>
-            <strong>Withdrawing:</strong> you can withdraw while the raffle is open or drawn, which deletes your entry. Past draw records keep only an anonymous
+            <strong>Withdrawing:</strong> you can withdraw while the raffle is open or drawn, in the scene or in Settings under Raffle entries (which also lists your entries and wins), and withdrawing deletes your entry. Past draw records keep only an anonymous
             entry id, so they still check out; a withdrawn winner shows there as "Removed entrant" and is left out of later draws.
           </li>
           <li>
