@@ -10,6 +10,8 @@ import type { Exec } from '../studio/quota.js'
  * another; once it is read, the next one starts a new row. Kept 90 days from their last update.
  */
 export type NotificationKind = 'studio_invite' | 'studio_prompts' | 'studio_package_ready' | 'studio_owner' | 'studio_support_note' | 'studio_help'
+  // LIV-30: a scene's Decentraland HUD is behind the latest release; a shared model was taken down, or its appeal decided
+  | 'scene_update' | 'model_taken_down' | 'model_appeal'
 type Data = Record<string, unknown>
 
 export const NOTIFICATION_DAYS = 90
@@ -186,14 +188,15 @@ export async function listNotifications(userId: string, before: Date | null, lim
     .orderBy(desc(notifications.updatedAt), desc(notifications.id)).limit(take + 1)
   const page = rows.slice(0, take)
   const dataOf = (n: typeof page[number]) => n.data as Data
-  const roles = await designsWithRole(userId, [...new Set(page.map((n) => String(dataOf(n).designId)))])
+  const roles = await designsWithRole(userId, [...new Set(page.filter((n) => n.kind.startsWith('studio_')).map((n) => String(dataOf(n).designId)))])
   const open = await openInvites(page.filter((n) => n.kind === 'studio_invite').map((n) => String(dataOf(n).inviteId)), now)
   return {
     items: page.map((n) => ({
       id: n.id, kind: n.kind, data: n.data, createdAt: n.createdAt, updatedAt: n.updatedAt, readAt: n.readAt,
       // An invite is gone only when it is closed and I'm not on the design (an accepted one is closed but not gone)
       // A help request goes to Virvi support, who reach any design: it is never gone
-      gone: n.kind !== 'studio_help' && !roles.has(String(dataOf(n).designId)) && (n.kind !== 'studio_invite' || !open.has(String(dataOf(n).inviteId))),
+      // Only Studio items point at a design; the others (scene updates, moderation) are never gone
+      gone: n.kind.startsWith('studio_') && n.kind !== 'studio_help' && !roles.has(String(dataOf(n).designId)) && (n.kind !== 'studio_invite' || !open.has(String(dataOf(n).inviteId))),
       open: n.kind === 'studio_invite' && open.has(String(dataOf(n).inviteId)),
     })),
     more: rows.length > take,
@@ -217,3 +220,31 @@ export async function markRead(userId: string, id: string, now: Date): Promise<b
 export async function markAllRead(userId: string, now: Date): Promise<void> {
   await db.update(notifications).set({ readAt: now }).where(and(eq(notifications.userId, userId), isNull(notifications.readAt)))
 }
+
+// ── LIV-30: scene updates and moderation ──
+
+/** Whether this user was ever told about `groupKey`, read or not: a one-off notice (a release, a takedown) isn't sent twice. */
+async function everNotified(userId: string, groupKey: string): Promise<boolean> {
+  const [row] = await db.select({ id: notifications.id }).from(notifications).where(and(eq(notifications.userId, userId), eq(notifications.groupKey, groupKey))).limit(1)
+  return !!row
+}
+
+/** Once per scene per release: the scene's Decentraland HUD is behind the latest. */
+export async function notifySceneUpdate(s: { ownerId: string; sceneId: string; sceneName: string; version: string | null; latest: string; virviDeploys: boolean }): Promise<boolean> {
+  const groupKey = `scene_update:${s.sceneId}:${s.latest}`
+  if (await everNotified(s.ownerId, groupKey)) return false
+  await notify(s.ownerId, 'scene_update', { sceneId: s.sceneId, sceneName: s.sceneName, version: s.version, latest: s.latest, virviDeploys: s.virviDeploys }, { groupKey })
+  return true
+}
+
+/** The owner of a shared model hears it was taken down, and why (LIV-34). Never throws. */
+export async function notifyTakedown(ownerId: string | null, asset: { id: string; name: string }, reason: string): Promise<void> {
+  if (!ownerId) return
+  await quietly('takedown', () => notify(ownerId, 'model_taken_down', { assetId: asset.id, assetName: asset.name, reason }))
+}
+
+/** The owner hears how their appeal went (LIV-34). Never throws. */
+export async function notifyAppealDecided(ownerId: string, asset: { id: string; name: string }, decision: 'restored' | 'rejected', response: string | null): Promise<void> {
+  await quietly('appeal', () => notify(ownerId, 'model_appeal', { assetId: asset.id, assetName: asset.name, decision, response }))
+}
+

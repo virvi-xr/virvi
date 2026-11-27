@@ -46,7 +46,7 @@ Open one of your models and press **Share with the community**. Pick a license, 
 
 Anyone signed in can **Report** a model someone shared (a copyright claim, something offensive, private information, a broken file or spam). Virvi support reviews reports and can take a model down: it stops being shared, and its owner can't share it again.
 
-If Virvi takes down your model, you get an email saying why, and the model's page shows the reason. It stays in your library and in scenes that already use it. If you think it's a mistake, choose **Appeal** on the model and tell us why. We email you the outcome. If we restore it, you can share it again. If we turn the appeal down, we say why, and you can appeal again with more information. Every moderation decision is logged.
+If Virvi takes down your model, you get an email and a notice in the dashboard's bell saying why, and the model's page shows the reason. It stays in your library and in scenes that already use it. If you think it's a mistake, choose **Appeal** on the model and tell us why. We email you the outcome. If we restore it, you can share it again. If we turn the appeal down, we say why, and you can appeal again with more information. Every moderation decision is logged.
 
 ## Who can open a file
 

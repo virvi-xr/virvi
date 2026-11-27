@@ -67,3 +67,20 @@ describe('badgeText', () => {
     expect(badgeText(10)).toBe('9+')
   })
 })
+
+describe('scene update and moderation notices (LIV-30)', () => {
+  const base = { gone: false, open: false }
+  it('a scene behind the latest release says how to update', () => {
+    expect(notificationText({ ...base, kind: 'scene_update', data: { sceneId: 's1', sceneName: 'Club', latest: '2.23.0', virviDeploys: true } }))
+      .toEqual({ text: 'Club can update to Virvi 2.23.0. Redeploy it to update.', href: '/scenes/s1' })
+    expect(notificationText({ ...base, kind: 'scene_update', data: { sceneId: 's1', sceneName: 'Club', latest: '2.23.0', virviDeploys: false } }).text)
+      .toBe('Club can update to Virvi 2.23.0. Update @virvixr/dcl in its project and deploy it.')
+  })
+  it('takedowns and appeal outcomes', () => {
+    expect(notificationText({ ...base, kind: 'model_taken_down', data: { assetName: 'Chair', reason: 'Copyright claim' } }))
+      .toEqual({ text: 'Virvi took down your model Chair: Copyright claim. You can appeal.', href: '/assets/' })
+    expect(notificationText({ ...base, kind: 'model_appeal', data: { assetName: 'Chair', decision: 'restored' } }).text).toBe('Your appeal was accepted: Chair can be shared again')
+    expect(notificationText({ ...base, kind: 'model_appeal', data: { assetName: 'Chair', decision: 'rejected', response: 'It breaks the rules.' } }).text)
+      .toBe('Your appeal for Chair was turned down: It breaks the rules.')
+  })
+})

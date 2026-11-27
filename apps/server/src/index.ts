@@ -27,6 +27,7 @@ import { startBeatJobs } from './beats/job.js'
 import { startGiveawayJob } from './giveaways/job.js'
 import { BEAT_JOB_EVERY_MS } from '@virvixr/shared'
 import { startStatusJobs } from './status/checks.js'
+import { startHudNoticeJobs } from './scenes/hud-notices.js'
 
 async function main() {
   // LIV-66: an exception nothing caught is recorded before the process exits, as it always has
@@ -128,6 +129,7 @@ async function main() {
   console.log('[virvi-server] Analytics jobs started')
   startErrorJobs()
   startStatusJobs()
+  startHudNoticeJobs()
   console.log(`[virvi-server] Error reporting: release ${config.release}, Linear filing ${config.linearApiKey && config.linearTeamId ? 'on' : 'off'}`)
   if (config.beats.enabled) {
     startBeatJobs()

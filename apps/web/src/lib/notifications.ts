@@ -9,7 +9,7 @@ const packageWord = (category: string) => (category === 'building' || category.s
  */
 export type NotificationItem = {
   id: string
-  kind: 'studio_invite' | 'studio_prompts' | 'studio_package_ready' | 'studio_owner' | 'studio_support_note' | 'studio_help' | string
+  kind: 'studio_invite' | 'studio_prompts' | 'studio_package_ready' | 'studio_owner' | 'studio_support_note' | 'studio_help' | 'scene_update' | 'model_taken_down' | 'model_appeal' | string
   data: Record<string, unknown>
   createdAt: string
   updatedAt: string
@@ -46,6 +46,21 @@ export function inviteActionable(item: Pick<NotificationItem, 'kind' | 'gone' | 
 /** A notification's line and where clicking it goes (null when there is nowhere to go). */
 export function notificationText(item: Pick<NotificationItem, 'kind' | 'data' | 'gone' | 'open'>): { text: string; href: string | null } {
   const d = item.data
+  // LIV-30: scene updates and moderation point at a scene or a model, not a design
+  switch (item.kind) {
+    case 'scene_update': {
+      const scene = str(d.sceneName, 'Your scene')
+      const sceneId = typeof d.sceneId === 'string' && d.sceneId ? d.sceneId : null
+      const how = d.virviDeploys ? 'Redeploy it to update.' : 'Update @virvixr/dcl in its project and deploy it.'
+      return { text: `${scene} can update to Virvi ${str(d.latest, 'the latest release')}. ${how}`, href: sceneId ? `/scenes/${sceneId}` : '/scenes' }
+    }
+    case 'model_taken_down':
+      return { text: `Virvi took down your model ${str(d.assetName, 'a model')}: ${str(d.reason, 'see the model for why')}. You can appeal.`, href: '/assets/' }
+    case 'model_appeal':
+      return d.decision === 'restored'
+        ? { text: `Your appeal was accepted: ${str(d.assetName, 'your model')} can be shared again`, href: '/assets/' }
+        : { text: `Your appeal for ${str(d.assetName, 'your model')} was turned down${typeof d.response === 'string' && d.response ? `: ${d.response}` : ''}`, href: '/assets/' }
+  }
   const design = str(d.designName, 'a design')
   const designId = typeof d.designId === 'string' && d.designId ? d.designId : null
   if (item.gone) return { text: `${design} is no longer shared with you`, href: null }

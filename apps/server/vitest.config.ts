@@ -40,6 +40,7 @@ export default defineConfig({
       ANALYTICS_JOBS: 'false',
       ERROR_JOBS: 'false',
       STATUS_CHECKS: 'false',
+      HUD_NOTICES: 'false',
       ERROR_FLUSH_MS: '0',
       // Never the real catalyst from the BEAT profile check: tests stub it, and one that slipped through fails fast (open)
       BEAT_PROFILE_CATALYST_URL: 'http://127.0.0.1:9',

@@ -13,7 +13,7 @@ The management HUD and all scene-changing messages now require a signed-in, veri
 
 ## Update notice
 
-When a newer `@virvixr/dcl` is out than the one your scene runs (2.22.0 or later), hosts, co-hosts and editors see a line under the HUD's tabs, for example "Virvi 2.23.0 is out (this scene runs 2.22.0). Redeploy it from the Virvi dashboard to update." If you deploy the scene from your own project, it says to run `npm install @virvixr/dcl@latest` in the scene's folder and deploy it instead. Visitors and viewers don't see it. The scene's page in the dashboard shows the same warning, with what's new: see the [changelog](/docs/sdk/decentraland/changelog/).
+When a newer `@virvixr/dcl` is out than the one your scene runs (2.22.0 or later), hosts, co-hosts and editors see a line under the HUD's tabs, for example "Virvi 2.23.0 is out (this scene runs 2.22.0). Redeploy it from the Virvi dashboard to update." If you deploy the scene from your own project, it says to run `npm install @virvixr/dcl@latest` in the scene's folder and deploy it instead. Visitors and viewers don't see it. The scene's page in the dashboard shows the same warning, with what's new: see the [changelog](/docs/sdk/decentraland/changelog/). The scene's host also gets one notice in the dashboard's bell for each new release, if visitors have used the scene in the last 30 days.
 
 ## Moving things in-world
 

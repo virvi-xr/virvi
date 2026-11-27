@@ -3,6 +3,7 @@ import { db } from '../db/connection.js'
 import { moderationActions, users } from '../db/schema.js'
 import { config } from '../config.js'
 import { sendEmail } from '../services/email.js'
+import { notifyTakedown } from '../notifications/notifications.js'
 
 /** The moderation log and owner emails (LIV-34), apart from appeals so sharing.ts can use them without a cycle. */
 
@@ -25,6 +26,7 @@ export const modelsLink = () => `${config.publicUrl}/assets/`
 
 /** Tells the owner their model was taken down, why, and how to appeal. */
 export async function noticeTakedown(asset: { id: string; name: string; uploadedBy: string | null }, reason: string) {
+  await notifyTakedown(asset.uploadedBy, asset, reason)
   await emailOwner(asset.uploadedBy, `Virvi took down your model ${oneLine(asset.name)}`, `
     <p>Virvi took down your 3D model <b>${escapeHtml(asset.name)}</b>, so other people can no longer find or add it.</p>
     <p>Why: ${escapeHtml(reason)}</p>

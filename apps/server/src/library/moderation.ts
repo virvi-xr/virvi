@@ -5,6 +5,7 @@ import { config } from '../config.js'
 import { sendEmail } from '../services/email.js'
 import { ShareError } from './sharing.js'
 import { emailOwner, escapeHtml, logModeration, modelsLink, oneLine } from './moderation-log.js'
+import { notifyAppealDecided } from '../notifications/notifications.js'
 export { logModeration, noticeTakedown } from './moderation-log.js'
 
 /**
@@ -62,6 +63,7 @@ export async function decideAppeal(appealId: string, decision: 'restored' | 'rej
   })
   if (!result) throw new ShareError(404, 'not_found', 'Appeal not found, or already decided')
   const name = result.asset?.name ?? 'your model'
+  await notifyAppealDecided(result.appeal.userId, { id: result.appeal.assetItemId, name }, decision, text)
   await emailOwner(result.appeal.userId, decision === 'restored' ? `Your model ${oneLine(name)} is back` : `About your appeal for ${oneLine(name)}`,
     decision === 'restored'
       ? `<p>We looked again at <b>${escapeHtml(name)}</b> and lifted the takedown. You can share it again from your <a href="${modelsLink()}">3D Models page</a>.</p>${text ? `<p>${escapeHtml(text)}</p>` : ''}`

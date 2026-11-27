@@ -664,6 +664,8 @@ export const config = {
   errorJobsEnabled: env('ERROR_JOBS') !== 'false',
   // The status page's once-a-minute checks (LIV-40); disabled in tests
   statusChecksEnabled: env('STATUS_CHECKS') !== 'false',
+  // Telling scene owners in the bell when their scene's HUD is behind (LIV-30); disabled in tests
+  hudNoticesEnabled: env('HUD_NOTICES') !== 'false',
   // Filing to Linear is off until both are set. Env only: never logged, never returned
   linearApiKey: env('LINEAR_API_KEY') || null,
   linearTeamId: env('LINEAR_TEAM_ID') || null,
