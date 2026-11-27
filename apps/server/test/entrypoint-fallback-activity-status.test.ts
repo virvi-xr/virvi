@@ -80,4 +80,15 @@ describe('entrypoint schema fallback: scene activity and status page', () => {
       await runFallback(statements)
     })
   })
+
+  it('Sound plays: adds the sound column to an older rollup table, as schema.ts has it', async () => {
+    const statements = fallbackBlocks('Sound plays')
+    await scratch(async () => {
+      await db.execute(sql.raw(`CREATE TABLE ${SCHEMA}.analytics_rollup_hourly (LIKE public.analytics_rollup_hourly INCLUDING ALL)`))
+      await db.execute(sql.raw(`ALTER TABLE ${SCHEMA}.analytics_rollup_hourly DROP COLUMN sound`))
+      await runFallback(statements)
+      expect(await columns(SCHEMA, 'analytics_rollup_hourly')).toEqual(await columns('public', 'analytics_rollup_hourly'))
+      await runFallback(statements)
+    })
+  })
 })

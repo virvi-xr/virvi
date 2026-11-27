@@ -110,6 +110,8 @@ export async function rollupHour(sceneId: string, hour: Date): Promise<void> {
   )
   const video: Record<string, { plays: number; watchSec: number }> = {}
   for (const v of videoRows) video[v.target] = { plays: Number(v.plays), watchSec: Number(v.watch) }
+  const sound = await jsonCounts(sql`
+    select data->>'target' as k, count(*)::int as n from analytics_events where ${evIn} and type = 'sound' and data->>'state' = 'play' group by 1`)
 
   const values = {
     sessions: Number(base.sessions),
@@ -123,6 +125,7 @@ export async function rollupHour(sceneId: string, hour: Date): Promise<void> {
     dwellP90Sec: Number(base.dwell_p90),
     interactions,
     video,
+    sound,
     emotes,
     countries,
     platforms,

@@ -142,6 +142,8 @@ export interface AnalyticsProbe {
   isInsideScene(position: Vec3): boolean;
   pollInteractions(): Array<{ kind: 'click' | 'hover'; target: string }>;
   pollVideoEvents(): Array<{ target: string; state: 'play' | 'pause' | 'end' | 'error' }>;
+  /** Optional (2.23.0+): a sound starting or stopping, by the sound's name. Probes without it record no sound plays. */
+  pollSoundEvents?(): Array<{ target: string; state: 'play' | 'stop' }>;
   pollEmotes(): string[];
   showNotice(text: string): void;
 }

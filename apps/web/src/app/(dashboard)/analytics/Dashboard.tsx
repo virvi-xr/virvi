@@ -326,8 +326,13 @@ export function Dashboard({ location, showAllLink, onWalletVisibility }: {
       </Section>
 
       {/* 6b. Screens: plays and watch time per video screen (LIV-38) */}
-      <Section title="Screens" state={sumState} onRetry={retrySummary}>
-        {s && <Screens rows={screenRows(s.videos)} />}
+      <Section title="Screens and sounds" state={sumState} onRetry={retrySummary}>
+        {s && (
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+            <div className="lg:col-span-2"><Screens rows={screenRows(s.videos)} /></div>
+            <BarList title="Sounds played" counts={s.sounds ?? {}} />
+          </div>
+        )}
       </Section>
 
       {/* 7. Sessions (most recent first; not range-bound) */}

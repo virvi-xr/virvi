@@ -9,13 +9,14 @@ function rig(opts: { insideAt?: (x: number) => boolean; gate?: { sending: boolea
     position: { x: 8, y: 0, z: 8 },
     headingDeg: 92,
   }
-  const pending = { interactions: [] as any[], video: [] as any[], emotes: [] as string[] }
+  const pending = { interactions: [] as any[], video: [] as any[], sound: [] as any[], emotes: [] as string[] }
   const probe: AnalyticsProbe = {
     getPlayerPose: () => pose,
     getCameraMode: () => 'third',
     isInsideScene: (p) => (opts.insideAt ? opts.insideAt(p.x) : p.x >= 0 && p.x < 16),
     pollInteractions: () => pending.interactions.splice(0),
     pollVideoEvents: () => pending.video.splice(0),
+    pollSoundEvents: () => pending.sound.splice(0),
     pollEmotes: () => pending.emotes.splice(0),
     showNotice: vi.fn(),
   }
@@ -131,6 +132,26 @@ describe('Collector', () => {
     await r.step(100)
     const ints = r.events().filter((e) => e.type === 'interact')
     expect(ints.map((e) => e.data!.kind)).toEqual(['hover', 'click'])
+  })
+
+  it('records sounds starting and stopping (LIV-38)', async () => {
+    const r = rig()
+    await r.step(0)
+    r.pending.sound.push({ target: 'Bell', state: 'play' }, { target: 'Bell', state: 'stop' })
+    await r.step(100)
+    await r.step(100)
+    expect(r.events().filter((e) => e.type === 'sound').map((e) => e.data)).toEqual([{ target: 'Bell', state: 'play' }, { target: 'Bell', state: 'stop' }])
+  })
+
+  it('a probe without sound events (an older or other platform) still works', async () => {
+    const r = rig()
+    delete (r.probe as { pollSoundEvents?: unknown }).pollSoundEvents
+    await r.step(0)
+    r.pending.video.push({ target: 'screen', state: 'play' })
+    await r.step(100)
+    await r.step(100)
+    expect(r.types()).toContain('video')
+    expect(r.types()).not.toContain('sound')
   })
 
   it('records video and emotes, and custom events via track()', async () => {

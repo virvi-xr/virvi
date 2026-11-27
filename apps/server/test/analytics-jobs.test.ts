@@ -49,6 +49,9 @@ describe('analytics jobs', () => {
       { sceneId: s.id, sessionId: a.id, seq: 4, visitorHash: 'A', type: 'emote', occurredAt: at(3), data: { emote: 'wave' } },
       { sceneId: s.id, sessionId: a.id, seq: 5, visitorHash: 'A', type: 'video', occurredAt: at(4), data: { target: 'screen', state: 'play' } },
       { sceneId: s.id, sessionId: a.id, seq: 6, visitorHash: 'A', type: 'video', occurredAt: at(6), data: { target: 'screen', state: 'pause' } },
+      { sceneId: s.id, sessionId: a.id, seq: 7, visitorHash: 'A', type: 'sound', occurredAt: at(6), data: { target: 'Bell', state: 'play' } },
+      { sceneId: s.id, sessionId: a.id, seq: 8, visitorHash: 'A', type: 'sound', occurredAt: at(7), data: { target: 'Bell', state: 'stop' } },
+      { sceneId: s.id, sessionId: a.id, seq: 9, visitorHash: 'A', type: 'sound', occurredAt: at(8), data: { target: 'Bell', state: 'play' } },
     ])
     await rollupHour(s.id, H)
     const [r] = await db.select().from(analyticsRollupHourly).where(eq(analyticsRollupHourly.sceneId, s.id))
@@ -57,6 +60,7 @@ describe('analytics jobs', () => {
     expect(r.interactions).toEqual({ door: 2 })
     expect(r.emotes).toEqual({ wave: 1 })
     expect(r.video).toEqual({ screen: { plays: 1, watchSec: 120 } })
+    expect(r.sound).toEqual({ Bell: 2 }) // plays started; stops aren't counted
     expect(r.countries).toEqual({ DE: 2, US: 1 })
     expect(r.cameraModes).toEqual({ third: 1, first: 1 })
   })

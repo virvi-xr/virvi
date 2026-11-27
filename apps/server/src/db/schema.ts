@@ -493,6 +493,8 @@ export const analyticsRollupHourly = pgTable('analytics_rollup_hourly', {
   dwellP90Sec: integer('dwell_p90_sec').notNull().default(0),
   interactions: jsonb('interactions').notNull().default({}),
   video: jsonb('video').notNull().default({}),
+  /** Plays started per sound, by its name (LIV-38; @virvixr/dcl 2.23.0+) */
+  sound: jsonb('sound').notNull().default({}),
   emotes: jsonb('emotes').notNull().default({}),
   countries: jsonb('countries').notNull().default({}),
   platforms: jsonb('platforms').notNull().default({}),

@@ -11,6 +11,10 @@ When a scene is behind, its page in the dashboard says which version it runs, li
 
 No release so far has needed changes to scene code, so none is marked as breaking.
 
+## 2.23.0 — 2026-11-27
+
+- **Sound plays:** the scene records when a sound starts playing, by the sound's name, for the scene's analytics. The Analytics page lists each sound's plays under Screens and sounds. Visitors who decline analytics aren't recorded, as before.
+
 ## 2.22.0 — 2026-11-25
 
 - **Update notice:** when a newer release is out, hosts, co-hosts and editors see a line under the HUD's tabs saying so, with how to update. Visitors and viewers don't see it.

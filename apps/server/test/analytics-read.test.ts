@@ -57,10 +57,11 @@ describe('analytics read API', () => {
     h.setUTCMinutes(0, 0, 0)
     await db.insert(analyticsRollupHourly).values([
       { sceneId: s.id, hour: h, sessions: 1, uniqueVisitors: 1, peakConcurrency: 1, dwellAvgSec: 10, video: { 'Main Screen': { plays: 2, watchSec: 300 }, 'entity:12': { plays: 1, watchSec: 5 } } },
-      { sceneId: s.id, hour: new Date(h.getTime() + 3600_000), sessions: 1, uniqueVisitors: 1, peakConcurrency: 1, dwellAvgSec: 10, video: { 'Main Screen': { plays: 1, watchSec: 60 }, 'entity:13': { plays: 2, watchSec: 10 } } },
+      { sceneId: s.id, hour: new Date(h.getTime() + 3600_000), sessions: 1, uniqueVisitors: 1, peakConcurrency: 1, dwellAvgSec: 10, video: { 'Main Screen': { plays: 1, watchSec: 60 }, 'entity:13': { plays: 2, watchSec: 10 } }, sound: { Bell: 3 } },
     ])
     const res = (await get(owner, `/api/analytics/locations/${s.id}/summary`)).json()
     expect(res.videos).toEqual({ 'Main Screen': { plays: 3, watchSec: 360 }, 'Unnamed objects (older data)': { plays: 3, watchSec: 15 } })
+    expect(res.sounds).toEqual({ Bell: 3 })
   })
 
   it('summary labels emotes and folds pre-naming entity:<n> targets into one row', async () => {

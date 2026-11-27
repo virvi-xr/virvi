@@ -702,6 +702,11 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE INDEX IF NOT EXISTS moderation_appeals_status_idx ON moderation_appeals (status, created_at)\`;
         console.log('[virvi-server] moderation tables ensured');
       } catch(e) { console.log('[virvi-server] moderation tables:', e.message); }
+      // Sound plays (LIV-38); matches analyticsRollupHourly.sound
+      try {
+        await sql\`ALTER TABLE analytics_rollup_hourly ADD COLUMN IF NOT EXISTS sound JSONB NOT NULL DEFAULT '{}'::jsonb\`;
+        console.log('[virvi-server] rollup sound column ensured');
+      } catch(e) { console.log('[virvi-server] rollup sound column:', e.message); }
       await sql.end();
     })();
   " 2>&1 || echo "[virvi-server] SQL fallback had errors"

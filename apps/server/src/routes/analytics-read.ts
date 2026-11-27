@@ -207,6 +207,7 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
       countries: mergeCounts(rows.map((x) => x.countries)),
       platforms: mergeCounts(rows.map((x) => x.platforms)),
       videos: mergeVideo(rows.map((x) => x.video)),
+      sounds: mergeLegacyEntityTargets(mergeCounts(rows.map((x) => x.sound))),
     })
   })
 

@@ -71,7 +71,7 @@ export const PARCEL_RE = /^-?\d{1,3},-?\d{1,3}$/
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const WORLD_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i
 const TYPES = new Set<string>(ANALYTICS_EVENT_TYPES)
-const PRIORITY = new Set<AnalyticsEventType>(['session.start', 'session.leave', 'video', 'emote', 'giveaway', 'custom'])
+const PRIORITY = new Set<AnalyticsEventType>(['session.start', 'session.leave', 'video', 'sound', 'emote', 'giveaway', 'custom'])
 
 export function isHighPriority(e: { type: AnalyticsEventType; data?: Record<string, unknown> }): boolean {
   return PRIORITY.has(e.type) || (e.type === 'interact' && e.data?.kind === 'click')

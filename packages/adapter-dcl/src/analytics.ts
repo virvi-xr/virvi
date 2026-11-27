@@ -13,6 +13,7 @@ import {
   VideoEvent,
   videoEventsSystem,
   VideoState,
+  AudioSource,
   AvatarEmoteCommand,
   TextShape,
   Billboard,
@@ -22,6 +23,7 @@ import { AnalyticsConsent, Collector, createTransport, resolveApiUrl } from '@vi
 import { PARCEL_RE, type AnalyticsProbe, type AnalyticsSceneRef, type Vec3, DCL_HUD_VERSION } from '@virvixr/shared'
 import { DclAdapter } from './DclAdapter'
 import { resolveTargetLabel } from './target-label'
+import { soundTransitions } from './sound-events'
 import { mountConsentOverlay } from './consent/ConsentOverlay.js'
 import { consentRequestFor } from './consent/request.js'
 
@@ -51,6 +53,8 @@ export class DclAnalyticsProbe implements AnalyticsProbe {
   private lastHoverTs = -1
   private videoStates = new Map<Entity, VideoState>()
   private lastVideoScan = 0
+  private soundStates = new Map<Entity, boolean>()
+  private lastSoundScan = 0
   private lastEmoteTs = -1
 
   constructor(scene: { baseParcel?: string; parcels?: string[] }) {
@@ -93,6 +97,16 @@ export class DclAnalyticsProbe implements AnalyticsProbe {
       if (entity !== undefined) out.push({ kind: 'hover', target: targetName(entity) })
     }
     return out
+  }
+
+  /** A sound starting or stopping (its AudioSource's `playing`), scanned at most 4 times a second (LIV-38). */
+  pollSoundEvents(): Array<{ target: string; state: 'play' | 'stop' }> {
+    const now = Date.now()
+    if (now - this.lastSoundScan < 250) return []
+    this.lastSoundScan = now
+    const current: Array<[Entity, boolean]> = []
+    for (const [entity, audio] of engine.getEntitiesWith(AudioSource)) current.push([entity, !!audio.playing])
+    return soundTransitions(this.soundStates, current).map((t) => ({ target: targetName(t.key as number), state: t.state }))
   }
 
   pollVideoEvents(): Array<{ target: string; state: 'play' | 'pause' | 'end' | 'error' }> {

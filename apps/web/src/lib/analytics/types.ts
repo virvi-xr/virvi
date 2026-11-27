@@ -10,6 +10,8 @@ export interface AnalyticsSummary {
   interactions: Record<string, number>; emotes: Record<string, number>; emoteLabels: Record<string, string>; countries: Record<string, number>; platforms: Record<string, number>
   /** Per screen (its name): plays started and seconds watched. Older servers leave it out. */
   videos?: Record<string, { plays: number; watchSec: number }>
+  /** Per sound (its name): plays started (@virvixr/dcl 2.23.0+). Older servers leave it out. */
+  sounds?: Record<string, number>
 }
 export interface TimeseriesPoint { t: string; sessions: number; uniqueVisitors: number; peakConcurrency: number; dwellAvgSec: number }
 /** y is as the platform reports it (Decentraland: about 0.9 m above the feet); older servers leave it out. */

@@ -143,11 +143,13 @@ export class Collector {
         this.emit('interact', { kind: i.kind, target: i.target })
       }
       for (const v of probe.pollVideoEvents()) this.emit('video', { target: v.target, state: v.state })
+      for (const a of probe.pollSoundEvents?.() ?? []) this.emit('sound', { target: a.target, state: a.state })
       for (const e of probe.pollEmotes()) this.emit('emote', { emote: e })
     } else {
       // Drain probe buffers so stale events aren't attributed later.
       probe.pollInteractions()
       probe.pollVideoEvents()
+      probe.pollSoundEvents?.()
       probe.pollEmotes()
     }
 

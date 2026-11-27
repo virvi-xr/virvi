@@ -4,6 +4,7 @@
  * that's behind is missing.
  */
 export const DCL_CHANGELOG: readonly { version: string; highlights: readonly string[] }[] = [
+  { version: '2.23.0', highlights: ['Sound plays'] },
   { version: '2.22.0', highlights: ['Update notice'] },
   { version: '2.21.1', highlights: ['Version reporting'] },
   { version: '2.21.0', highlights: ['BEAT auto-claim', 'New consent text'] },
