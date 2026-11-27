@@ -15,6 +15,17 @@ export function lastSeenLabel(iso: string | null, now: Date): string {
   return `Last seen ${then.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}`
 }
 
+/**
+ * LIV-33: what a self-run world's card says about its Virvi app. `current` goes after the key and last-seen line;
+ * `behind` is a warning to download the app again. Both null until the world has connected.
+ */
+export function appVersionNote(app: { version: string | null; latest: string; behind: boolean } | null | undefined): { current: string | null; behind: string | null } {
+  if (!app) return { current: null, behind: null }
+  if (!app.behind) return { current: app.version ? `Virvi app ${app.version}` : null, behind: null }
+  const runs = app.version ? `This world runs Virvi app ${app.version}; ${app.latest} is out.` : 'This world runs an older Virvi app.'
+  return { current: null, behind: `${runs} Download the app again and drag it into the world to replace the old one.` }
+}
+
 export function setupSteps(feedUrl: string): string[] {
   return [
     'Download the Virvi app and drag virvi.hyp into your Hyperfy world.',

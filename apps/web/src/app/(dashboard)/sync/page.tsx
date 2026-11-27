@@ -2,7 +2,7 @@
 import { destinationHistory } from '@/lib/deploy'
 import { useApi, type DclDeployment, type DclDestination } from '@/lib/api'
 import { API_URL } from '@/lib/config'
-import { destroyWorldPrompt, hyperfyErrorMessage, lastSeenLabel, noSlotsLine, removeWorldPrompt, setupSteps, shortDate, slotLine, worldStatusLabel } from '@/lib/hyperfy'
+import { appVersionNote, destroyWorldPrompt, hyperfyErrorMessage, lastSeenLabel, noSlotsLine, removeWorldPrompt, setupSteps, shortDate, slotLine, worldStatusLabel } from '@/lib/hyperfy'
 import type { HyperfyWorldSummary } from '@virvixr/shared'
 import { useAuth } from '@/lib/auth'
 import Link from 'next/link'
@@ -312,7 +312,13 @@ function HyperfyWorlds({ sceneId }: { sceneId: string }) {
             <div key={w.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-800 bg-gray-900 px-4 py-3">
               <div className="min-w-0">
                 <p className="truncate font-medium">{w.name}</p>
-                <p className="text-xs text-gray-500">Key {w.keyPrefix}… · {lastSeenLabel(w.lastSeenAt, now)}</p>
+                <p className="text-xs text-gray-500">Key {w.keyPrefix}… · {lastSeenLabel(w.lastSeenAt, now)}{appVersionNote(w.app).current && ` · ${appVersionNote(w.app).current}`}</p>
+                {appVersionNote(w.app).behind && (
+                  <p className="mt-1 text-xs text-amber-300">
+                    {appVersionNote(w.app).behind}{' '}
+                    <a href={`${API_URL}/api/hyperfy/app.hyp`} className="text-blue-400 underline hover:text-blue-300">Download Virvi app (.hyp)</a>
+                  </p>
+                )}
               </div>
               <div className="flex gap-3 text-sm">
                 <ConfirmAction disabled={busy} danger={false} confirmLabel="New key" prompt={rotatePrompt(w)} onConfirm={() => rotate(w)} className={actionClass}>New key</ConfirmAction>

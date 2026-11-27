@@ -1,4 +1,4 @@
-import { HYPERFY_FEED, type HyperfyFeedResponse } from '@virvixr/shared'
+import { HYPERFY_APP_VERSION, HYPERFY_FEED, type HyperfyFeedResponse } from '@virvixr/shared'
 
 /** Hyperfy's script fetch: resolves undefined (instead of rejecting) when the request fails. */
 export type ScriptFetch = (
@@ -50,7 +50,13 @@ export class FeedPoller {
     let body: unknown
     try {
       res = await fetch(`${feedUrl}/api/hyperfy/feed?since=${encodeURIComponent(this.version)}`, {
-        headers: { Authorization: `Bearer ${worldKey}`, 'X-Virvi-App-Version': String(HYPERFY_FEED.version) },
+        headers: {
+          Authorization: `Bearer ${worldKey}`,
+          'X-Virvi-App-Version': String(HYPERFY_FEED.version),
+          // The app's release, so the dashboard can tell an older .hyp to download again (LIV-33)
+          // (HUD_VERSION_HEADER, spelled out: the bundle's slice of @virvixr/shared leaves hud-protocol out)
+          'x-virvi-hud-version': HYPERFY_APP_VERSION,
+        },
       })
       if (res?.ok) body = await res.json()
     } catch {

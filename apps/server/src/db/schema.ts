@@ -1231,6 +1231,8 @@ export const hyperfyWorlds = pgTable('hyperfy_worlds', {
   // SHA-256 of VIRVI_WORLD_SECRET (hosted worlds only): proves a vouch comes from the world's own server. Never rotated with the key.
   worldSecretHash: text('world_secret_hash'),
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+  // The newest Virvi app release its feed polls sent (LIV-33); null for apps from before releases were numbered
+  appVersion: text('app_version'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   // Hosted (Fly) worlds only; self-run rows leave these null and stay 'running'
   slug: text('slug'),

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { HyperfyWorldSummary } from '@virvixr/shared'
-import { lastSeenLabel, setupSteps, hyperfyErrorMessage, removeWorldPrompt, worldStatusLabel, slotLine, noSlotsLine, destroyWorldPrompt } from './hyperfy'
+import { appVersionNote, lastSeenLabel, setupSteps, hyperfyErrorMessage, removeWorldPrompt, worldStatusLabel, slotLine, noSlotsLine, destroyWorldPrompt } from './hyperfy'
 
 const now = new Date('2026-10-20T12:00:00Z')
 const ago = (ms: number) => new Date(now.getTime() - ms).toISOString()
@@ -56,7 +56,7 @@ describe('hyperfyErrorMessage', () => {
 
 const world = (over: Partial<HyperfyWorldSummary>): HyperfyWorldSummary => ({
   id: 'w1', sceneId: 's1', name: 'Gallery', kind: 'hosted', address: 'gallery.worlds.virvi.io', status: 'running',
-  errorMessage: null, keyPrefix: 'virviw_abcdefg', createdAt: '2026-10-01T00:00:00Z', lastSeenAt: null,
+  errorMessage: null, keyPrefix: 'virviw_abcdefg', createdAt: '2026-10-01T00:00:00Z', lastSeenAt: null, app: null,
   endsAt: null, endedAt: null, purgeAfter: null, ...over,
 })
 
@@ -145,5 +145,19 @@ describe('hyperfyErrorMessage for bad requests', () => {
     expect(hyperfyErrorMessage(bad('name is required (up to 100 characters)'))).toBe('Give the world a name of 100 characters or fewer.')
     expect(hyperfyErrorMessage(bad('endsAt must be a future ISO date, or null'))).toBe('Pick an end date in the future, or leave it empty.')
     expect(hyperfyErrorMessage(bad('Body cannot be empty when content-type is set to \'application/json\''))).toBe('Something went wrong. Try again in a moment.')
+  })
+})
+
+describe('appVersionNote (LIV-33)', () => {
+  it('says nothing before the world connects', () => {
+    expect(appVersionNote(null)).toEqual({ current: null, behind: null })
+  })
+  it('shows the release when up to date', () => {
+    expect(appVersionNote({ version: '1.0.0', latest: '1.0.0', behind: false })).toEqual({ current: 'Virvi app 1.0.0', behind: null })
+  })
+  it('asks for a fresh download when behind', () => {
+    expect(appVersionNote({ version: '1.0.0', latest: '1.1.0', behind: true }).behind)
+      .toBe('This world runs Virvi app 1.0.0; 1.1.0 is out. Download the app again and drag it into the world to replace the old one.')
+    expect(appVersionNote({ version: null, latest: '1.0.0', behind: true }).behind).toMatch(/^This world runs an older Virvi app\. Download/)
   })
 })

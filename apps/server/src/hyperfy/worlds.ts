@@ -1,6 +1,6 @@
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto'
 import { eq } from 'drizzle-orm'
-import { HYPERFY_FEED, type HyperfyWorldSummary } from '@virvixr/shared'
+import { HYPERFY_APP_VERSION, HYPERFY_FEED, compareHudVersions, parseHudVersion, type HyperfyWorldSummary } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { hyperfyWorlds } from '../db/schema.js'
 
@@ -42,6 +42,21 @@ export async function findWorldBySecret(worldKey: string, secret: string): Promi
   return a.length === b.length && timingSafeEqual(a, b) ? row : null
 }
 
+/**
+ * LIV-33: the Virvi app release a world runs, against the one this server serves. Null until the world has polled.
+ * An app that sent no version predates numbered releases, so it is behind.
+ */
+export function hyperfyAppStatus(w: Pick<HyperfyWorldRow, 'appVersion' | 'lastSeenAt'>, latest: string = HYPERFY_APP_VERSION) {
+  if (!w.lastSeenAt) return null
+  return { version: w.appVersion, latest, behind: compareHudVersions(w.appVersion, latest) < 0 }
+}
+
+/** The release to keep for a world: the newest seen wins, so an old copy still running can't mark it behind again. */
+export function newerAppVersion(stored: string | null, raw: unknown): string | null {
+  const sent = parseHudVersion(raw) ? String(raw).trim() : null
+  return compareHudVersions(stored, sent) >= 0 ? stored : sent
+}
+
 export function worldSummary(w: HyperfyWorldRow): HyperfyWorldSummary {
   return {
     id: w.id,
@@ -54,6 +69,7 @@ export function worldSummary(w: HyperfyWorldRow): HyperfyWorldSummary {
     keyPrefix: w.keyPrefix,
     createdAt: w.createdAt.toISOString(),
     lastSeenAt: w.lastSeenAt ? w.lastSeenAt.toISOString() : null,
+    app: hyperfyAppStatus(w),
     endsAt: w.endsAt ? w.endsAt.toISOString() : null,
     endedAt: w.endedAt ? w.endedAt.toISOString() : null,
     purgeAfter: w.purgeAfter ? w.purgeAfter.toISOString() : null,

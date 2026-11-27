@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { HyperfyFeedResponse } from '@virvixr/shared'
+import { HUD_VERSION_HEADER, HYPERFY_APP_VERSION, type HyperfyFeedResponse } from '@virvixr/shared'
 import { FeedPoller } from '../src/poller.js'
 import { VisitRecorder } from '../src/visits.js'
 
@@ -64,7 +64,7 @@ describe('FeedPoller', () => {
       'https://api.example/api/hyperfy/feed?since=a',
     ])
     for (const c of t.calls) {
-      expect(c.init.headers).toMatchObject({ Authorization: 'Bearer virviw_k', 'X-Virvi-App-Version': '1' })
+      expect(c.init.headers).toMatchObject({ Authorization: 'Bearer virviw_k', 'X-Virvi-App-Version': '1', 'x-virvi-hud-version': HYPERFY_APP_VERSION })
     }
     expect(t.seen.map((s) => s.version)).toEqual(['a', 'b'])
   })
@@ -205,5 +205,14 @@ describe('VisitRecorder', () => {
     }
     const tries = bodies(t.calls.slice(2)).map((b) => b.events.map((e: { playerId: string }) => e.playerId))
     expect(tries).toEqual([['kept'], ['kept'], ['kept'], ['kept']])
+  })
+})
+
+describe('HYPERFY_APP_VERSION', () => {
+  it("matches the package's version, so a rebuilt .hyp reports its own release", async () => {
+    const { readFile } = await import('node:fs/promises')
+    const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+    expect(HYPERFY_APP_VERSION).toBe(pkg.version)
+    expect(HUD_VERSION_HEADER).toBe("x-virvi-hud-version") // the poller spells it out
   })
 })

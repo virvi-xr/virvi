@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createRequire } from 'node:module'
 import { eq } from 'drizzle-orm'
-import { HYPERFY_FEED, VideoSourceType } from '@virvixr/shared'
+import { HUD_VERSION_HEADER, HYPERFY_APP_VERSION, HYPERFY_FEED, VideoSourceType } from '@virvixr/shared'
 import { db } from '../src/db/connection.js'
 import { hyperfyWorlds, scenes, screenShowings } from '../src/db/schema.js'
 import { initBus, sceneFeedTopic } from '../src/realtime/bus.js'
-import { createWorldKey } from '../src/hyperfy/worlds.js'
+import { createWorldKey, hyperfyAppStatus, worldSummary } from '../src/hyperfy/worlds.js'
 import { FEED_LIMIT, setFeedHoldMs, setFeedLimiter } from '../src/routes/hyperfy-feed.js'
 import { TokenBucketLimiter } from '../src/analytics/limiter.js'
 import { resetDb } from './helpers/db.js'
@@ -249,6 +249,30 @@ describe('GET /api/hyperfy/feed', () => {
     await db.update(hyperfyWorlds).set({ lastSeenAt: old }).where(eq(hyperfyWorlds.id, worldId))
     await feed()
     expect((await seen())!.getTime()).toBeGreaterThan(old.getTime() + 30_000)
+  })
+
+  it("records the app release the world runs; the newest wins, and a change is written at once (LIV-33)", async () => {
+    const row = async () => (await db.select().from(hyperfyWorlds).where(eq(hyperfyWorlds.id, worldId)))[0]
+    const poll = (version?: string) => app.inject({
+      method: 'GET', url: '/api/hyperfy/feed',
+      headers: { authorization: `Bearer ${key}`, 'x-virvi-app-version': '1', ...(version ? { [HUD_VERSION_HEADER]: version } : {}) },
+    })
+    expect(worldSummary(await row()).app).toBeNull() // never polled
+    await poll() // an app from before numbered releases
+    expect(worldSummary(await row()).app).toEqual({ version: null, latest: HYPERFY_APP_VERSION, behind: true })
+    await poll(HYPERFY_APP_VERSION) // downloaded again: written within the lastSeen minute
+    expect(worldSummary(await row()).app).toEqual({ version: HYPERFY_APP_VERSION, latest: HYPERFY_APP_VERSION, behind: false })
+    await poll() // an old copy still running doesn't mark it behind again
+    await poll('0.9.0')
+    await poll('not a version')
+    expect((await row()).appVersion).toBe(HYPERFY_APP_VERSION)
+  })
+
+  it('an app older than the one served is behind', () => {
+    const seen = new Date()
+    expect(hyperfyAppStatus({ appVersion: '1.0.0', lastSeenAt: seen }, '1.1.0').behind).toBe(true)
+    expect(hyperfyAppStatus({ appVersion: '1.1.0', lastSeenAt: seen }, '1.1.0').behind).toBe(false)
+    expect(hyperfyAppStatus({ appVersion: null, lastSeenAt: null }, '1.1.0')).toBeNull()
   })
 
   it('404 scene_not_found for a held poll within ~1 s of deleting the scene', async () => {

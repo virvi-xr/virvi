@@ -1,9 +1,9 @@
 import type { FastifyInstance } from 'fastify'
 import { eq } from 'drizzle-orm'
-import { HYPERFY_FEED, checkHyperfyAnalyticsBatch, type HyperfyFeedResponse } from '@virvixr/shared'
+import { HUD_VERSION_HEADER, HYPERFY_FEED, checkHyperfyAnalyticsBatch, type HyperfyFeedResponse } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { hyperfyWorlds } from '../db/schema.js'
-import { findWorldByKey } from '../hyperfy/worlds.js'
+import { findWorldByKey, newerAppVersion } from '../hyperfy/worlds.js'
 import { recordHyperfyBatch } from '../hyperfy/analytics.js'
 import { createHash } from 'node:crypto'
 import { sceneSnapshot } from '../hyperfy/snapshot.js'
@@ -53,8 +53,10 @@ export default async function hyperfyFeedRoutes(app: FastifyInstance) {
       if (!world) return reply.status(401).send({ error: 'invalid_world_key' })
 
       const now = Date.now()
-      if (!world.lastSeenAt || now - world.lastSeenAt.getTime() >= HYPERFY_FEED.lastSeenThrottleMs) {
-        await db.update(hyperfyWorlds).set({ lastSeenAt: new Date(now) }).where(eq(hyperfyWorlds.id, world.id))
+      // Which Virvi app release the world runs (LIV-33); a change is written straight away, not on the lastSeen throttle
+      const appVersion = newerAppVersion(world.appVersion, request.headers[HUD_VERSION_HEADER])
+      if (appVersion !== world.appVersion || !world.lastSeenAt || now - world.lastSeenAt.getTime() >= HYPERFY_FEED.lastSeenThrottleMs) {
+        await db.update(hyperfyWorlds).set({ lastSeenAt: new Date(now), appVersion }).where(eq(hyperfyWorlds.id, world.id))
       }
 
       const { sceneId } = world

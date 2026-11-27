@@ -159,6 +159,7 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE INDEX IF NOT EXISTS hyperfy_worlds_scene_idx ON hyperfy_worlds (scene_id)\`;
         await sql\`ALTER TABLE hyperfy_worlds ADD COLUMN IF NOT EXISTS slug TEXT, ADD COLUMN IF NOT EXISTS address TEXT, ADD COLUMN IF NOT EXISTS fly_app TEXT, ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'running', ADD COLUMN IF NOT EXISTS error_message TEXT, ADD COLUMN IF NOT EXISTS admin_code_enc TEXT, ADD COLUMN IF NOT EXISTS ends_at TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS purge_after TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS purged_at TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS purge_claimed_at TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS quiesced_at TIMESTAMPTZ\`;
         await sql\`ALTER TABLE hyperfy_worlds ADD COLUMN IF NOT EXISTS world_secret_hash TEXT\`;
+        await sql\`ALTER TABLE hyperfy_worlds ADD COLUMN IF NOT EXISTS app_version TEXT\`;
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS hyperfy_worlds_slug_uq ON hyperfy_worlds (slug) WHERE purged_at IS NULL\`;
         console.log('[virvi-server] hyperfy worlds ensured');
       } catch(e) { console.log('[virvi-server] hyperfy worlds:', e.message); }

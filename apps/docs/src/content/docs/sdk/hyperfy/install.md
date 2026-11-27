@@ -31,6 +31,12 @@ The scene appears within a few seconds, and later edits show up in about a secon
 
 Moving or scaling the Virvi app in Hyperfy moves or scales the whole scene in that world only. It never changes the scene in Virvi.
 
+### Keeping the app up to date
+
+The app reports its release each time it checks for scene changes. On the **Sync** page, each connected world shows the release it runs, such as "Virvi app 1.0.0". When Virvi has a newer app, the world's card says so and links to the download. Drag the new `virvi.hyp` into the world in place of the old one. The world key stays the same, so you don't need to paste it again.
+
+An app downloaded before 2026-11-27 doesn't report a release, so its world shows as running an older app until you replace it. Hosted worlds show no warning.
+
 ## What renders
 
 - **Video screens:** the live stream when the screen is live and live streaming is on. Otherwise the playlist's first video loops, or the off image shows, depending on the screen's offline mode.

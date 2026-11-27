@@ -4,6 +4,14 @@ import type { Adjustment } from './ar.js'
 import type { ShowingInstance } from './showings.js'
 import type { Vec3 } from './types/math.js'
 
+/**
+ * The Virvi Hyperfy app's release (LIV-33), sent as x-virvi-hud-version with every feed poll so the dashboard can tell a
+ * world running an older .hyp to download it again. Equal to @virvixr/hyperfy-app's version (a test checks); raise
+ * both whenever the built app changes. The server serves this release, so it is also the latest. Apps before 1.0.0 send
+ * none (they send only the feed protocol, as X-Virvi-App-Version).
+ */
+export const HYPERFY_APP_VERSION = '1.0.0'
+
 export const HYPERFY_FEED = {
   version: 1,
   /** Long-poll hold, in ms. */
@@ -81,6 +89,11 @@ export interface HyperfyWorldSummary {
   keyPrefix: string
   createdAt: string
   lastSeenAt: string | null
+  /**
+   * The Virvi app release the world last ran, the latest, and whether it is behind; null until the world has polled.
+   * `version` is null for an app from before releases were numbered (always behind).
+   */
+  app: { version: string | null; latest: string; behind: boolean } | null
   endsAt: string | null
   endedAt: string | null
   purgeAfter: string | null
