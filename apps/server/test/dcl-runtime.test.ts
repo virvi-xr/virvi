@@ -12,7 +12,7 @@ describe('dcl runtime', () => {
     // The HUD registers with a virtual canvas (scales on high-DPI screens) and textures its launcher from the icon
     expect(src).toContain('virtualWidth')
     expect(src).toContain('images/virvi/hud-v.png')
-    expect(DCL_RUNTIME_VERSION).toBe(21)
+    expect(DCL_RUNTIME_VERSION).toBe(22)
   })
 
   it('names Virvi items for analytics (v4)', async () => {
@@ -154,7 +154,7 @@ describe('dcl runtime', () => {
   })
 
   it('carries the update notice for people who work on the scene (v21, @virvixr/dcl 2.22.0, LIV-13)', async () => {
-    const src = Buffer.from((await runtimeFiles()).get('bin/index.js')!).toString('utf8')
+    const src = Buffer.from((await runtimeFiles(21)).get('bin/index.js')!).toString('utf8')
     expect(src).toContain('Redeploy it from the Virvi dashboard to update.')
     expect(src).toContain('"2.22.0"')
     // Still BEAT auto-claim, the privacy notice and the giveaway card
@@ -189,5 +189,16 @@ describe('dcl runtime', () => {
   it('rejects an unknown version', async () => {
     await expect(runtimeFiles(99)).rejects.toThrow()
     await expect(runtimeFiles(0)).rejects.toThrow()
+  })
+
+  it('records sound plays for analytics (v22, @virvixr/dcl 2.23.0, LIV-38)', async () => {
+    const src = Buffer.from((await runtimeFiles()).get('bin/index.js')!).toString('utf8')
+    expect(src).toContain('pollSoundEvents')
+    expect(src).toContain('"2.23.0"')
+    // Still the update notice, BEAT auto-claim, the privacy notice and the giveaway card
+    expect(src).toContain('Redeploy it from the Virvi dashboard to update.')
+    expect(src).toContain('Your BEAT is on its way.')
+    expect(src).toContain('/api/analytics/consent')
+    expect(src).toContain('Agree and continue')
   })
 })
