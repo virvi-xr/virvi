@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import bcrypt from 'bcryptjs'
 import crypto from 'node:crypto'
 import { OAuth2Client } from 'google-auth-library'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { users, userAuthMethods, passwordResetTokens, scenes } from '../db/schema.js'
 import { deleteUserWithModels, releaseModelFiles } from '../library/user-models.js'
@@ -527,7 +527,7 @@ export default async function authRoutes(app: FastifyInstance) {
         return reply.redirect(`${config.publicUrl}/auth/callback?error=${encodeURIComponent(oauthError || 'missing_code')}`)
       }
       try {
-        const idToken = await appleClient.exchangeCode(code, `${config.oauthCallbackUrl}/api/auth/apple/callback`)
+        const { idToken, refreshToken } = await appleClient.exchangeCode(code, `${config.oauthCallbackUrl}/api/auth/apple/callback`)
         const identity = await verifyAppleIdTokenFresh(idToken)
         const name = appleNameFromUserField(form.user)
         const session = await finishOAuth(app, {
@@ -538,6 +538,13 @@ export default async function authRoutes(app: FastifyInstance) {
           displayName: name ?? 'Apple User',
           metadata: { provider: 'apple', appleUserId: identity.sub, email: identity.email },
         })
+        // Kept server-side only (never sent to any client) so deleting the account can revoke it, as Apple requires.
+        // The newest one each sign-in; a sign-in that brings none keeps the one held.
+        if (refreshToken) {
+          await db.update(userAuthMethods)
+            .set({ metadata: sql`coalesce(${userAuthMethods.metadata}, '{}'::jsonb) || ${JSON.stringify({ appleRefreshToken: refreshToken })}::jsonb` })
+            .where(and(eq(userAuthMethods.type, 'oauth'), eq(userAuthMethods.identifier, `apple:${identity.sub}`)))
+        }
         const params = new URLSearchParams({ token: session.accessToken, refresh: session.refreshToken })
         if (OAUTH_STATE.test(state ?? '')) params.set('state', state!)
         return reply.redirect(`${config.publicUrl}/auth/callback?${params.toString()}`)
@@ -831,7 +838,16 @@ export default async function authRoutes(app: FastifyInstance) {
 
   // ── DELETE /api/auth/account — Delete account ────────────────────────────
 
-  app.delete<{ Body: { password: string } }>(
+  // ── GET /api/auth/account — whether deleting asks for a password or for DELETE ──
+
+  app.get('/api/auth/account', { preHandler: [authenticate] }, async (request) => {
+    const method = await db.query.userAuthMethods.findFirst({
+      where: and(eq(userAuthMethods.userId, request.user.id), eq(userAuthMethods.type, 'email')),
+    })
+    return { hasPassword: !!method?.credentialHash }
+  })
+
+  app.delete<{ Body: { password?: string; confirm?: string } }>(
     '/api/auth/account',
     { preHandler: [authenticate] },
     async (request, reply) => {
@@ -839,11 +855,7 @@ export default async function authRoutes(app: FastifyInstance) {
       const refused = await deletionRefused(request.user)
       if (refused) return reply.status(refused.status).send({ error: refused.code, message: refused.message })
 
-      const { password } = request.body ?? {}
-
-      if (!password) {
-        return reply.status(400).send({ error: 'Password is required to delete account' })
-      }
+      const { password, confirm } = request.body ?? {}
 
       // Find email auth method for this user
       const authMethod = await db.query.userAuthMethods.findFirst({
@@ -853,14 +865,24 @@ export default async function authRoutes(app: FastifyInstance) {
         ),
       })
 
-      if (!authMethod || !authMethod.credentialHash) {
-        return reply.status(400).send({ error: 'No password-based auth method found for this account' })
+      if (authMethod?.credentialHash) {
+        if (!password) {
+          return reply.status(400).send({ error: 'Password is required to delete account' })
+        }
+        const valid = await bcrypt.compare(password, authMethod.credentialHash)
+        if (!valid) {
+          return reply.status(401).send({ error: 'Incorrect password' })
+        }
+      } else if (confirm !== 'DELETE') {
+        // An account with no password (Google, Discord, Apple, a wallet, a code) confirms by typing DELETE
+        return reply.status(400).send({ error: 'confirm_required', message: 'Type DELETE to confirm.' })
       }
 
-      const valid = await bcrypt.compare(password, authMethod.credentialHash)
-      if (!valid) {
-        return reply.status(401).send({ error: 'Incorrect password' })
-      }
+      // Apple's refresh tokens, read before the account goes, to revoke once it has
+      const appleTokens = (await db.select({ metadata: userAuthMethods.metadata }).from(userAuthMethods)
+        .where(and(eq(userAuthMethods.userId, request.user.id), eq(userAuthMethods.type, 'oauth'))))
+        .map((m) => (m.metadata as { appleRefreshToken?: unknown } | null)?.appleRefreshToken)
+        .filter((t): t is string => typeof t === 'string' && t.length > 0)
 
       // Hosted worlds' rows would cascade away with it, leaving their Fly app, database and files running untracked.
       // Giveaways hold their wallet's sealed key: they never cascade away with the account (LIV-194)
@@ -883,6 +905,12 @@ export default async function authRoutes(app: FastifyInstance) {
       // Their imports' rows cascaded; the private files go too
       await deleteImportFiles(imports)
       await releaseModelFiles(models ?? [])
+      // Best effort: the account is gone whatever Apple answers. The log names the step, never the token
+      if (appleConfigured()) {
+        for (const t of appleTokens) {
+          try { await appleClient.revoke(t) } catch (err) { request.log.error({ msg: (err as Error).message }, 'Apple token revoke failed') }
+        }
+      }
 
       return reply.status(204).send()
     },

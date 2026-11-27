@@ -4,6 +4,7 @@ import { ErrorPromptSetting } from './ErrorPromptSetting'
 import { PrivacySetting } from './PrivacySetting'
 import { AssistantActivity } from './AssistantActivity'
 import { memberLabel, type OrgMember, type OrgSummary } from '@/lib/orgs'
+import { deleteAccountRequest, DELETE_WORD } from '@/lib/account-delete'
 import { useAuth } from '@/lib/auth'
 import { useEffect, useState } from 'react'
 import { useDialog } from '@/lib/use-dialog'
@@ -47,6 +48,8 @@ export default function SettingsPage() {
   const [deletePassword, setDeletePassword] = useState('')
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  /** Whether deleting asks for the password (true) or the typed DELETE (false); null while it is being asked. */
+  const [deleteHasPassword, setDeleteHasPassword] = useState<boolean | null>(null)
 
   // API Keys state
   const [apiKeys, setApiKeys] = useState<any[]>([])
@@ -265,15 +268,24 @@ export default function SettingsPage() {
     setPasswordSaving(false)
   }
 
+  const openDelete = () => {
+    setShowDeleteModal(true)
+    setDeleteHasPassword(null)
+    // An account that can't answer is asked for a password, as before
+    api.getAccount().then((a) => setDeleteHasPassword(a.hasPassword)).catch(() => setDeleteHasPassword(true))
+  }
+
+  const deleteBody = deleteHasPassword === null ? null : deleteAccountRequest(deleteHasPassword, deletePassword)
+
   const handleDeleteAccount = async () => {
     setDeleteError(null)
-    if (!deletePassword) {
-      setDeleteError('Password is required')
+    if (!deleteBody) {
+      setDeleteError(deleteHasPassword === false ? `Type ${DELETE_WORD} to confirm` : 'Password is required')
       return
     }
     setDeleteLoading(true)
     try {
-      await api.deleteAccount(deletePassword)
+      await api.deleteAccount(deleteBody)
       signOut()
     } catch (err: any) {
       // not_allowed_here (a session signed in with an open reissue's old wallet) carries its own plain message
@@ -390,7 +402,7 @@ export default function SettingsPage() {
               Once you delete your account, there is no going back. All your data will be permanently removed.
             </p>
             <button
-              onClick={() => setShowDeleteModal(true)}
+              onClick={openDelete}
               className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 transition-colors"
             >
               Delete Account
@@ -405,18 +417,22 @@ export default function SettingsPage() {
           <div ref={deleteDialog} role="dialog" aria-modal="true" aria-labelledby="delete-account-title" className="w-full max-w-md rounded-lg border border-gray-700 bg-gray-900 p-6 shadow-xl">
             <h3 id="delete-account-title" className="text-lg font-semibold text-white mb-2">Delete Account</h3>
             <p className="text-sm text-gray-400 mb-4">
-              This action is irreversible. Enter your password to confirm.
+              {deleteHasPassword === false
+                ? <>This action is irreversible. Type <strong className="text-white">{DELETE_WORD}</strong> to confirm.</>
+                : 'This action is irreversible. Enter your password to confirm.'}
             </p>
             {deleteError && (
               <div className="mb-3 rounded-md bg-red-900/50 border border-red-700 px-4 py-2 text-sm text-red-300">
                 {deleteError}
               </div>
             )}
-            <input aria-label="Your password"
-              type="password"
+            <input aria-label={deleteHasPassword === false ? `Type ${DELETE_WORD}` : 'Your password'}
+              type={deleteHasPassword === false ? 'text' : 'password'}
+              autoComplete="off"
+              disabled={deleteHasPassword === null}
               value={deletePassword}
               onChange={e => setDeletePassword(e.target.value)}
-              placeholder="Your password"
+              placeholder={deleteHasPassword === false ? DELETE_WORD : 'Your password'}
               className="w-full rounded-md bg-gray-950 px-4 py-2 text-white outline-none mb-4 focus:border-blue-400 border border-gray-800"
             />
             <div className="flex justify-end gap-3">
@@ -428,7 +444,7 @@ export default function SettingsPage() {
               </button>
               <button
                 onClick={handleDeleteAccount}
-                disabled={deleteLoading || !deletePassword}
+                disabled={deleteLoading || !deleteBody}
                 className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50 transition-colors"
               >
                 {deleteLoading ? 'Deleting...' : 'Delete My Account'}

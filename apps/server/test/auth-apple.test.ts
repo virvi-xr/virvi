@@ -102,18 +102,27 @@ describe('Sign in with Apple routes', () => {
   })
   const origExchange = appleClient.exchangeCode
   const origJwks = appleClient.fetchJwks
+  const origRevoke = appleClient.revoke
   let idToken = ''
+  let refreshToken: string | undefined
+  let revoked: string[] = []
+  let revokeFails = false
   beforeEach(async () => {
     await resetDb()
     app = await testApp()
     enable()
     appleClient.fetchJwks = async () => JWKS
-    appleClient.exchangeCode = async () => idToken
+    refreshToken = undefined
+    revoked = []
+    revokeFails = false
+    appleClient.exchangeCode = async () => ({ idToken, refreshToken })
+    appleClient.revoke = async (t: string) => { revoked.push(t); if (revokeFails) throw new Error('Apple revoke failed (500)') }
   })
   afterEach(async () => {
     for (const k of ['appleSigninServiceId', 'appleSigninTeamId', 'appleSigninKeyId', 'appleSigninPrivateKey']) (config as any)[k] = prev[k]
     appleClient.exchangeCode = origExchange
     appleClient.fetchJwks = origJwks
+    appleClient.revoke = origRevoke
     await app.close()
   })
 
@@ -192,5 +201,44 @@ describe('Sign in with Apple routes', () => {
     expect(new URL((await callback({})).headers.location as string).searchParams.get('error')).toBe('missing_code')
     expect(new URL((await callback({ error: 'user_cancelled_authorize' })).headers.location as string).searchParams.get('error')).toBe('user_cancelled_authorize')
     expect(await db.select().from(users)).toHaveLength(0)
+  })
+
+  const appleMethod = async () => (await db.select().from(userAuthMethods).where(eq(userAuthMethods.type, 'oauth')))[0]
+
+  it("keeps Apple's refresh token on the sign-in, the newest one each time, and never puts it in the redirect", async () => {
+    idToken = sign(liveClaims())
+    refreshToken = 'rt-first'
+    const first = await callback({ code: 'c1' })
+    expect(first.headers.location).not.toContain('rt-first')
+    expect((await appleMethod()).metadata).toMatchObject({ provider: 'apple', appleUserId: '001234.abc', appleRefreshToken: 'rt-first' })
+    refreshToken = 'rt-second'
+    await callback({ code: 'c2' })
+    expect((await appleMethod()).metadata).toMatchObject({ provider: 'apple', appleRefreshToken: 'rt-second' })
+    // A sign-in that brings no refresh token keeps the one held
+    refreshToken = undefined
+    await callback({ code: 'c3' })
+    expect((await appleMethod()).metadata).toMatchObject({ appleRefreshToken: 'rt-second' })
+  })
+
+  const deleteSignedIn = async () => {
+    idToken = sign(liveClaims())
+    refreshToken = 'rt-held'
+    const token = new URL((await callback({ code: 'c' })).headers.location as string).searchParams.get('token')!
+    return app.inject({ method: 'DELETE', url: '/api/auth/account', payload: { confirm: 'DELETE' }, headers: { authorization: `Bearer ${token}` } })
+  }
+
+  it("deleting an Apple account revokes Apple's token", async () => {
+    const r = await deleteSignedIn()
+    expect(r.statusCode).toBe(204)
+    expect(await db.select().from(users)).toHaveLength(0)
+    expect(revoked).toEqual(['rt-held'])
+  })
+
+  it('a failed revoke still deletes the account', async () => {
+    revokeFails = true
+    const r = await deleteSignedIn()
+    expect(r.statusCode).toBe(204)
+    expect(await db.select().from(users)).toHaveLength(0)
+    expect(revoked).toEqual(['rt-held'])
   })
 })

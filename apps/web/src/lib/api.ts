@@ -675,8 +675,10 @@ function useRealApi() {
     getPrivacyStatus: () => apiFetch<PrivacyStatus>('/api/auth/privacy'),
     decidePrivacy: (decision: PrivacyDecision, via: PrivacyDecisionVia) =>
       apiFetch<PrivacyStatus>('/api/auth/privacy', { method: 'POST', body: JSON.stringify({ decision, version: PRIVACY_NOTICE_VERSION, via }), userAction: true }),
-    deleteAccount: (password: string) =>
-      apiFetch('/api/auth/account', { method: 'DELETE', body: JSON.stringify({ password }) }),
+    /** Whether deleting the account asks for its password or for the typed DELETE. */
+    getAccount: () => apiFetch<{ hasPassword: boolean }>('/api/auth/account'),
+    deleteAccount: (body: { password?: string; confirm?: string }) =>
+      apiFetch('/api/auth/account', { method: 'DELETE', body: JSON.stringify(body) }),
 
     // Admin
     getAdminStats: () => apiFetch<{

@@ -68,6 +68,12 @@ export function resetAppleKeysForTests(): void {
 }
 
 /** The network calls, replaceable in tests. */
+const APPLE_REVOKE_URL = 'https://appleid.apple.com/auth/revoke'
+
+const clientSecret = () => buildAppleClientSecret({
+  teamId: config.appleSigninTeamId!, keyId: config.appleSigninKeyId!, serviceId: config.appleSigninServiceId!, privateKey: config.appleSigninPrivateKey!,
+})
+
 export const appleClient = {
   /** Apple's current keys, from the network. */
   async downloadJwks(): Promise<AppleJwks> {
@@ -84,22 +90,28 @@ export const appleClient = {
     jwksCache = { at: Date.now(), jwks }
     return jwks
   },
-  /** Trades the authorization code for the id_token. */
-  async exchangeCode(code: string, redirectUri: string): Promise<string> {
+  /** Trades the authorization code for the id_token, and the refresh token Apple gives with it (kept to revoke on account deletion). */
+  async exchangeCode(code: string, redirectUri: string): Promise<{ idToken: string; refreshToken?: string }> {
     const body = new URLSearchParams({
       client_id: config.appleSigninServiceId!,
-      client_secret: buildAppleClientSecret({
-        teamId: config.appleSigninTeamId!, keyId: config.appleSigninKeyId!, serviceId: config.appleSigninServiceId!, privateKey: config.appleSigninPrivateKey!,
-      }),
+      client_secret: clientSecret(),
       code,
       grant_type: 'authorization_code',
       redirect_uri: redirectUri,
     })
     const res = await fetch(APPLE_TOKEN_URL, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body, signal: AbortSignal.timeout(10_000) })
     if (!res.ok) throw new Error(`Apple token request failed (${res.status})`)
-    const json = (await res.json()) as { id_token?: string }
+    const json = (await res.json()) as { id_token?: string; refresh_token?: string }
     if (!json.id_token) throw new Error('Apple token response had no id_token')
-    return json.id_token
+    return { idToken: json.id_token, refreshToken: typeof json.refresh_token === 'string' && json.refresh_token ? json.refresh_token : undefined }
+  },
+  /** Revokes a user's Apple refresh token (Apple requires it when a Sign in with Apple account is deleted). */
+  async revoke(refreshToken: string): Promise<void> {
+    const body = new URLSearchParams({
+      client_id: config.appleSigninServiceId!, client_secret: clientSecret(), token: refreshToken, token_type_hint: 'refresh_token',
+    })
+    const res = await fetch(APPLE_REVOKE_URL, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body, signal: AbortSignal.timeout(10_000) })
+    if (!res.ok) throw new Error(`Apple revoke failed (${res.status})`)
   },
 }
 
