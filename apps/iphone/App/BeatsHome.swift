@@ -41,6 +41,7 @@ struct BeatsHome: View {
     @Bindable var nav: AppNav
     @State private var signingInWithCode = false
     @State private var signingHeadsetIn = false
+    @State private var deletingAccount = false
 
     var body: some View {
         let signIn = model.signIn
@@ -49,11 +50,7 @@ struct BeatsHome: View {
                 if signIn.signedIn { signedIn } else { signedOut }
             }
             .navigationTitle(HomeCopy.TITLE)
-            .toolbar {
-                if signIn.signedIn {
-                    ToolbarItem(placement: .topBarTrailing) { accountMenu }
-                }
-            }
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { accountMenu } }
             .navigationDestination(for: String.self) { id in
                 BeatPage(beatId: id, beats: model.beats)
             }
@@ -65,6 +62,9 @@ struct BeatsHome: View {
         .sheet(isPresented: $signingHeadsetIn) {
             HeadsetSignInView(model: HeadsetSignInModel(session: signIn.session)) { signingHeadsetIn = false }
                 .presentationDetents([.medium])
+        }
+        .sheet(isPresented: $deletingAccount) {
+            DeleteAccountView(model: DeleteAccountModel(session: signIn.session)) { deletingAccount = false }
         }
     }
 
@@ -82,6 +82,7 @@ struct BeatsHome: View {
                 Divider().padding(.vertical, 6)
                 Text(HomeCopy.SCAN_HINT).font(.subheadline).foregroundStyle(.secondary)
                 wide(HomeCopy.SCAN_ARC) { nav.scan() }
+                LegalFooter().padding(.top, 12)
             }
             .padding(20)
         }
@@ -114,6 +115,7 @@ struct BeatsHome: View {
                     }
                 }
             } header: { Text(MyBeatsModel.TITLE) }
+            Section { } footer: { LegalFooter() }
         }
         .refreshable { await myBeats.load() }
         // Again on each return to the list: a claim made on a BEAT's page shows here at once
@@ -122,9 +124,22 @@ struct BeatsHome: View {
 
     private var accountMenu: some View {
         Menu {
-            if let name = model.signIn.userName { Text(name) }
-            Button(VisitorMenu.SIGN_HEADSET_IN) { signingHeadsetIn = true }
-            Button(VisitorMenu.SIGN_OUT, role: .destructive) { model.signIn.signOut() }
+            if model.signIn.signedIn {
+                Section(model.signIn.userName ?? "") {
+                    Button(VisitorMenu.SIGN_HEADSET_IN) { signingHeadsetIn = true }
+                    Button(VisitorMenu.SIGN_OUT) { model.signIn.signOut() }
+                }
+            }
+            Section {
+                Link(LegalLinks.PRIVACY, destination: LegalLinks.privacy)
+                Link(LegalLinks.TERMS, destination: LegalLinks.terms)
+                Link(LegalLinks.SUPPORT, destination: LegalLinks.support)
+            }
+            if model.signIn.signedIn {
+                Section {
+                    Button(DeleteAccountModel.TITLE, role: .destructive) { deletingAccount = true }
+                }
+            }
         } label: {
             Image(systemName: "person.crop.circle").accessibilityLabel(HomeCopy.ACCOUNT)
         }

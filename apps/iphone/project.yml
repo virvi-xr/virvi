@@ -11,7 +11,7 @@ settings:
     # The owner's Apple team, so `xcodegen generate` keeps device signing.
     DEVELOPMENT_TEAM: P22YGT64VU
     CODE_SIGN_STYLE: Automatic
-    MARKETING_VERSION: "0.1"
+    MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "1"
 
 packages:
@@ -44,6 +44,8 @@ targets:
         NSCameraUsageDescription: Virvi uses the camera to find ARCs and to show the space in this room.
         NSLocationWhenInUseUsageDescription: Virvi checks you're at the event when you check in and claim a BEAT.
         UILaunchScreen: {}
+        # The app uses only the system's HTTPS and Apple's own cryptography: exempt from export documentation.
+        ITSAppUsesNonExemptEncryption: false
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UIRequiredDeviceCapabilities: [arkit]
