@@ -4,7 +4,7 @@ import { Wallet, parseEther } from 'ethers'
 import { BEAT_CLAIM_GRACE_MS, type BeatChain } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { beatClaims, beatMintBatches, beatPayments, beats } from '../src/db/schema.js'
+import { beatClaims, beatMintBatches, beatPayments, beats, notifications } from '../src/db/schema.js'
 import { setBeatChainClientForTests } from '../src/beats/chain.js'
 import { BEAT_GAS_PER_RECIPIENT } from '../src/beats/abi.js'
 import { recordJobFailure } from '../src/errors/record.js'
@@ -500,6 +500,26 @@ describe('BEAT minting job (LIV-11)', () => {
     await runBeatTick(at(3 * MIN))
     expect(await statusCount(b.id)).toEqual({ minted: 2 })
     expect((await beatOf(b.id)).frozenAt).toEqual(at(MIN))
+  })
+
+  it("a visitor hears their BEAT arrived, once, after it's confirmed; a claim with no account or a delete request doesn't (LIV-30)", async () => {
+    const b = await seed({ created: true })
+    const [e1, e2, e3] = [wallet(), wallet(), wallet()]
+    const visitor = await createUser({ wallet: e1 })
+    const leaving = await createUser({ wallet: e3 })
+    const [c1] = await claims(b.id, [e1], { userId: visitor.id })
+    await claims(b.id, [e2])
+    const [c3] = await claims(b.id, [e3], { userId: leaving.id })
+    await runBeatTick(T0)
+    expect(await db.select().from(notifications)).toHaveLength(0) // sent, not yet confirmed
+    await db.update(beatClaims).set({ deleteRequested: true }).where(eq(beatClaims.id, c3.id))
+    fake.mine(6)
+    await runBeatTick(at(MIN))
+    await runBeatTick(at(2 * MIN))
+    const rows = await db.select().from(notifications)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ userId: visitor.id, kind: 'beat_minted', groupKey: `beat_minted:${c1.id}` })
+    expect(rows[0].data).toMatchObject({ beatId: b.id, wallet: e1 })
   })
 
   it('delete requests settle: a minted claim loses its account and name, a failed one is deleted', async () => {

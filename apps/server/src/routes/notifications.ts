@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify'
 import { authenticate } from '../middleware/auth.js'
 import { isUuid } from '../auth/scene-from.js'
 import { isTrialUser } from '../studio/quota.js'
-import { listNotifications, markAllRead, markRead, unreadCount } from '../notifications/notifications.js'
+import { isNotificationGroup } from '@virvixr/shared'
+import { listNotifications, markAllRead, markRead, notificationSettingsOf, setNotificationGroup, unreadCount } from '../notifications/notifications.js'
 
 /** The bell: a user's own notifications. A trial has none: its list is empty and its count 0. */
 export default async function notificationRoutes(app: FastifyInstance) {
@@ -35,5 +36,14 @@ export default async function notificationRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string }
     if (!isUuid(id) || !await markRead(request.user.id, id, new Date())) return reply.status(404).send({ error: 'notification_not_found' })
     return reply.status(204).send()
+  })
+
+  // LIV-30: which notice groups reach the bell; invitations and moderation notices are always on
+  app.get('/api/notifications/settings', { preHandler: [authenticate] }, async (request) => notificationSettingsOf(request.user.id))
+
+  app.put('/api/notifications/settings', { preHandler: [authenticate] }, async (request, reply) => {
+    const body = (request.body ?? {}) as { group?: unknown; on?: unknown }
+    if (!isNotificationGroup(body.group) || typeof body.on !== 'boolean') return reply.status(400).send({ error: 'bad_setting', message: 'Send a group and on (true or false).' })
+    return setNotificationGroup(request.user.id, body.group, body.on)
   })
 }

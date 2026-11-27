@@ -88,6 +88,9 @@ Each wallet can claim a giveaway once, however many accounts it uses. If a send 
 
 Virvi-built scenes get the card the next time they are redeployed. A scene you build yourself with `@virvixr/dcl` needs version 2.18.0 or later.
 
+
+When a visitor's item is sent, they also get a notice in the dashboard's bell if they use virvi.io with the same account. They can turn these off in **Settings → Notifications**, and **Delete my data** removes them.
+
 ## Placing a giveaway kiosk
 
 A **giveaway kiosk** is something visitors walk up to and click to open the giveaway card, like a booth at an event. In a scene with a kiosk, the card no longer appears by itself: it opens when a visitor clicks a kiosk, and they can close it again.

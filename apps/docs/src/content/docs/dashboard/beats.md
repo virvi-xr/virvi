@@ -80,6 +80,9 @@ When the event starts, the BEAT goes on Polygon and "its name, description, Trad
 
 Your artwork is copied when you pay, and again if you change it, as a WebP image of at most 1024 × 1024. Deleting the original from your media library doesn't affect it, and while a BEAT is paid for or running its artwork can't be deleted from the library: "This image is the artwork of a BEAT that is paid for or running, so it can't be deleted until that BEAT has ended."
 
+
+Visitors signed in to virvi.io with the same account also get a notice in the dashboard's bell when their BEAT arrives, with a link to their wallet's page. They can turn these off in **Settings → Notifications**, and **Delete my data** removes them.
+
 ## What the token shows
 
 Wallets and marketplaces show each BEAT's name, artwork and description, and these details:

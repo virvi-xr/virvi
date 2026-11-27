@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest'
 import { eq, sql } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { notifications, studioDesignMembers, studioDesignInvites, studioJobs, studioPayments, users } from '../src/db/schema.js'
@@ -285,5 +285,52 @@ describe('notifications', () => {
     const h = { authorization: `Bearer ${s.accessToken}` }
     expect((await app.inject({ method: 'GET', url: '/api/notifications', headers: h })).json()).toEqual({ items: [], more: false })
     expect((await app.inject({ method: 'GET', url: '/api/notifications/unread-count', headers: h })).json()).toEqual({ count: 0 })
+  })
+})
+
+describe('notification settings (LIV-30)', () => {
+  let app: Awaited<ReturnType<typeof testApp>>
+  beforeEach(async () => { await resetDb(); app = await testApp() })
+  afterEach(async () => { await app.close() })
+
+  it('a group turned off is skipped; invitations and moderation notices always arrive', async () => {
+    const { notify, notificationSettingsOf, setNotificationGroup } = await import('../src/notifications/notifications.js')
+    const u = await createUser()
+    expect((await notificationSettingsOf(u.id)).groups.map((g) => [g.id, g.on])).toEqual([['studio', true], ['scene_updates', true], ['rewards', true]])
+    await setNotificationGroup(u.id, 'rewards', false)
+    await setNotificationGroup(u.id, 'scene_updates', false)
+    await notify(u.id, 'beat_minted', { beatName: 'Gig' })
+    await notify(u.id, 'scene_update', { sceneName: 'Club' })
+    await notify(u.id, 'model_taken_down', { assetName: 'Chair', reason: 'x' })
+    await notify(u.id, 'studio_prompts', { designName: 'Cap' })
+    expect((await db.select().from(notifications).where(eq(notifications.userId, u.id))).map((n) => n.kind).sort()).toEqual(['model_taken_down', 'studio_prompts'])
+    await setNotificationGroup(u.id, 'rewards', true)
+    await notify(u.id, 'beat_minted', { beatName: 'Gig' })
+    expect(await db.select().from(notifications).where(eq(notifications.kind, 'beat_minted'))).toHaveLength(1)
+  })
+
+  it('GET and PUT /api/notifications/settings, for your own account only', async () => {
+    const u = await createUser()
+    const auth = { authorization: `Bearer ${tokenFor(u)}` }
+    expect((await app.inject({ method: 'GET', url: '/api/notifications/settings' })).statusCode).toBe(401)
+    const off = await app.inject({ method: 'PUT', url: '/api/notifications/settings', headers: auth, payload: { group: 'studio', on: false } })
+    expect(off.statusCode).toBe(200)
+    expect(off.json().groups.find((g: any) => g.id === 'studio')).toMatchObject({ on: false, label: 'Design Studio activity' })
+    expect((await app.inject({ method: 'GET', url: '/api/notifications/settings', headers: auth })).json().groups.find((g: any) => g.id === 'studio').on).toBe(false)
+    expect((await app.inject({ method: 'PUT', url: '/api/notifications/settings', headers: auth, payload: { group: 'invites', on: false } })).statusCode).toBe(400)
+    expect((await app.inject({ method: 'PUT', url: '/api/notifications/settings', headers: auth, payload: { group: 'studio', on: 'no' } })).statusCode).toBe(400)
+    // Someone else's settings are untouched
+    const other = await createUser()
+    expect((await app.inject({ method: 'GET', url: '/api/notifications/settings', headers: { authorization: `Bearer ${tokenFor(other)}` } })).json().groups.every((g: any) => g.on)).toBe(true)
+  })
+
+  it('delete my data removes the notices that say which events you attended', async () => {
+    const { notify, deleteAttendanceNotices } = await import('../src/notifications/notifications.js')
+    const u = await createUser()
+    await notify(u.id, 'beat_minted', { beatName: 'Gig' })
+    await notify(u.id, 'giveaway_sent', { giveawayName: 'Hats' })
+    await notify(u.id, 'scene_update', { sceneName: 'Club' })
+    expect(await deleteAttendanceNotices(u.id)).toBe(2)
+    expect((await db.select().from(notifications).where(eq(notifications.userId, u.id))).map((n) => n.kind)).toEqual(['scene_update'])
   })
 })

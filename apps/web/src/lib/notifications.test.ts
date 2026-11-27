@@ -84,3 +84,18 @@ describe('scene update and moderation notices (LIV-30)', () => {
       .toBe('Your appeal for Chair was turned down: It breaks the rules.')
   })
 })
+
+describe('BEAT and giveaway notices (LIV-30)', () => {
+  const base = { gone: false, open: false }
+  it("says the BEAT is in the wallet and links to the wallet's page", () => {
+    const w = '0x' + 'ab'.repeat(20)
+    const r = notificationText({ ...base, kind: 'beat_minted', data: { beatName: 'Friday gig', wallet: w } })
+    expect(r.text).toBe(`Your BEAT Friday gig is in your wallet ${w.slice(0, 6)}…${w.slice(-4)}`)
+    expect(r.href).toMatch(/^\/w\/0x/i)
+    expect(notificationText({ ...base, kind: 'beat_minted', data: { beatName: 'Gig', wallet: 'nope' } })).toEqual({ text: 'Your BEAT Gig is in your wallet', href: null })
+  })
+  it('says a giveaway item was sent, and links to the collection', () => {
+    expect(notificationText({ ...base, kind: 'giveaway_sent', data: { giveawayName: 'Hat drop' } }))
+      .toEqual({ text: 'Hat drop: your item was sent to your wallet. It shows in Decentraland once it settles.', href: '/collection' })
+  })
+})

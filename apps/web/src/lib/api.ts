@@ -43,6 +43,9 @@ import { beatApiPath, sceneBeatsPath, type BeatAvailability, type BeatCheckoutRe
 
 // ── New Scene Wizard and Decentraland Worlds ────────────────────────────────
 
+/** One notice group in Settings (LIV-30). */
+export interface NotificationGroupSetting { id: string; label: string; description: string; on: boolean }
+
 export interface WizardAsset {
   id: string
   name: string
@@ -1283,6 +1286,10 @@ function useRealApi() {
     getUnreadNotifications: () => apiFetch<{ count: number }>('/api/notifications/unread-count'),
     markNotificationRead: (id: string) => apiFetch<void>(`/api/notifications/${id}/read`, { method: 'POST' }),
     markAllNotificationsRead: () => apiFetch<void>('/api/notifications/read-all', { method: 'POST' }),
+    /** LIV-30: which notice groups reach the bell. */
+    getNotificationSettings: () => apiFetch<{ groups: NotificationGroupSetting[] }>('/api/notifications/settings'),
+    setNotificationGroup: (group: string, on: boolean) =>
+      apiFetch<{ groups: NotificationGroupSetting[] }>('/api/notifications/settings', { method: 'PUT', body: JSON.stringify({ group, on }) }),
     getMyStudioInvites: () => apiFetch<MyInvite[]>('/api/studio/invites'),
     acceptStudioInvite: (inviteId: string) =>
       apiFetch<{ designId: string; role: InviteRole }>(`/api/studio/invites/${inviteId}/accept`, { method: 'POST' }),

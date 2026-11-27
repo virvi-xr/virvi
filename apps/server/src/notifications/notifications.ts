@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm'
+import { notificationGroupOf, isNotificationGroup, NOTIFICATION_GROUPS, type NotificationGroupId } from '@virvixr/shared'
 import { db } from '../db/connection.js'
-import { notifications, studioDesignInvites, studioDesignMembers, studioDesigns, users } from '../db/schema.js'
+import { beatClaims, beats, giveawayClaims, giveaways, notificationSettings, notifications, studioDesignInvites, studioDesignMembers, studioDesigns, users } from '../db/schema.js'
 import { memberIds } from '../studio/members.js'
 import type { Exec } from '../studio/quota.js'
 
@@ -12,6 +13,8 @@ import type { Exec } from '../studio/quota.js'
 export type NotificationKind = 'studio_invite' | 'studio_prompts' | 'studio_package_ready' | 'studio_owner' | 'studio_support_note' | 'studio_help'
   // LIV-30: a scene's Decentraland HUD is behind the latest release; a shared model was taken down, or its appeal decided
   | 'scene_update' | 'model_taken_down' | 'model_appeal'
+  // LIV-30 / LIV-11: a visitor's BEAT or giveaway item reached their wallet
+  | 'beat_minted' | 'giveaway_sent'
 type Data = Record<string, unknown>
 
 export const NOTIFICATION_DAYS = 90
@@ -29,6 +32,8 @@ export async function notify(
   opts: { groupKey?: string; merge?: (old: Data, next: Data) => Data } = {}, exec: Exec = db,
 ): Promise<void> {
   const { groupKey, merge } = opts
+  // A group the person turned off in Settings is skipped (LIV-30); invitations and moderation notices have no group
+  if (await mutedFor(userId, kind, exec)) return
   if (!groupKey) {
     await exec.insert(notifications).values({ userId, kind, data })
     return
@@ -246,5 +251,71 @@ export async function notifyTakedown(ownerId: string | null, asset: { id: string
 /** The owner hears how their appeal went (LIV-34). Never throws. */
 export async function notifyAppealDecided(ownerId: string, asset: { id: string; name: string }, decision: 'restored' | 'rejected', response: string | null): Promise<void> {
   await quietly('appeal', () => notify(ownerId, 'model_appeal', { assetId: asset.id, assetName: asset.name, decision, response }))
+}
+
+/**
+ * Visitors whose BEAT reached their wallet hear it (LIV-30, LIV-11): one notice per claim, with the BEAT's name and the
+ * wallet it went to. Called after the mint is confirmed; never throws. Claims with no account (app installs) are skipped.
+ */
+export async function notifyBeatsMinted(claimIds: string[]): Promise<void> {
+  if (!claimIds.length) return
+  await quietly('beat', async () => {
+    const rows = await db.select({ id: beatClaims.id, userId: beatClaims.userId, wallet: beatClaims.wallet, beatId: beats.id, beatName: beats.name })
+      .from(beatClaims).innerJoin(beats, eq(beats.id, beatClaims.beatId))
+      .where(and(inArray(beatClaims.id, claimIds), eq(beatClaims.status, 'minted')))
+    for (const r of rows) {
+      if (!r.userId) continue
+      await notify(r.userId, 'beat_minted', { beatId: r.beatId, beatName: r.beatName, wallet: r.wallet }, { groupKey: `beat_minted:${r.id}` })
+    }
+  })
+}
+
+/** Visitors whose giveaway item was sent hear it, once per claim (LIV-30). Never throws. */
+export async function notifyGiveawaysSent(claimIds: string[]): Promise<void> {
+  if (!claimIds.length) return
+  await quietly('giveaway', async () => {
+    const rows = await db.select({ id: giveawayClaims.id, userId: giveawayClaims.userId, wallet: giveawayClaims.wallet, giveawayId: giveaways.id, giveawayName: giveaways.name })
+      .from(giveawayClaims).innerJoin(giveaways, eq(giveaways.id, giveawayClaims.giveawayId))
+      .where(and(inArray(giveawayClaims.id, claimIds), eq(giveawayClaims.status, 'sent')))
+    for (const r of rows) {
+      if (!r.userId) continue
+      await notify(r.userId, 'giveaway_sent', { giveawayId: r.giveawayId, giveawayName: r.giveawayName, wallet: r.wallet }, { groupKey: `giveaway_sent:${r.id}` })
+    }
+  })
+}
+
+/** Delete my data: notices that say which events a visitor attended go with the rest of their visitor data. */
+export async function deleteAttendanceNotices(userId: string): Promise<number> {
+  const gone = await db.delete(notifications).where(and(eq(notifications.userId, userId), inArray(notifications.kind, ['beat_minted', 'giveaway_sent'])))
+    .returning({ id: notifications.id })
+  return gone.length
+}
+
+// ── settings (LIV-30) ───────────────────────────────────────────────────────
+
+async function mutedGroups(userId: string, exec: Exec = db): Promise<NotificationGroupId[]> {
+  const [row] = await exec.select({ muted: notificationSettings.muted }).from(notificationSettings).where(eq(notificationSettings.userId, userId))
+  return (row?.muted ?? []).filter(isNotificationGroup)
+}
+
+async function mutedFor(userId: string, kind: NotificationKind, exec: Exec): Promise<boolean> {
+  const group = notificationGroupOf(kind)
+  return !!group && (await mutedGroups(userId, exec)).includes(group)
+}
+
+/** Each group with whether its notices reach the bell. */
+export async function notificationSettingsOf(userId: string) {
+  const muted = await mutedGroups(userId)
+  return { groups: NOTIFICATION_GROUPS.map((g) => ({ id: g.id, label: g.label, description: g.description, on: !muted.includes(g.id) })) }
+}
+
+/** Turns one group on or off. */
+export async function setNotificationGroup(userId: string, group: NotificationGroupId, on: boolean) {
+  const muted = new Set(await mutedGroups(userId))
+  if (on) muted.delete(group)
+  else muted.add(group)
+  const value = [...muted]
+  await db.insert(notificationSettings).values({ userId, muted: value }).onConflictDoUpdate({ target: notificationSettings.userId, set: { muted: value, updatedAt: sql`now()` } })
+  return notificationSettingsOf(userId)
 }
 

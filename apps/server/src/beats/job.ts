@@ -1,4 +1,5 @@
 import { JsonRpcProvider, Network, Transaction } from 'ethers'
+import { notifyBeatsMinted } from '../notifications/notifications.js'
 import { logSafe } from '../errors/log-safe.js'
 import { and, asc, eq, gt, inArray, isNotNull, isNull, lte, notInArray, or, sql } from 'drizzle-orm'
 import {
@@ -501,6 +502,7 @@ async function reprice(client: BeatChainClient, b: Batch, now: Date, r: BeatTick
 async function confirmBatch(client: BeatChainClient, b: Batch, hash: string, logs: BeatLog[], now: Date, r: BeatTickResult): Promise<void> {
   let minted = 0
   let skipped = 0
+  let mintedIds: string[] = []
   await db.transaction(async (tx) => {
     await tx.update(beatMintBatches).set({ status: 'confirmed', txHash: hash, confirmedAt: now }).where(eq(beatMintBatches.id, b.id))
     if (!b.beatId) return
@@ -529,7 +531,10 @@ async function confirmBatch(client: BeatChainClient, b: Batch, hash: string, log
     await settleDeletes(tx, b.id)
     minted = ok.length
     skipped = skip.length
+    mintedIds = ok
   })
+  // LIV-30: each visitor hears their BEAT arrived (after the commit; never throws)
+  await notifyBeatsMinted(mintedIds)
   r.confirmed++
   r.failed += skipped
   console.log(`[beats] batch ${b.id} (${b.kind}, BEAT ${b.beatId}) confirmed${b.kind === 'mint' ? `: ${minted} minted, ${skipped} skipped` : ''}`)
@@ -629,6 +634,7 @@ async function unminedBatch(
       }
       await settleDeletes(tx, b.id)
     })
+    await notifyBeatsMinted(done)
     r.failed++
     if (o.unminted === 'failed') r.failed += rest.length
     console.warn(`[beats] batch ${b.id} (BEAT ${beatId}) ${o.lastError}: ${done.length} minted, ${rest.length} ${o.unminted}`)

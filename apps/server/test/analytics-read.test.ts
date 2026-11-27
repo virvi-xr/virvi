@@ -457,7 +457,7 @@ describe('analytics read API', () => {
       await insertSession(sc.id, { visitorHash: 'someone-else' })
     }
     const res = await app.inject({ method: 'POST', url: '/api/analytics/me/delete', headers: { authorization: `Bearer ${tokenFor(me)}` } })
-    expect(res.json().deleted).toEqual({ sessions: 2, events: 2, positions: 2, copresence: 2, raffleEntries: 0, beatClaims: 0, adViews: 0, consents: 0 })
+    expect(res.json().deleted).toEqual({ sessions: 2, events: 2, positions: 2, copresence: 2, raffleEntries: 0, beatClaims: 0, adViews: 0, consents: 0, notices: 0 })
     expect(await db.select().from(analyticsSessions)).toHaveLength(2)
   })
 

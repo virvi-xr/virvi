@@ -1,4 +1,5 @@
 import { Transaction, Wallet, parseEther, type BaseWallet } from 'ethers'
+import { notifyGiveawaysSent } from '../notifications/notifications.js'
 import { and, asc, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from 'drizzle-orm'
 import { GIVEAWAY_CHAINS, GIVEAWAY_GAS_PER_ITEM, GIVEAWAY_MAX_CLAIMS_PER_TX, type GiveawayChain, type GiveawayFailReason, type GiveawayPauseReason } from '@virvixr/shared'
 import { config } from '../config.js'
@@ -178,14 +179,17 @@ async function signerFor(t: TxRow): Promise<BaseWallet> {
  * Each claim's status from its mint rows: `sent` (with sentAt) once every row is sent, `minting` while any row is minting
  * or sent, `waiting` otherwise. Only claims still queued move.
  */
-async function settleClaims(exec: Exec, claimIds: string[], now: Date): Promise<void> {
-  if (!claimIds.length) return
+/** Settles claims from their mint rows; returns the ones this call made 'sent' (each visitor hears once, LIV-30). */
+async function settleClaims(exec: Exec, claimIds: string[], now: Date): Promise<string[]> {
+  if (!claimIds.length) return []
   const unsent = sql`exists (select 1 from giveaway_claim_mints m where m.claim_id = ${giveawayClaims.id} and m.status <> 'sent')`
   const started = sql`exists (select 1 from giveaway_claim_mints m where m.claim_id = ${giveawayClaims.id} and m.status in ('minting', 'sent'))`
-  await exec.update(giveawayClaims).set({
+  const rows = await exec.update(giveawayClaims).set({
     status: sql`case when not ${unsent} then 'sent' when ${started} then 'minting' else 'waiting' end`,
     sentAt: sql`case when not ${unsent} then ${now.toISOString()}::timestamptz else ${giveawayClaims.sentAt} end`,
   }).where(and(inArray(giveawayClaims.id, claimIds), inArray(giveawayClaims.status, [...QUEUED])))
+    .returning({ id: giveawayClaims.id, status: giveawayClaims.status })
+  return rows.filter((r) => r.status === 'sent').map((r) => r.id)
 }
 
 /** Fails queued claims and their mint rows not yet sent. */
@@ -488,6 +492,7 @@ async function takeSupply(exec: Exec, t: TxRow): Promise<void> {
 
 /** A receipt deep enough: the transaction is confirmed and, for a mint, its claims' rows sent with their token ids. */
 async function confirmed(client: GiveawayChainClient, t: TxRow, hash: string, rc: GiveawayReceipt, now: Date): Promise<void> {
+  let sentIds: string[] = []
   const done = await db.transaction(async (tx) => {
     const [row] = await tx.update(giveawayTxs).set({ status: 'confirmed', confirmedAt: now, feeWei: rc.feeWei.toString(), txHash: hash, lastError: null })
       .where(and(eq(giveawayTxs.id, t.id), inArray(giveawayTxs.status, [...UNSETTLED]))).returning({ id: giveawayTxs.id })
@@ -505,12 +510,14 @@ async function confirmed(client: GiveawayChainClient, t: TxRow, hash: string, rc
       await tx.update(giveawayClaimMints).set({ status: 'sent', tokenIds: ids })
         .where(and(eq(giveawayClaimMints.claimId, r.claimId), eq(giveawayClaimMints.txId, t.id)))
     }
-    await settleClaims(tx, rows.map((r) => r.claimId), now)
+    sentIds = await settleClaims(tx, rows.map((r) => r.claimId), now)
     await takeSupply(tx, t)
     if (missing) console.warn(`[giveaways] mint ${t.id} confirmed without Issue logs for ${missing} of ${rows.length} claims`)
     console.log(`[giveaways] mint ${t.id} confirmed for ${rows.length} claims (giveaway ${t.giveawayId})`)
     return true
   })
+  // LIV-30: each visitor hears their item was sent (after the commit; never throws)
+  await notifyGiveawaysSent(sentIds)
   if (done && t.kind === 'mint') {
     const g = await giveawayOf(t.giveawayId)
     if (g) await refreshItems(client, g)

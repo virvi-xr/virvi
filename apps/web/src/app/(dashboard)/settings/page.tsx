@@ -2,6 +2,7 @@
 import { useApi } from '@/lib/api'
 import { ErrorPromptSetting } from './ErrorPromptSetting'
 import { PrivacySetting } from './PrivacySetting'
+import { NotificationSettings } from './NotificationSettings'
 import { AssistantActivity } from './AssistantActivity'
 import { memberLabel, type OrgMember, type OrgSummary } from '@/lib/orgs'
 import { deleteAccountRequest, DELETE_WORD } from '@/lib/account-delete'
@@ -344,6 +345,8 @@ export default function SettingsPage() {
           <RaffleEntries />
 
           <PrivacySetting />
+
+          <NotificationSettings />
 
           <ErrorPromptSetting />
 

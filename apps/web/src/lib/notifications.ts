@@ -1,3 +1,4 @@
+import { walletPageHref } from './beats'
 import { categoryLabel, pieceLabel } from './studio'
 
 /** A finished package's piece in a sentence: a scene piece by its own name ("round table"), never its folder. */
@@ -9,7 +10,7 @@ const packageWord = (category: string) => (category === 'building' || category.s
  */
 export type NotificationItem = {
   id: string
-  kind: 'studio_invite' | 'studio_prompts' | 'studio_package_ready' | 'studio_owner' | 'studio_support_note' | 'studio_help' | 'scene_update' | 'model_taken_down' | 'model_appeal' | string
+  kind: 'studio_invite' | 'studio_prompts' | 'studio_package_ready' | 'studio_owner' | 'studio_support_note' | 'studio_help' | 'scene_update' | 'model_taken_down' | 'model_appeal' | 'beat_minted' | 'giveaway_sent' | string
   data: Record<string, unknown>
   createdAt: string
   updatedAt: string
@@ -60,6 +61,12 @@ export function notificationText(item: Pick<NotificationItem, 'kind' | 'data' | 
       return d.decision === 'restored'
         ? { text: `Your appeal was accepted: ${str(d.assetName, 'your model')} can be shared again`, href: '/assets/' }
         : { text: `Your appeal for ${str(d.assetName, 'your model')} was turned down${typeof d.response === 'string' && d.response ? `: ${d.response}` : ''}`, href: '/assets/' }
+    case 'beat_minted': {
+      const wallet = typeof d.wallet === 'string' && /^0x[0-9a-fA-F]{40}$/.test(d.wallet) ? d.wallet : null
+      return { text: `Your BEAT ${str(d.beatName, 'from an event')} is in your wallet${wallet ? ` ${shortAddress(wallet)}` : ''}`, href: wallet ? walletPageHref(wallet) : null }
+    }
+    case 'giveaway_sent':
+      return { text: `${str(d.giveawayName, 'Your giveaway item')}: your item was sent to your wallet. It shows in Decentraland once it settles.`, href: '/collection' }
   }
   const design = str(d.designName, 'a design')
   const designId = typeof d.designId === 'string' && d.designId ? d.designId : null
@@ -88,3 +95,6 @@ export function notificationText(item: Pick<NotificationItem, 'kind' | 'data' | 
       return { text: design, href }
   }
 }
+
+const shortAddress = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
+

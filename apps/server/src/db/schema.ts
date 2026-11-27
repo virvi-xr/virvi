@@ -2275,6 +2275,13 @@ export const notifications = pgTable('notifications', {
     .where(sql`${t.readAt} IS NULL AND ${t.groupKey} IS NOT NULL`),
 }))
 
+// The bell's notice groups a person turned off (LIV-30; NOTIFICATION_GROUPS in @virvixr/shared). No row: everything on.
+export const notificationSettings = pgTable('notification_settings', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  muted: text('muted').array().notNull().default(sql`'{}'::text[]`),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
 // Files the owner gives the agent: images (references, textures, logos) and GLBs. Kept at uploadKey(designId, id).
 export const studioUploads = pgTable('studio_uploads', {
   id: uuid('id').primaryKey().defaultRandom(),

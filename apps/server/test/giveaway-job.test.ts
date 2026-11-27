@@ -4,7 +4,7 @@ import { Wallet, getAddress, parseEther } from 'ethers'
 import { GIVEAWAY_GAS_PER_ITEM } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { giveawayClaimMints, giveawayClaims, giveawayItems, giveaways, giveawayTxs, subscriptions } from '../src/db/schema.js'
+import { giveawayClaimMints, giveawayClaims, giveawayItems, giveaways, giveawayTxs, subscriptions, notifications } from '../src/db/schema.js'
 import { recordJobFailure } from '../src/errors/record.js'
 import { GIVEAWAY_TRANSFER_GAS, GiveawayRpcError } from '../src/giveaways/chain.js'
 import { newGiveawayWallet } from '../src/giveaways/keys.js'
@@ -79,6 +79,23 @@ describe('giveaway minting job (LIV-194)', () => {
   const txs = () => db.select().from(giveawayTxs).orderBy(asc(giveawayTxs.createdAt))
   /** Mines what is pending and adds Polygon's 3 confirmations. */
   const confirm = () => { chain.mine(); chain.advance(3) }
+
+  it('a visitor hears their item was sent, once, when the mint confirms; a claim with no account does not (LIV-30)', async () => {
+    const g = await giveaway()
+    const visitor = await createUser({ wallet: addr() })
+    const a = await claim(g, visitor.wallet!), b = await claim(g)
+    await db.update(giveawayClaims).set({ userId: visitor.id }).where(eq(giveawayClaims.id, a.id))
+    await runGiveawayJob(T0)
+    expect(await db.select().from(notifications)).toHaveLength(0)
+    confirm()
+    await runGiveawayJob(at(MIN))
+    await runGiveawayJob(at(2 * MIN))
+    expect((await claimOf(b.id)).status).toBe('sent')
+    const rows = await db.select().from(notifications)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ userId: visitor.id, kind: 'giveaway_sent', groupKey: `giveaway_sent:${a.id}` })
+    expect(rows[0].data).toMatchObject({ giveawayId: g.id, giveawayName: g.name })
+  })
 
   it('1. happy path: two waiting claims go in one mint and are sent with token ids once it confirms', async () => {
     const g = await giveaway()

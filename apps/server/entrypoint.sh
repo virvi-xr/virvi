@@ -163,6 +163,11 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS hyperfy_worlds_slug_uq ON hyperfy_worlds (slug) WHERE purged_at IS NULL\`;
         console.log('[virvi-server] hyperfy worlds ensured');
       } catch(e) { console.log('[virvi-server] hyperfy worlds:', e.message); }
+      // Notification settings (LIV-30): the bell's muted notice groups; matches notificationSettings in src/db/schema.ts
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS notification_settings (user_id UUID PRIMARY KEY CONSTRAINT notification_settings_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, muted TEXT[] NOT NULL DEFAULT '{}'::text[], updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        console.log('[virvi-server] notification settings ensured');
+      } catch(e) { console.log('[virvi-server] notification settings:', e.message); }
       // Tenant areas (LIV-32): an editor wallet role limited to part of the scene; matches sceneRoles.area in src/db/schema.ts
       try {
         await sql\`ALTER TABLE scene_roles ADD COLUMN IF NOT EXISTS area JSONB\`;
