@@ -627,7 +627,9 @@ function useRealApi() {
 
     // API Keys
     getApiKeys: () => apiFetch<{ keys: any[] }>('/api/keys'),
-    createApiKey: (name: string) => apiFetch<{ key: string; apiKey: any }>('/api/keys', { method: 'POST', body: JSON.stringify({ name }) }),
+    /** The key comes back once, with its row's fields; `access: 'read'` makes a read-only key (LIV-170). */
+    createApiKey: (name: string, access: 'read' | 'full' = 'full') =>
+      apiFetch<{ id: string; name: string; key: string; keyPrefix: string; expiresAt: string | null; createdAt: string; access: 'read' | 'full' }>('/api/keys', { method: 'POST', body: JSON.stringify({ name, access }) }),
     deleteApiKey: (keyId: string) => apiFetch(`/api/keys/${keyId}`, { method: 'DELETE' }),
 
     // Analytics (locations)

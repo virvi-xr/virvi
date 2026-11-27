@@ -57,6 +57,7 @@ export default function SettingsPage() {
   const [apiKeys, setApiKeys] = useState<any[]>([])
   const [apiKeysLoading, setApiKeysLoading] = useState(true)
   const [newKeyName, setNewKeyName] = useState('')
+  const [newKeyAccess, setNewKeyAccess] = useState<'read' | 'full'>('full')
   const [createdKey, setCreatedKey] = useState<string | null>(null)
   const [keyCopied, setKeyCopied] = useState(false)
   const [showCreateKey, setShowCreateKey] = useState(false)
@@ -114,9 +115,11 @@ export default function SettingsPage() {
     if (!newKeyName.trim()) return
     setError(null)
     try {
-      const { key, apiKey } = await api.createApiKey(newKeyName.trim())
-      setApiKeys(prev => [apiKey, ...prev])
+      // The reply is the new row plus the raw key, shown once
+      const { key, ...apiKey } = await api.createApiKey(newKeyName.trim(), newKeyAccess)
+      setApiKeys(prev => [{ ...apiKey, lastUsedAt: null }, ...prev])
       setCreatedKey(key)
+      setNewKeyAccess('full')
       setKeyCopied(false)
       setNewKeyName('')
       setShowCreateKey(false)
@@ -584,6 +587,9 @@ export default function SettingsPage() {
             + Create API Key
           </button>
         </div>
+        <p className="mb-4 text-sm text-gray-400">
+          A key acts as your account: use it with the REST API, or to <a href="/docs/agents/use-virvi-with-your-agent/#connect-with-mcp" className="text-blue-400 underline underline-offset-2 hover:text-blue-300">connect an AI agent</a> to Virvi&apos;s MCP server. A read-only key can look but never change anything.
+        </p>
 
         {/* Newly created key banner */}
         {createdKey && (
@@ -609,10 +615,15 @@ export default function SettingsPage() {
 
         {/* Create key form */}
         {showCreateKey && (
-          <form onSubmit={handleCreateApiKey} className="mb-6 flex gap-2">
+          <form onSubmit={handleCreateApiKey} className="mb-6 flex flex-wrap gap-2">
             <input aria-label="Key name" type="text" value={newKeyName} onChange={e => setNewKeyName(e.target.value)}
               placeholder="Key name (e.g. production, ci/cd)" autoFocus
               className="flex-1 rounded-md bg-gray-950 px-4 py-2 text-white outline-none focus:border-blue-400 border border-gray-800" />
+            <select aria-label="What the key can do" value={newKeyAccess} onChange={e => setNewKeyAccess(e.target.value as 'read' | 'full')}
+              className="rounded-md bg-gray-800 px-3 py-2 text-sm text-white">
+              <option value="full">Full access</option>
+              <option value="read">Read only</option>
+            </select>
             <button type="submit" className="rounded-md bg-blue-600 px-4 py-2 text-sm hover:bg-blue-700">Create</button>
             <button type="button" onClick={() => setShowCreateKey(false)} className="rounded-md bg-gray-800 px-4 py-2 text-sm hover:bg-gray-700">Cancel</button>
           </form>
@@ -627,9 +638,9 @@ export default function SettingsPage() {
             {apiKeys.map(key => (
               <div key={key.id} className="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900 p-4">
                 <div className="min-w-0">
-                  <p className="font-medium text-white">{key.name}</p>
+                  <p className="font-medium text-white">{key.name}{key.access === 'read' && <span className="ml-2 rounded bg-gray-800 px-2 py-0.5 text-xs font-normal text-gray-300">Read only</span>}</p>
                   <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-400">
-                    <span className="font-mono">{key.prefix ? `${key.prefix}...` : '---'}</span>
+                    <span className="font-mono">{key.keyPrefix ? `${key.keyPrefix}...` : '---'}</span>
                     <span>Created {key.createdAt ? new Date(key.createdAt).toLocaleDateString() : '---'}</span>
                     <span>Last used {key.lastUsedAt ? new Date(key.lastUsedAt).toLocaleDateString() : 'Never'}</span>
                   </div>

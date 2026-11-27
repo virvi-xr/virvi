@@ -16,6 +16,13 @@ import { HUD_VERSION_HEADER, REDEPLOY_REQUIRED } from '@virvixr/shared'
 
 const TRIAL_TOUCH_MS = 10 * 60_000
 
+declare module 'fastify' {
+  interface FastifyContextConfig {
+    /** `true`: a read-only API key may send non-GET requests here (LIV-170: /mcp, which offers it read tools only). */
+    readOnlyKeyOk?: true
+  }
+}
+
 export interface AuthUser {
   id: string
   email: string | null
@@ -25,6 +32,8 @@ export interface AuthUser {
   verified?: boolean
   guest?: boolean
   viaApiKey?: boolean
+  /** A read-only API key (LIV-170): every request but GET and HEAD is refused. */
+  readOnlyKey?: boolean
   kind?: 'account' | 'scene' | 'trial'
   /** True for a signed-out visitor's trial session (kind 'trial'), set only on routes that opt in with `config.trial`. */
   trial?: boolean
@@ -59,6 +68,9 @@ declare module '@fastify/jwt' {
  *
  * Also supports API key authentication via `Bearer virvi_...` tokens.
  */
+/** API key scopes (LIV-170): ['read'] is read-only; null (keys made before scopes) or ['full'] acts as the account. */
+export const isReadOnlyKey = (scopes: string[] | null | undefined): boolean => !!scopes && scopes.includes('read') && !scopes.includes('full')
+
 export async function authenticate(request: FastifyRequest, reply: FastifyReply) {
   try {
     const authHeader = request.headers.authorization
@@ -103,6 +115,12 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
         .then(() => {})
         .catch(() => {})
 
+      // LIV-170: a read-only key reads and never writes, on every route (the MCP server's tools go through these too)
+      const readOnlyKey = isReadOnlyKey(apiKey.scopes)
+      if (readOnlyKey && request.method !== 'GET' && request.method !== 'HEAD' && !request.routeOptions.config?.readOnlyKeyOk) {
+        return reply.status(403).send({ error: 'read_only_key', message: 'This API key can only read. Make a key with full access to change things.' })
+      }
+
       request.user = {
         id: user.id,
         email: user.email,
@@ -111,6 +129,7 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
         kind: 'account',
         verified: true,
         viaApiKey: true,
+        ...(readOnlyKey ? { readOnlyKey: true } : {}),
       }
       return
     }

@@ -222,9 +222,10 @@ See [Command Center](/docs/dashboard/command-center/).
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/api/keys` | Yes (account, not a key) | Create a key; returned once |
+| POST | `/api/keys` | Yes (account, not a key) | Create a key; returned once. `access`: `full` (default) or `read` (read-only: every request but `GET` gets 403 `read_only_key`) |
 | GET | `/api/keys` | Yes | List your keys |
 | DELETE | `/api/keys/:keyId` | Yes | Delete a key |
+| POST | `/mcp` | Yes (a key) | The MCP server (Streamable HTTP, JSON-RPC, stateless). See [Use Virvi with your agent](/docs/agents/use-virvi-with-your-agent/#connect-with-mcp) |
 
 ## Organizations
 

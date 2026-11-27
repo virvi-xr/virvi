@@ -25,11 +25,12 @@ export type ReleaseInfo = {
 export function agentPrompt(site: { web: string; api: string }): string {
   return `Please check the Virvi app for me. Its code is public at ${REPO_URL}.
 
-1. Wallets: find every place the code asks a wallet to sign or send something. Confirm it only signs me in, or deploys or pays for something I chose, and that nothing can move my tokens, NFTs or money without me approving it in my wallet.
+1. Wallets: find every place the code asks a wallet to sign or send something. Confirm it only signs me in, or deploys or pays for something I chose, and nothing moves my tokens, NFTs or money without my approval in my wallet.
 2. Smart contracts: list every contract address and contract call in the code. Say what each one is, and flag anything unknown, unverified or suspicious.
 3. Privacy: read ${site.web}/privacy/ and check the code only collects and shares what that page says.
 4. Live version: get the commit from ${site.api}/api/transparency, confirm that commit is in the public repo, and do the checks above on that commit.
 5. Contracts: for each contract listed there, check that its Polygonscan-verified source matches the file at its sourceUrl.
+6. AI agents: check apps/server/src/mcp tools only call REST routes, and a read-only key changes nothing.
 
-Tell me in plain language what you found, anything that looks risky, and anything you couldn't check.`
+Tell me plainly what you found, anything risky, and anything you couldn't check.`
 }

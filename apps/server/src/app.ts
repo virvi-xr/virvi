@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify'
+import mcpRoutes from './mcp/server.js'
 import { schemaStatus } from './db/schema-check.js'
 import fastifyCors from '@fastify/cors'
 import fastifyStatic from '@fastify/static'
@@ -331,6 +332,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
 
   // GET /api/instance (mode, version, branding) and the admin branding routes
   await app.register(brandingRoutes, { version: SERVER_VERSION })
+  await app.register(mcpRoutes, { version: SERVER_VERSION })
 
   // Health check
   app.get('/api/health', async (_request, reply) => {

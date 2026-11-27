@@ -14,10 +14,36 @@ These docs are written so an AI agent can read them as well as you. Give your ag
 | Index of every page, with Markdown links | `https://virvi.io/docs/llms.txt` |
 | All the docs in one file | `https://virvi.io/docs/llms-full.txt` |
 | Any single page as Markdown | add `.md` to its path, e.g. `https://virvi.io/docs/self-hosting/overview.md` |
+| The MCP server, for agents that use tools | `https://api.virvi.io/mcp` (see [Connect with MCP](#connect-with-mcp)) |
 
 The site also answers `https://virvi.io/llms.txt`, the conventional place agents look first.
 
 If your agent can't browse, download `llms-full.txt` and add it to the conversation or your project.
+
+## Connect with MCP
+
+Agents that support the Model Context Protocol (MCP), such as Claude, Cursor and others, can connect to Virvi directly and work on your scenes with tools, without writing requests themselves.
+
+1. In the dashboard, open **Settings → API Keys** and create a key. Choose **Read only** if the agent should only look, or **Full access** to let it change things.
+2. Add a remote MCP server to your agent, with the URL `https://api.virvi.io/mcp` (on a self-hosted install, your server's address followed by `/mcp`) and the header `Authorization: Bearer <your key>`.
+
+The key acts as your account: the agent can do exactly what you can, through the same checks as the dashboard and the REST API, and its changes show in a scene's activity log as **API**. A read-only key gets only the read tools. Delete the key in Settings to cut the agent off.
+
+| Tool | What it does |
+|------|--------------|
+| `list_scenes` | Your scenes and those shared with you |
+| `get_scene` | A scene's presets, items and copies, with positions in metres |
+| `get_scene_performance` | How the scene compares with Decentraland's limits, and suggested fixes |
+| `get_scene_activity` | Who changed what, and when (hosts and co-hosts) |
+| `list_events` | Your events |
+| `list_media` | Your media library, with URLs to use in items |
+| `list_analytics_locations`, `get_analytics_summary` | Visitor totals for a place, under the dashboard's privacy rules |
+| `set_live_preset` | Switch which preset is live (full-access keys) |
+| `update_item` | Rename, show or hide an item, or change some of its properties (full-access keys) |
+| `place_copy`, `move_copy` | Place or move a copy of an item (full-access keys) |
+| `remove_copy` | Remove a copy; the agent is told to check with you first (full-access keys) |
+
+Signing in with your Virvi account through the agent, instead of a key, comes later, along with more tools (events, schedules, uploads, the Design Studio).
 
 ## Prompts that work
 

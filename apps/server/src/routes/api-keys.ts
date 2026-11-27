@@ -3,10 +3,12 @@ import { randomBytes, createHash } from 'node:crypto'
 import { eq, and, isNull } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { apiKeys, organizations, orgMembers } from '../db/schema.js'
-import { authenticate } from '../middleware/auth.js'
+import { authenticate, isReadOnlyKey } from '../middleware/auth.js'
 
 interface CreateKeyBody {
   name: string
+  /** 'read' makes a read-only key (LIV-170); 'full' (the default) acts as the account. */
+  access?: 'read' | 'full'
   orgId?: string
   expiresAt?: string // ISO date string
 }
@@ -24,7 +26,7 @@ async function liveOrg(orgId: string | null | undefined): Promise<string | null>
 
 export default async function apiKeyRoutes(app: FastifyInstance) {
   // ── POST /api/keys — Create a new API key ───────────────────────────────
-  // A key acts as its account (same access as the user who made it, no narrower), so keys carry no scopes
+  // A key acts as its account, no wider: full access, or read-only (LIV-170, refused every write). A key session can't mint more keys.
   // and a key session cannot mint more keys.
 
   app.post<{ Body: CreateKeyBody }>(
@@ -32,6 +34,8 @@ export default async function apiKeyRoutes(app: FastifyInstance) {
     { preHandler: [authenticate] },
     async (request, reply) => {
       const { name, orgId, expiresAt } = request.body
+      const access = request.body.access ?? 'full'
+      if (access !== 'read' && access !== 'full') return reply.status(400).send({ error: "access must be 'read' or 'full'" })
 
       if (request.user.viaApiKey) {
         return reply.status(403).send({ error: 'API keys cannot create API keys' })
@@ -68,7 +72,7 @@ export default async function apiKeyRoutes(app: FastifyInstance) {
           name,
           keyHash,
           keyPrefix,
-          scopes: null,
+          scopes: access === 'read' ? ['read'] : null,
           expiresAt: expiresAt ? new Date(expiresAt) : null,
         })
         .returning()
@@ -80,6 +84,7 @@ export default async function apiKeyRoutes(app: FastifyInstance) {
         keyPrefix: apiKey.keyPrefix,
         expiresAt: apiKey.expiresAt,
         createdAt: apiKey.createdAt,
+        access,
       })
     },
   )
@@ -98,11 +103,12 @@ export default async function apiKeyRoutes(app: FastifyInstance) {
           lastUsedAt: apiKeys.lastUsedAt,
           expiresAt: apiKeys.expiresAt,
           createdAt: apiKeys.createdAt,
+          scopes: apiKeys.scopes,
         })
         .from(apiKeys)
         .where(eq(apiKeys.userId, request.user.id))
 
-      return reply.send({ keys })
+      return reply.send({ keys: keys.map(({ scopes, ...k }) => ({ ...k, access: isReadOnlyKey(scopes) ? 'read' : 'full' })) })
     },
   )
 
