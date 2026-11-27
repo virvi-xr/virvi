@@ -21,6 +21,7 @@ Open it from virvi.io (**Analytics** in the sidebar) or press **Stats** in the i
 - **Here now:** a map of the location's parcels with a dot for each visitor currently inside.
 - **Heatmap:** where visitors spend time or how often they pass through, switchable between dwell time and visits.
 - **Breakdowns:** top interactions, emotes, countries and platforms.
+- **Screens:** for each video screen, how many times a video started playing, the total time watched, and the average per play, most watched first. A screen is named as it is in the scene, and older data from unnamed screens is grouped together. Decentraland scenes record this.
 - **Recent visits:** the latest sessions with start time, duration, platform and country. Wallets and names appear only when wallet visibility is on.
 - **Settings:** the wallet visibility switch.
 

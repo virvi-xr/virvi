@@ -25,6 +25,7 @@ import { Section, type SectionState } from '@/components/analytics/Section'
 import { full } from '@/components/analytics/format'
 import { tenureLabel } from './LocationList'
 import { Badge, PageHeader, tableHead, TableScroll } from '@/components/ui'
+import { screenRows, type ScreenRow } from '@/lib/analytics/screens'
 
 const LIVE_MS = 15_000
 const LIVE_ERROR_MS = 60_000
@@ -324,6 +325,11 @@ export function Dashboard({ location, showAllLink, onWalletVisibility }: {
         )}
       </Section>
 
+      {/* 6b. Screens: plays and watch time per video screen (LIV-38) */}
+      <Section title="Screens" state={sumState} onRetry={retrySummary}>
+        {s && <Screens rows={screenRows(s.videos)} />}
+      </Section>
+
       {/* 7. Sessions (most recent first; not range-bound) */}
       <Sessions apiRef={apiRef} id={id} onNoAccess={denied} />
 
@@ -464,3 +470,25 @@ function WalletSetting({ apiRef, id, initial, onSaved }: {
 }
 
 /** Saves text as a .csv in the browser's downloads. */
+
+function Screens({ rows }: { rows: ScreenRow[] }) {
+  if (!rows.length) return <p className="text-sm text-gray-400">No video plays in this range.</p>
+  return (
+    <TableScroll label="Video plays by screen">
+      <table className="w-full text-sm">
+        <thead><tr className="text-left text-xs text-gray-400"><th className="py-2 font-normal">Screen</th><th className="py-2 text-right font-normal">Plays</th><th className="py-2 text-right font-normal">Watched</th><th className="py-2 text-right font-normal">Per play</th></tr></thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.name} className="border-t border-gray-800">
+              <td className="max-w-[16rem] truncate py-2 text-gray-100">{r.name}</td>
+              <td className="py-2 text-right tabular-nums text-gray-300">{full(r.plays)}</td>
+              <td className="py-2 text-right tabular-nums text-gray-300">{formatDuration(r.watchSec)}</td>
+              <td className="py-2 text-right tabular-nums text-gray-400">{r.plays ? formatDuration(r.avgSec) : '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </TableScroll>
+  )
+}
+

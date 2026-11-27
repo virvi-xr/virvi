@@ -8,6 +8,8 @@ export interface AnalyticsSummary {
   sessions: number; uniqueVisitors: number; newVisitors: number; returningVisitors: number
   peakConcurrency: number; dwellAvgSec: number; verifiedShare: number
   interactions: Record<string, number>; emotes: Record<string, number>; emoteLabels: Record<string, string>; countries: Record<string, number>; platforms: Record<string, number>
+  /** Per screen (its name): plays started and seconds watched. Older servers leave it out. */
+  videos?: Record<string, { plays: number; watchSec: number }>
 }
 export interface TimeseriesPoint { t: string; sessions: number; uniqueVisitors: number; peakConcurrency: number; dwellAvgSec: number }
 /** y is as the platform reports it (Decentraland: about 0.9 m above the feet); older servers leave it out. */

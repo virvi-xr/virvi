@@ -76,6 +76,20 @@ function caps(until: Date | undefined, since?: Date) {
   }
 }
 
+/** Plays and watch time per screen (the screen's name), across hourly rows; older unnamed entities fold into one row. */
+export function mergeVideo(objs: unknown[]): Record<string, { plays: number; watchSec: number }> {
+  const out: Record<string, { plays: number; watchSec: number }> = {}
+  for (const o of objs) {
+    for (const [k, v] of Object.entries((o as Record<string, { plays?: unknown; watchSec?: unknown }>) ?? {})) {
+      const key = Object.keys(mergeLegacyEntityTargets({ [k]: 0 }))[0]
+      const row = (out[key] ??= { plays: 0, watchSec: 0 })
+      row.plays += Number(v?.plays) || 0
+      row.watchSec += Number(v?.watchSec) || 0
+    }
+  }
+  return out
+}
+
 function mergeCounts(objs: unknown[]): Record<string, number> {
   const out: Record<string, number> = {}
   for (const o of objs) for (const [k, v] of Object.entries((o as Record<string, number>) ?? {})) out[k] = (out[k] ?? 0) + Number(v)
@@ -192,6 +206,7 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
       emoteLabels: await resolveEmoteLabels(Object.keys(emotes).sort((a, b) => emotes[b] - emotes[a])),
       countries: mergeCounts(rows.map((x) => x.countries)),
       platforms: mergeCounts(rows.map((x) => x.platforms)),
+      videos: mergeVideo(rows.map((x) => x.video)),
     })
   })
 
