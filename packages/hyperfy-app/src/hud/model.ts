@@ -3,7 +3,10 @@
  * pairing, edit and scene state, plus the HUD's small pure helpers (alerts, typing, placement). view.ts draws it.
  */
 import {
+  checkClickEvent,
+  describeClick,
   formatPairingCode,
+  type ClickEvent,
   type SerializedScene,
   type SerializedSceneElement,
   type Vec3,
@@ -131,6 +134,86 @@ export function showControlAlert(control: ShowControl, title: string): HudAlert 
   return { kind: 'info', text }
 }
 
+// ── click actions (LIV-126) ─────────────────────────────────────────────
+
+/** ClickEventType's values: the bundle's slice of @virvixr/shared carries no enums. */
+const ClickEventType = { EXTERNAL: 1, SOUND: 2, MOVE: 4, TELEPORT: 5 } as const
+
+/** What a click does, as the HUD edits it. Teleport goes to a Decentraland parcel: shown and kept, not set here. */
+export type ClickKind = 'none' | 'link' | 'sound' | 'move' | 'teleport'
+export interface ClickDraft {
+  kind: ClickKind
+  url: string
+  sound: string
+  /** Where Move sends the visitor, in Virvi coordinates; null until set. */
+  position: Vec3 | null
+  teleportTo: string
+  /** Kept as the dashboard set them: the HUD has no text box for hover text. */
+  hoverText: string
+  showFeedback: boolean
+}
+/** The kinds the Hyperfy HUD offers (Teleport only means something in Decentraland). */
+export const CLICK_KINDS: Array<[Exclude<ClickKind, 'teleport'>, string]> = [
+  ['none', 'Nothing'],
+  ['link', 'Link'],
+  ['sound', 'Sound'],
+  ['move', 'Move'],
+]
+export const CLICK_LINK_HINT = 'In chat, type /virvi and paste the link'
+export const CLICK_SOUND_HINT = 'In chat, type /virvi and paste the sound file link (https://…mp3)'
+export const CLICK_MOVE_HINT = 'Stand where visitors should go, then press Use my spot'
+export const CLICK_TELEPORT_NOTE = 'Teleports to a Decentraland parcel. Change it on virvi.io, or pick another action here.'
+export const alertClickSaved = (name: string, c: ClickEvent | null) => ({ kind: 'info' as const, text: `${name}: on click, ${describeClick(c).replace(/^./, (x) => x.toLowerCase())}` })
+
+/** Where the player stands, in Virvi coordinates: Move's destination for "Use my spot". */
+export function standingSpot(position: { x: number; y: number; z: number }, rootInverse: { elements: ArrayLike<number> }): Vec3 {
+  return toVirviPosition(worldToLocal(position, rootInverse))
+}
+
+/** The edit for an element's current click action. */
+export function clickDraftOf(raw: unknown): ClickDraft {
+  const c = checkClickEvent(raw ?? null)
+  const v = c.ok ? c.value : null
+  const base: ClickDraft = { kind: 'none', url: '', sound: '', position: null, teleportTo: '', hoverText: v?.hoverText ?? '', showFeedback: v?.showFeedback ?? false }
+  switch (v?.type) {
+    case ClickEventType.EXTERNAL: return { ...base, kind: 'link', url: v.externalLink ?? '' }
+    case ClickEventType.SOUND: return { ...base, kind: 'sound', sound: v.sound ?? '' }
+    case ClickEventType.MOVE: return { ...base, kind: 'move', position: v.moveTo?.position ?? null }
+    case ClickEventType.TELEPORT: return { ...base, kind: 'teleport', teleportTo: v.teleportTo ?? '' }
+    default: return base
+  }
+}
+
+/** The click action to save, checked as the server checks it. Moving keeps no camera target: Hyperfy has none. */
+export function clickFromDraft(d: ClickDraft): { ok: true; value: ClickEvent | null } | { ok: false; error: string } {
+  const base = { hoverText: d.hoverText, showFeedback: d.showFeedback }
+  switch (d.kind) {
+    case 'none': return { ok: true, value: null }
+    case 'link': return checkClickEvent({ type: ClickEventType.EXTERNAL, externalLink: d.url, ...base })
+    case 'sound': return checkClickEvent({ type: ClickEventType.SOUND, sound: d.sound, ...base })
+    case 'move': return checkClickEvent({ type: ClickEventType.MOVE, moveTo: d.position ? { position: d.position } : undefined, ...base })
+    case 'teleport': return checkClickEvent({ type: ClickEventType.TELEPORT, teleportTo: d.teleportTo, ...base })
+  }
+}
+
+const r2 = (n: number) => String(Math.round(n * 100) / 100)
+
+/** The editor's detail line: what the chosen kind will do, or how to fill it in. */
+export function clickDetail(d: ClickDraft): string {
+  switch (d.kind) {
+    case 'none': return 'Clicking does nothing'
+    case 'link': return d.url ? `Opens ${d.url}` : CLICK_LINK_HINT
+    case 'sound': return d.sound ? `Plays ${d.sound.split(/[?#]/)[0].split('/').pop() || 'the sound'}` : CLICK_SOUND_HINT
+    case 'move': return d.position ? `Moves the visitor to ${r2(d.position.x)}, ${r2(d.position.y)}, ${r2(d.position.z)}` : CLICK_MOVE_HINT
+    case 'teleport': return CLICK_TELEPORT_NOTE
+  }
+}
+
+/** A `/virvi <link>` while a click editor is open fills it in: the sound for Sound, otherwise the link. */
+export function clickDraftWithLink(d: ClickDraft, url: string): ClickDraft {
+  return d.kind === 'sound' ? { ...d, sound: url } : { ...d, kind: 'link', url }
+}
+
 export const STREAMS_LOADING = 'Loading streams…'
 export const NO_STREAMS = 'No streams yet: set one up on the Streaming page at virvi.io'
 
@@ -169,6 +252,11 @@ export interface HudUi {
   showingList: HudShowing[] | null
   /** The object whose "remove every copy" is waiting to be confirmed (LIV-12). */
   clearing: string | null
+  /** The object whose click action is being edited (LIV-126), and the edit; null when none is open. */
+  clickFor: string | null
+  clickDraft: ClickDraft | null
+  /** Why the last save of the click action was refused, in the server's words. */
+  clickError: string | null
   typing: { target: TypingTarget; text: string } | null
   /** A link request is on its way (hosted worlds ask their server half). */
   linking: boolean
@@ -193,6 +281,9 @@ export const initialUi = (): HudUi => ({
   showingsFor: null,
   showingList: null,
   clearing: null,
+  clickFor: null,
+  clickDraft: null,
+  clickError: null,
   typing: null,
   linking: false,
   placing: false,
@@ -248,7 +339,20 @@ export interface HudViewModel {
       copies: number
       /** The confirmation to show while it is being cleared, else null. */
       clearPrompt: string | null
+      /** "Opens tickets.example"; null for sounds, which can't be clicked. */
+      click: string | null
+      clickOpen: boolean
     }>
+    /** The open click editor (LIV-126), under its object's row. */
+    clickEditor: {
+      elementId: string
+      kinds: Array<{ kind: Exclude<ClickKind, 'teleport'>; label: string; on: boolean }>
+      detail: string
+      /** Move: offer "Use my spot". */
+      canUseSpot: boolean
+      canSave: boolean
+      error: string | null
+    } | null
     presets: Array<{ id: string; name: string; active: boolean }>
   }
   streams: Array<{
@@ -385,6 +489,8 @@ export function hudModel(state: HudState): HudViewModel {
         enabled: el.enabled !== false,
         copies,
         clearPrompt: ui.clearing === el.sk && copies > 0 ? clearCopiesPrompt({ name, copies }) : null,
+        click: kind === 'audio' ? null : `On click: ${describeClick(checkedClick(el.clickEvent))}`,
+        clickOpen: ui.clickFor === el.sk,
       })
     }
   }
@@ -455,7 +561,7 @@ export function hudModel(state: HudState): HudViewModel {
           }
         : null,
     panel: linked ? ui.panel : null,
-    layout: { items, presets },
+    layout: { items, presets, clickEditor: clickEditorOf(ui) },
     streams,
     streamOptions,
     streamsNote,
@@ -532,6 +638,24 @@ export function pairingAlert(prev: PairingState, next: PairingState): HudAlert |
 }
 
 /** The alert for a failed HUD request. 'auth' has none: the link state shows "Link expired". */
+function checkedClick(raw: unknown): ClickEvent | null {
+  const c = checkClickEvent(raw ?? null)
+  return c.ok ? c.value : null
+}
+
+function clickEditorOf(ui: HudUi): HudViewModel['layout']['clickEditor'] {
+  const d = ui.clickDraft
+  if (!ui.clickFor || !d) return null
+  return {
+    elementId: ui.clickFor,
+    kinds: CLICK_KINDS.map(([kind, label]) => ({ kind, label, on: d.kind === kind })),
+    detail: clickDetail(d),
+    canUseSpot: d.kind === 'move',
+    canSave: clickFromDraft(d).ok,
+    error: ui.clickError,
+  }
+}
+
 export function failureAlert(reason: ApiFailure): HudAlert | null {
   switch (reason) {
     case 'auth':

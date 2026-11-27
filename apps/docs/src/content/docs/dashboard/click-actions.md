@@ -22,6 +22,13 @@ Each copy of the item uses the item's action. To give one copy its own, use **Se
 
 From `@virvixr/dcl` 2.11.0, editors can also set an item's action in-world: in the HUD's Layout panel, press **Click** on an image, model or screen.
 
+In Hyperfy, a linked editor can do the same in the HUD's **Scene layout** panel. Press **Click** under an image, model or screen, then choose **Nothing**, **Link**, **Sound** or **Move**:
+
+- **Link** and **Sound:** Hyperfy's chat takes `/` ahead of apps, so the link comes in through chat. Type `/virvi` and paste it (a sound needs a link to the file, such as `https://…/ding.mp3`).
+- **Move:** stand where visitors should go and press **Use my spot**.
+
+Press **Save**. Hover text set on the dashboard is kept. An item that teleports to a Decentraland parcel shows that, and keeps it unless you choose another action.
+
 Actions are checked when they're saved. For example, a link must start with `https://` or `http://`, and a teleport needs parcel coordinates.
 
 ## Where actions run

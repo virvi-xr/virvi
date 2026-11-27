@@ -143,6 +143,11 @@ export class VirviApi {
     return this.call('PUT', `/api/elements/${encodeURIComponent(elementId)}`, { properties: { ...(el.properties ?? {}), ...patch } })
   }
 
+  /** Sets (or with null clears) an object's click action (LIV-126); the server checks it again and says why it refuses. */
+  setClick(elementId: string, clickEvent: unknown): Promise<ApiResult<unknown>> {
+    return this.call('PUT', `/api/elements/${encodeURIComponent(elementId)}`, { clickEvent })
+  }
+
   /** DELETE /api/elements/:id/instances: every copy goes in one operation, the element stays (LIV-12). */
   async deleteInstances(elementId: string): Promise<ApiResult<{ deleted: number }>> {
     const r = await this.call<{ deleted?: number }>('DELETE', `/api/elements/${encodeURIComponent(elementId)}/instances`)

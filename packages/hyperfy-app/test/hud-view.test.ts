@@ -246,3 +246,42 @@ describe('HudView streams panel: showings (LIV-87)', () => {
     expect(draw({ showingsFor: 'v1', showingList: [] }).all).toContain('No showings yet: add them on virvi.io')
   })
 })
+
+describe('HudView layout panel: click actions (LIV-126)', () => {
+  const scene = { videos: [], images: [], models: [{ sk: 'm1', name: 'Chair', instances: [{ sk: 'a' }] }], sounds: [] }
+  const setup = (ui: Record<string, unknown>) => {
+    const h = host()
+    const calls: unknown[][] = []
+    const act = new Proxy({}, { get: (_t, name) => (...args: unknown[]) => void calls.push([name, ...args]) }) as HudActions
+    new HudView(h, act).render(hudModel({ ...vmState(), scene: scene as never, ui: { panel: 'layout', ...ui } }))
+    const all = h.created.flatMap((n) => (typeof n.value === 'string' ? [n.value] : []))
+    const press = (label: string) => h.created.find((n) => n.onPointerDown && texts(n).length === 1 && texts(n)[0] === label)!.onPointerDown()
+    return { all, press, calls }
+  }
+
+  it("shows the object's action and a Click button that opens the editor", () => {
+    const t = setup({})
+    expect(t.all).toContain('On click: Nothing')
+    t.press('Click')
+    expect(t.calls).toEqual([['openClick', 'm1']])
+  })
+
+  it('the editor: kinds, what it will do, Use my spot for Move, Save once complete', () => {
+    const draft = { kind: 'move', url: '', sound: '', position: { x: 8, y: 0, z: 4 }, teleportTo: '', hoverText: '', showFeedback: false }
+    const t = setup({ clickFor: 'm1', clickDraft: draft })
+    for (const s of ['Nothing', 'Link', 'Sound', 'Move', 'Moves the visitor to 8, 0, 4', 'Use my spot', 'Save', 'Cancel']) expect(t.all).toContain(s)
+    t.press('Link')
+    t.press('Use my spot')
+    t.press('Save')
+    t.press('Cancel')
+    expect(t.calls).toEqual([['setClickKind', 'link'], ['useMySpot'], ['saveClick'], ['openClick', 'm1']])
+  })
+
+  it("an incomplete action has no Save, and a refusal shows the server's reason", () => {
+    const draft = { kind: 'link', url: '', sound: '', position: null, teleportTo: '', hoverText: '', showFeedback: false }
+    const t = setup({ clickFor: 'm1', clickDraft: draft, clickError: 'A link must start with https:// or http://.' })
+    expect(t.all).not.toContain('Save')
+    expect(t.all).toContain('In chat, type /virvi and paste the link')
+    expect(t.all).toContain('A link must start with https:// or http://.')
+  })
+})

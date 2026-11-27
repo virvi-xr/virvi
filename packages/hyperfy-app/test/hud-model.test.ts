@@ -27,6 +27,16 @@ import {
   pairingAlert,
   placeAsset,
   typeKey,
+  alertClickSaved,
+  clickDetail,
+  clickDraftOf,
+  clickDraftWithLink,
+  clickFromDraft,
+  standingSpot,
+  CLICK_MOVE_HINT,
+  CLICK_SOUND_HINT,
+  CLICK_TELEPORT_NOTE,
+  PLACE_DISTANCE,
   type AssetEntry,
   type HudState,
 } from '../src/hud/model.js'
@@ -186,9 +196,9 @@ describe('hudModel', () => {
     )
     expect(vm.panel).toBe('layout')
     expect(vm.layout.items).toEqual([
-      { elementId: 'v1', kind: 'video', name: 'Main screen', enabled: true, copies: 1, clearPrompt: null },
-      { elementId: 'im1', kind: 'image', name: 'Poster', enabled: false, copies: 1, clearPrompt: null },
-      { elementId: 'm1', kind: 'model', name: 'Tree', enabled: true, copies: 1, clearPrompt: null },
+      { elementId: 'v1', kind: 'video', name: 'Main screen', enabled: true, copies: 1, clearPrompt: null, click: 'On click: Nothing', clickOpen: false },
+      { elementId: 'im1', kind: 'image', name: 'Poster', enabled: false, copies: 1, clearPrompt: null, click: 'On click: Nothing', clickOpen: false },
+      { elementId: 'm1', kind: 'model', name: 'Tree', enabled: true, copies: 1, clearPrompt: null, click: 'On click: Nothing', clickOpen: false },
     ])
     expect(vm.layout.presets).toEqual([
       { id: 'preset-a', name: 'Day', active: true },
@@ -691,5 +701,67 @@ describe('showings in the Streams panel (LIV-87)', () => {
     expect(showControlAlert('delay', 'Film')).toEqual({ kind: 'info', text: 'Film: the next show starts 5 min later' })
     expect(showControlAlert('end', '')).toEqual({ kind: 'info', text: 'Untitled showing: ended' })
     expect(showControlAlert('play-now', 'Film')).toEqual({ kind: 'info', text: 'Film: playing now for everyone' })
+  })
+})
+
+describe('click actions in the Layout panel (LIV-126)', () => {
+  it("each clickable object shows its action; sounds can't be clicked", () => {
+    const sc = scene({
+      images: [{ sk: 'im1', name: 'Poster', enabled: true, instances: [inst('ii1')], clickEvent: { type: 1, externalLink: 'https://www.tickets.example/show', showFeedback: false } }],
+      sounds: [{ sk: 's1', name: 'Rain', instances: [] }],
+    })
+    const vm = hudModel(state({ scene: sc, plan: planScene(sc), ui: { panel: 'layout' } }))
+    expect(vm.layout.items.find((i) => i.elementId === 'im1')).toMatchObject({ click: 'On click: Opens tickets.example', clickOpen: false })
+    expect(vm.layout.items.find((i) => i.elementId === 's1')?.click).toBeNull()
+    expect(vm.layout.clickEditor).toBeNull()
+  })
+
+  it('the editor starts from the current action, and can only save a complete one', () => {
+    const draft = clickDraftOf({ type: 1, externalLink: 'https://a.example/x', hoverText: 'Tickets', showFeedback: true })
+    expect(draft).toMatchObject({ kind: 'link', url: 'https://a.example/x', hoverText: 'Tickets', showFeedback: true })
+    const open = hudModel(state({ ui: { panel: 'layout', clickFor: 'im1', clickDraft: draft } }))
+    expect(open.layout.items.find((i) => i.elementId === 'im1')?.clickOpen).toBe(true)
+    expect(open.layout.clickEditor).toMatchObject({ elementId: 'im1', detail: 'Opens https://a.example/x', canSave: true, canUseSpot: false, error: null })
+    expect(open.layout.clickEditor!.kinds.map((k) => [k.label, k.on])).toEqual([['Nothing', false], ['Link', true], ['Sound', false], ['Move', false]])
+
+    const sound = hudModel(state({ ui: { panel: 'layout', clickFor: 'im1', clickDraft: { ...draft, kind: 'sound' } } }))
+    expect(sound.layout.clickEditor).toMatchObject({ detail: CLICK_SOUND_HINT, canSave: false })
+    const move = hudModel(state({ ui: { panel: 'layout', clickFor: 'im1', clickDraft: { ...draft, kind: 'move' } } }))
+    expect(move.layout.clickEditor).toMatchObject({ detail: CLICK_MOVE_HINT, canSave: false, canUseSpot: true })
+  })
+
+  it('drafts become the click action the server takes, keeping hover text', () => {
+    const base = clickDraftOf(null)
+    expect(base.kind).toBe('none')
+    expect(clickFromDraft(base)).toEqual({ ok: true, value: null })
+    expect(clickFromDraft({ ...base, kind: 'link', url: 'https://a.example', hoverText: 'Go' })).toEqual({ ok: true, value: { type: 1, externalLink: 'https://a.example', hoverText: 'Go', showFeedback: false } })
+    expect(clickFromDraft({ ...base, kind: 'sound', sound: 'https://a.example/ding.mp3' })).toMatchObject({ ok: true, value: { type: 2, sound: 'https://a.example/ding.mp3' } })
+    expect(clickFromDraft({ ...base, kind: 'move', position: { x: 8, y: 0, z: 4 } })).toEqual({ ok: true, value: { type: 4, moveTo: { position: { x: 8, y: 0, z: 4 } }, showFeedback: false } })
+    expect(clickFromDraft({ ...base, kind: 'link', url: 'ftp://nope' })).toEqual({ ok: false, error: 'A link must start with https:// or http://.' })
+    // A Decentraland teleport is kept as it was
+    const tp = clickDraftOf({ type: 5, teleportTo: '52,-20', showFeedback: false })
+    expect(tp.kind).toBe('teleport')
+    expect(clickDetail(tp)).toBe(CLICK_TELEPORT_NOTE)
+    expect(clickFromDraft(tp)).toEqual({ ok: true, value: { type: 5, teleportTo: '52,-20', showFeedback: false } })
+  })
+
+  it('a /virvi link fills in the open editor: the sound for Sound, otherwise the link', () => {
+    const d = clickDraftOf(null)
+    expect(clickDraftWithLink(d, 'https://a.example')).toMatchObject({ kind: 'link', url: 'https://a.example' })
+    expect(clickDraftWithLink({ ...d, kind: 'sound' }, 'https://a.example/ding.mp3')).toMatchObject({ kind: 'sound', sound: 'https://a.example/ding.mp3' })
+    expect(clickDetail({ ...d, kind: 'sound', sound: 'https://a.example/fx/ding.mp3?v=2' })).toBe('Plays ding.mp3')
+    expect(clickDetail({ ...d, kind: 'move', position: { x: 1.234, y: 0, z: -2 } })).toBe('Moves the visitor to 1.23, 0, -2')
+  })
+
+  it('Use my spot: the player position in the app root frame, as Virvi coordinates', () => {
+    const identity = new Matrix4()
+    const spot = standingSpot({ x: 3, y: 1, z: -5 }, identity)
+    const same = inFrontOf({ position: { x: 3, y: 1, z: -5 + PLACE_DISTANCE }, quaternion: { x: 0, y: 0, z: 0, w: 1 } }, 1, identity).position
+    expect(spot).toEqual(same) // inFrontOf two metres ahead of a camera looking down -z lands on the same spot
+  })
+
+  it('a saved action reads as an alert', () => {
+    expect(alertClickSaved('Poster', { type: 1, externalLink: 'https://tickets.example', showFeedback: false })).toEqual({ kind: 'info', text: 'Poster: on click, opens tickets.example' })
+    expect(alertClickSaved('Poster', null).text).toBe('Poster: on click, nothing')
   })
 })

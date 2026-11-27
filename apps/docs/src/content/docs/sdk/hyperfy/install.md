@@ -67,6 +67,7 @@ Hosted worlds remember the link for that browser until you revoke it or it goes 
 
 - **Move, rotate and resize** objects with the gizmo.
 - **Show or hide** objects, and **switch presets**, in **Scene layout**.
+- **Set what clicking does** (a link, a sound, or moving the visitor), under each object in **Scene layout**. See [Click actions](/docs/dashboard/click-actions/#setting-an-action).
 - **Go live or offline** on video screens, in **Streams**.
 - **Place models** from the scene library, the catalog or a GLB link, in **3D Models**. The model is placed 2 m in front of you. Models added this way need a Decentraland redeploy to appear there, and the HUD says so.
 

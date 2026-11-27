@@ -56,6 +56,25 @@ describe('Hyperfy HUD edit routes', () => {
     expect((await live(pass, screen.id, 'yes')).statusCode).toBe(400)
   })
 
+  it("a hyperfy pass sets an object's click action, the snapshot carries it, and a bad one is refused with a reason (LIV-126)", async () => {
+    const owner = await createUser({ wallet: randomWallet() })
+    const { scene, preset } = await createScene(owner)
+    const poster = await createElement(preset.id, { type: 'image', name: 'Poster', properties: { textureSrc: 'https://x/a.png' } })
+    const pass = await hyperfyPass(owner, scene.id, owner.id)
+    const put = (clickEvent: unknown) => app.inject({ method: 'PUT', url: `/api/elements/${poster.id}`, headers: bearer(pass), payload: { clickEvent } })
+
+    const move = { type: 4, moveTo: { position: { x: 8, y: 0, z: 4 } }, showFeedback: false }
+    expect((await put(move)).statusCode).toBe(200)
+    expect((await sceneSnapshot(scene.id))!.scene!.images[0].clickEvent).toEqual(move)
+    const bad = await put({ type: 1, externalLink: 'javascript:alert(1)' })
+    expect(bad.statusCode).toBe(400)
+    expect(bad.json()).toEqual({ error: 'bad_click', message: 'A link must start with https:// or http://.' })
+    expect((await put(null)).statusCode).toBe(200)
+    expect((await sceneSnapshot(scene.id))!.scene!.images[0].clickEvent ?? null).toBeNull()
+    // The image's own properties are untouched
+    expect((await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, poster.id) }))!.properties).toMatchObject({ textureSrc: 'https://x/a.png' })
+  })
+
   it('a booking host can toggle only during their booking and only rentable screens', async () => {
     const admin = await createUser({ role: 'admin' })
     const { scene, preset } = await createScene(admin)

@@ -67,6 +67,15 @@ describe('VirviApi', () => {
     expect(body(t.calls[3])).toEqual({ properties: { offType: 2, liveSrc: 'x', offImageSrc: '' } })
   })
 
+  it("sets an object's click action alone, and passes on the server's reason for refusing one (LIV-126)", async () => {
+    const t = make([res(200, { element: {} }), res(400, { error: 'bad_click', message: 'Teleport to parcel coordinates like 52,-20.' })])
+    const click = { type: 1, externalLink: 'https://tickets.example', showFeedback: false }
+    expect((await t.api.setClick('m1', click)).ok).toBe(true)
+    expect([t.calls[0].init.method, t.calls[0].url]).toEqual(['PUT', 'https://api.example/api/elements/m1'])
+    expect(body(t.calls[0])).toEqual({ clickEvent: click })
+    expect(await t.api.setClick('m1', { type: 5 })).toEqual({ ok: false, reason: 'invalid', message: 'Teleport to parcel coordinates like 52,-20.' })
+  })
+
   it('403 on save maps to the no-access reason', async () => {
     const t = make([res(403, { error: 'Forbidden' })])
     expect(await t.api.saveTransform('i1', T)).toEqual({ ok: false, reason: 'no_access' })

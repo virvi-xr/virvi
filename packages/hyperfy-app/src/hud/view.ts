@@ -4,7 +4,7 @@
  * stack (bottom centre, click-through). Screen UI takes clicks only while the pointer is unlocked.
  */
 import type { TransformMode } from '@virvixr/core/transform/session'
-import { DELAY_STEP_MINUTES, type AssetTab, type Axis, type HudViewModel, type Panel, type ShowControl } from './model.js'
+import { DELAY_STEP_MINUTES, type AssetTab, type Axis, type ClickKind, type HudViewModel, type Panel, type ShowControl } from './model.js'
 
 export interface UiNode {
   add(child: UiNode): void
@@ -39,6 +39,11 @@ export interface HudActions {
   /** Ask to remove every copy of an object (null cancels the question). */
   askClear(elementId: string | null): void
   clearCopies(elementId: string): void
+  /** Open (or close) an object's click editor (LIV-126). */
+  openClick(elementId: string): void
+  setClickKind(kind: Exclude<ClickKind, 'teleport'>): void
+  useMySpot(): void
+  saveClick(): void
   setPreset(presetId: string): void
   toggleLive(elementId: string, on: boolean): void
   /** Open (or close) a screen's stream list. */
@@ -304,6 +309,10 @@ export class HudView {
                   this.row([this.button('Remove', () => a.clearCopies(i.elementId), true), this.button('Cancel', () => a.askClear(null))]),
                 ]
               : []),
+            ...(i.click !== null
+              ? [this.row([this.label(i.click, C.dim, 12), this.button(i.clickOpen ? 'Close' : 'Click', () => a.openClick(i.elementId), i.clickOpen)])]
+              : []),
+            ...(i.clickOpen && vm.layout.clickEditor ? this.clickEditorRows(vm.layout.clickEditor) : []),
           ]),
         ]
       case 'streams':
@@ -387,6 +396,21 @@ export class HudView {
   }
 
   // ── nodes ────────────────────────────────────────────────────────────
+
+  /** The click editor under its object's row (LIV-126): the kind, what it will do, and Save. */
+  private clickEditorRows(ed: NonNullable<HudViewModel['layout']['clickEditor']>): UiNode[] {
+    const a = this.act
+    return [
+      this.row(ed.kinds.map((k) => this.button(k.label, () => a.setClickKind(k.kind), k.on))),
+      this.row([this.label(ed.detail, C.dim, 12)]),
+      ...(ed.error ? [this.row([this.label(ed.error, C.error, 12)])] : []),
+      this.row([
+        ...(ed.canUseSpot ? [this.button('Use my spot', () => a.useMySpot())] : []),
+        ...(ed.canSave ? [this.button('Save', () => a.saveClick(), true)] : []),
+        this.button('Cancel', () => a.openClick(ed.elementId)),
+      ]),
+    ]
+  }
 
   private row(children: UiNode[], height = ROW): UiNode {
     const n = this.host.create('uiview', {

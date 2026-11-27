@@ -33,6 +33,11 @@ import {
   inFrontOf,
   initialUi,
   clearedAlert,
+  alertClickSaved,
+  clickDraftOf,
+  clickDraftWithLink,
+  clickFromDraft,
+  standingSpot,
   offImageChoices,
   pairingAlert,
   placeAsset,
@@ -151,13 +156,17 @@ export function runHud(hooks: ClientEditHooks, sandbox: HudSandbox): void {
           controller.state.values && setUi({ typing: { target: axis, text: '' } }),
         typeKey: (prop, char) => void typeInto(prop, char),
         openPanel: (p) => {
-          setUi({ panel: ui.panel === p ? null : p, typing: null, clearing: null })
+          setUi({ panel: ui.panel === p ? null : p, typing: null, clearing: null, clickFor: null, clickDraft: null, clickError: null })
           if (ui.panel === 'layout') void loadPresets()
           if (ui.panel === 'assets') void loadTab(ui.tab)
         },
         toggleEnabled: (id, on) => void request(api.setEnabled(id, on)),
         askClear: (id) => setUi({ clearing: id }),
         clearCopies: (id) => void clearCopies(id),
+        openClick: (id) => openClick(id),
+        setClickKind: (kind) => ui.clickDraft && setUi({ clickDraft: { ...ui.clickDraft, kind }, clickError: null }),
+        useMySpot: () => useMySpot(),
+        saveClick: () => void saveClick(),
         setPreset: (id) => void request(api.setPreset(sceneId(), id)),
         toggleLive: (id, on) => void request(api.setLive(id, on)),
         pickStream: (id) => {
@@ -392,6 +401,43 @@ export function runHud(hooks: ClientEditHooks, sandbox: HudSandbox): void {
     else pushAlert(failureAlert(r.reason))
   }
 
+  /** The element in the current snapshot, by id. */
+  function elementOf(elementId: string): Record<string, unknown> | undefined {
+    const lists = [scene?.images, scene?.models, scene?.videos] as Array<Array<Record<string, unknown>> | undefined>
+    return lists.flatMap((l) => l ?? []).find((e) => e.sk === elementId)
+  }
+
+  /** Opens (or closes) an object's click editor, starting from the action it has (LIV-126). */
+  function openClick(elementId: string): void {
+    if (ui.clickFor === elementId) return setUi({ clickFor: null, clickDraft: null, clickError: null })
+    const el = elementOf(elementId)
+    if (!el) return
+    setUi({ clickFor: elementId, clickDraft: clickDraftOf(el.clickEvent), clickError: null, clearing: null, typing: null })
+  }
+
+  /** Move sends visitors to where this player stands now. */
+  function useMySpot(): void {
+    const me = world.getPlayer()
+    if (!me || !ui.clickDraft) return
+    setUi({ clickDraft: { ...ui.clickDraft, kind: 'move', position: standingSpot(me.position, rootInverse()) }, clickError: null })
+  }
+
+  /** Saves the click action; the world runs it once the feed brings the element back. */
+  async function saveClick(): Promise<void> {
+    const elementId = ui.clickFor
+    const draft = ui.clickDraft
+    if (!elementId || !draft) return
+    const c = clickFromDraft(draft)
+    if (!c.ok) return setUi({ clickError: c.error })
+    const name = hudModel({ pairing: link, edit: controller.state, plan, scene, alerts: [], ui }).layout.items.find((i) => i.elementId === elementId)?.name ?? ''
+    const r = await api.setClick(elementId, c.value)
+    if (r.ok) {
+      setUi({ clickFor: null, clickDraft: null, clickError: null })
+      pushAlert(alertClickSaved(name, c.value))
+    } else if (r.reason === 'invalid' && r.message) setUi({ clickError: r.message })
+    else pushAlert(failureAlert(r.reason))
+  }
+
   /** The scene library's images, for a screen's off image (LIV-54). */
   async function loadImages(): Promise<void> {
     const id = sceneId()
@@ -580,6 +626,11 @@ export function runHud(hooks: ClientEditHooks, sandbox: HudSandbox): void {
     const text = chatCommandText(e)
     const entry = text === null ? null : chatEntry(text)
     if (!entry) return
+    // A link while a click editor is open fills that in (LIV-126)
+    if (entry.tab === 'link' && ui.clickFor && ui.clickDraft) {
+      setUi({ panel: 'layout', clickDraft: clickDraftWithLink(ui.clickDraft, entry.linkUrl), clickError: null })
+      return
+    }
     if (entry.tab === 'link')
       setUi({ panel: 'assets', tab: 'link', linkUrl: entry.linkUrl, chosen: null, typing: null })
     else {
