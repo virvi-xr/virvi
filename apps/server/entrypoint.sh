@@ -692,6 +692,16 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE TABLE IF NOT EXISTS model_stats (url TEXT PRIMARY KEY, triangles INTEGER, texture_count INTEGER, texture_bytes BIGINT, max_texture_px INTEGER, error TEXT, measured_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
         console.log('[virvi-server] model stats table ensured');
       } catch(e) { console.log('[virvi-server] model stats table:', e.message); }
+      // Moderation (LIV-34); matches moderationActions, moderationAppeals
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS moderation_actions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), target_type TEXT NOT NULL, target_id TEXT NOT NULL, action TEXT NOT NULL, reason TEXT, actor_id UUID CONSTRAINT moderation_actions_actor_id_users_id_fk REFERENCES users(id) ON DELETE SET NULL, owner_id UUID CONSTRAINT moderation_actions_owner_id_users_id_fk REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE INDEX IF NOT EXISTS moderation_actions_created_idx ON moderation_actions (created_at)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS moderation_actions_target_idx ON moderation_actions (target_type, target_id)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS moderation_appeals (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), asset_item_id UUID NOT NULL CONSTRAINT moderation_appeals_asset_item_id_asset_library_items_id_fk REFERENCES asset_library_items(id) ON DELETE CASCADE, user_id UUID NOT NULL CONSTRAINT moderation_appeals_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, message TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', response TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), resolved_at TIMESTAMPTZ)\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS moderation_appeals_open_uq ON moderation_appeals (asset_item_id) WHERE status = 'open'\`;
+        await sql\`CREATE INDEX IF NOT EXISTS moderation_appeals_status_idx ON moderation_appeals (status, created_at)\`;
+        console.log('[virvi-server] moderation tables ensured');
+      } catch(e) { console.log('[virvi-server] moderation tables:', e.message); }
       await sql.end();
     })();
   " 2>&1 || echo "[virvi-server] SQL fallback had errors"

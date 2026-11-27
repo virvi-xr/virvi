@@ -67,6 +67,7 @@ describe('entrypoint schema fallback: scene activity and status page', () => {
     ['Scene activity', ['scene_activity']],
     ['Status page', ['status_checks', 'status_incidents', 'status_incident_updates']],
     ['Model stats', ['model_stats']],
+    ['Moderation', ['moderation_actions', 'moderation_appeals']],
   ])('%s: creates the tables exactly as schema.ts does, and runs again harmlessly', async (label, tables) => {
     const statements = fallbackBlocks(label)
     await scratch(async () => {

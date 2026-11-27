@@ -241,6 +241,13 @@ export type { AdminAdSpace } from '@virvixr/shared'
 
 /** A visitor's report of a Virvi Spaces space, as the admin page lists it. */
 /** An open report of a shared model (LIV-20), as the admin page lists it. */
+/** The owner's appeal of a takedown (LIV-34). */
+export type AssetAppeal = { id: string; status: 'open' | 'restored' | 'rejected'; response: string | null; createdAt: string; resolvedAt: string | null }
+export type AdminModeration = {
+  appeals: { id: string; message: string; createdAt: string; asset: { id: string; name: string; thumbnailUrl: string | null; takedownReason: string | null }; owner: { id: string; displayName: string } | null }[]
+  log: { id: string; targetType: string; targetId: string; action: string; reason: string | null; createdAt: string; actor: string | null; owner: string | null }[]
+}
+
 export type AdminAssetReport = {
   id: string
   reason: string
@@ -1079,6 +1086,12 @@ function useRealApi() {
     getAdminAssetReports: () => apiFetch<{ reports: AdminAssetReport[] }>('/api/admin/asset-reports'),
     dismissAdminAssetReport: (id: string) =>
       apiFetch<{ dismissed: boolean }>(`/api/admin/asset-reports/${id}/dismiss`, { method: 'POST' }),
+    getAssetAppeal: (id: string) => apiFetch<{ appeal: AssetAppeal | null }>(`/api/assets/${id}/appeal`),
+    appealAsset: (id: string, message: string) =>
+      apiFetch<{ appeal: { id: string; status: string } }>(`/api/assets/${id}/appeal`, { method: 'POST', userAction: true, body: JSON.stringify({ message }) }),
+    getAdminModeration: () => apiFetch<AdminModeration>('/api/admin/moderation'),
+    decideAppeal: (id: string, decision: 'restore' | 'reject', response: string) =>
+      apiFetch<{ appeal: { id: string; status: string } }>(`/api/admin/appeals/${id}/${decision}`, { method: 'POST', body: JSON.stringify({ response }) }),
     takeDownAsset: (id: string, reason: string) =>
       apiFetch<{ takenDown: boolean }>(`/api/admin/assets/${id}/takedown`, { method: 'POST', body: JSON.stringify({ reason }) }),
     updateAsset: (id: string, data: Record<string, any>) =>

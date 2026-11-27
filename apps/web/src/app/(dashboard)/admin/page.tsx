@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { ConfirmAction, PageHeader, Skeleton, tableHead, TableScroll } from '@/components/ui'
 import { StatCard } from '@/components/analytics/StatCard'
 import AssetReports from './AssetReports'
+import Moderation from './Moderation'
 import { adminPrivacyLabel, adminTermsLabel } from '@/lib/privacy'
 
 type Tab = 'users' | 'orgs'
@@ -252,6 +253,7 @@ export default function AdminPage() {
       </div>
 
       <AssetReports />
+      <Moderation />
 
       {/* Tabs */}
       <div className="flex gap-2 border-b border-gray-700 pb-0">

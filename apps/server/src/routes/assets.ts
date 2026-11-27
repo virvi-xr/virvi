@@ -32,6 +32,7 @@ import { isVirviAdmin, requireAdmin } from '../auth/admin.js'
 import { generateThumbnail } from '../services/thumbnails.js'
 import { releaseRoomSetObject } from '../room-scan/sets.js'
 import { isUuid } from '../auth/scene-from.js'
+import { appealOf, appealTakedown, decideAppeal, moderationOverview } from '../library/moderation.js'
 import {
   dismissReport, forViewer, isRoomAsset, listOpenReports, releaseToUsers, reportModel, shareModel, ShareError, takeDownModel,
   unshareModel, usedByOthers,
@@ -407,6 +408,25 @@ export default async function assetRoutes(app: FastifyInstance) {
     } catch (err) { return shareRefusal(reply, err) }
   })
 
+  // ── Appeals (LIV-34): the owner of a model Virvi took down asks it to look again ──
+  app.post('/api/assets/:id/appeal', { preHandler: [authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (!isUuid(id)) return reply.status(404).send({ error: 'not_found' })
+    try {
+      const appeal = await appealTakedown(id, request.user.id, (request.body as { message?: unknown } | undefined)?.message)
+      return reply.status(201).send({ appeal: { id: appeal.id, status: appeal.status, createdAt: appeal.createdAt } })
+    } catch (err) { return shareRefusal(reply, err) }
+  })
+
+  app.get('/api/assets/:id/appeal', { preHandler: [authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (!isUuid(id)) return reply.status(404).send({ error: 'not_found' })
+    try {
+      const appeal = await appealOf(id, request.user.id)
+      return reply.send({ appeal: appeal && { id: appeal.id, status: appeal.status, response: appeal.response, createdAt: appeal.createdAt, resolvedAt: appeal.resolvedAt } })
+    } catch (err) { return shareRefusal(reply, err) }
+  })
+
   const admin = { preHandler: [authenticate, requireAdmin] }
 
   app.get('/api/admin/asset-reports', admin, async (_request, reply) => reply.send({ reports: await listOpenReports() }))
@@ -415,7 +435,7 @@ export default async function assetRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string }
     if (!isUuid(id)) return reply.status(404).send({ error: 'not_found' })
     try {
-      await dismissReport(id)
+      await dismissReport(id, request.user.id)
       return reply.send({ dismissed: true })
     } catch (err) { return shareRefusal(reply, err) }
   })
@@ -424,8 +444,21 @@ export default async function assetRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string }
     if (!isUuid(id)) return reply.status(404).send({ error: 'not_found' })
     try {
-      await takeDownModel(id, (request.body as { reason?: unknown } | undefined)?.reason)
+      await takeDownModel(id, (request.body as { reason?: unknown } | undefined)?.reason, request.user.id)
       return reply.send({ takenDown: true })
     } catch (err) { return shareRefusal(reply, err) }
   })
+
+  app.get('/api/admin/moderation', admin, async (_request, reply) => reply.send(await moderationOverview()))
+
+  for (const decision of ['restored', 'rejected'] as const) {
+    app.post(`/api/admin/appeals/:id/${decision === 'restored' ? 'restore' : 'reject'}`, admin, async (request, reply) => {
+      const { id } = request.params as { id: string }
+      if (!isUuid(id)) return reply.status(404).send({ error: 'not_found' })
+      try {
+        const appeal = await decideAppeal(id, decision, (request.body as { response?: unknown } | undefined)?.response, request.user.id)
+        return reply.send({ appeal: { id: appeal.id, status: appeal.status } })
+      } catch (err) { return shareRefusal(reply, err) }
+    })
+  }
 }

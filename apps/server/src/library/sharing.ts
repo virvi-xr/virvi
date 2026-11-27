@@ -5,6 +5,7 @@ import { assetLibraryItems, assetReports, roomSets, sceneLibrary, scenes, users 
 import { config } from '../config.js'
 import { sendEmail } from '../services/email.js'
 import { withoutUploadCode } from './model-uploads.js'
+import { logModeration, noticeTakedown } from './moderation-log.js'
 
 /**
  * Sharing 3D models with other Virvi users (LIV-20). The owner shares a model under a license from SHARE_LICENSES, having
@@ -54,7 +55,7 @@ export async function shareModel(
   body: { license?: unknown; rightsConfirmed?: unknown; credit?: unknown },
 ): Promise<Asset> {
   const asset = await ownModel(assetId, user.id)
-  if (asset.takenDownAt) throw new ShareError(409, 'taken_down', 'Virvi took this model down, so it can’t be shared again. Contact support@virvi.io if you think that’s a mistake.')
+  if (asset.takenDownAt) throw new ShareError(409, 'taken_down', 'Virvi took this model down, so it can’t be shared again. If you think that’s a mistake, choose Appeal on the model.')
   if (asset.status !== 'ready') throw new ShareError(409, 'not_ready', 'This model is still uploading')
   if (await isRoomAsset(asset)) throw new ShareError(400, 'room_assets_private', 'Models made from a room scan stay private')
   if (body.rightsConfirmed !== true) throw new ShareError(400, 'rights_not_confirmed', 'Confirm you made this model or have the right to share it')
@@ -144,7 +145,7 @@ export async function listOpenReports() {
 }
 
 /** Virvi takes a model down: it stops being public, its open reports close, and its owner can't share it again. */
-export async function takeDownModel(assetId: string, reason: unknown): Promise<void> {
+export async function takeDownModel(assetId: string, reason: unknown, adminId: string | null = null): Promise<void> {
   if (typeof reason !== 'string' || !reason.trim() || reason.length > TAKEDOWN_REASON_MAX) {
     throw new ShareError(400, 'bad_reason', `Say why, in at most ${TAKEDOWN_REASON_MAX} characters`)
   }
@@ -153,17 +154,21 @@ export async function takeDownModel(assetId: string, reason: unknown): Promise<v
     .update(assetLibraryItems)
     .set({ isPublic: false, takenDownAt: now, takedownReason: reason.trim() })
     .where(and(eq(assetLibraryItems.id, assetId), sql`${assetLibraryItems.packId} IS NULL`))
-    .returning({ id: assetLibraryItems.id })
+    .returning({ id: assetLibraryItems.id, name: assetLibraryItems.name, uploadedBy: assetLibraryItems.uploadedBy })
   if (!hit) throw new ShareError(404, 'not_found', 'Model not found')
   await db.update(assetReports).set({ status: 'taken_down', resolvedAt: now }).where(and(eq(assetReports.assetItemId, assetId), eq(assetReports.status, 'open')))
+  await logModeration({ targetType: 'asset', targetId: assetId, action: 'taken_down', reason: reason.trim(), actorId: adminId, ownerId: hit.uploadedBy })
+  await noticeTakedown(hit, reason.trim())
 }
 
 /** Close a report, leaving the model as it is. */
-export async function dismissReport(reportId: string): Promise<void> {
+export async function dismissReport(reportId: string, adminId: string | null = null): Promise<void> {
   const [hit] = await db
     .update(assetReports)
     .set({ status: 'dismissed', resolvedAt: new Date() })
     .where(and(eq(assetReports.id, reportId), eq(assetReports.status, 'open')))
-    .returning({ id: assetReports.id })
+    .returning({ id: assetReports.id, assetItemId: assetReports.assetItemId, reason: assetReports.reason })
   if (!hit) throw new ShareError(404, 'not_found', 'Report not found')
+  const asset = await db.query.assetLibraryItems.findFirst({ where: eq(assetLibraryItems.id, hit.assetItemId), columns: { uploadedBy: true } })
+  await logModeration({ targetType: 'asset_report', targetId: hit.id, action: 'dismissed', reason: `report: ${hit.reason}`, actorId: adminId, ownerId: asset?.uploadedBy ?? null })
 }

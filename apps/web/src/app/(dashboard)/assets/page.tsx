@@ -15,6 +15,7 @@ import { canManage, canReport, sharedNote } from '@/lib/asset-sharing'
 import { shareLicense } from '@virvixr/shared'
 import { assetListScope, assetViewHref, readAssetView, visibilityLabel, type AssetView, type MineKind } from '@/lib/asset-views'
 import { Badge, ConfirmAction, EmptyState, PageHeader, PrimaryButton, RowMenu, SearchField, SelectField, useStoredView, ViewToggle, Skeleton } from '@/components/ui'
+import { TakedownNotice } from '@/components/TakedownNotice'
 
 const VIEW_KEY = 'virvi.assets.view'
 const fieldClass = 'w-full rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-sm outline-none focus:border-blue-400'
@@ -401,11 +402,7 @@ function AssetDetail({ assetId, onDeleted }: { assetId: string; onDeleted: (id: 
                   {shareLicense(asset.license)?.url && <> <a href={shareLicense(asset.license)!.url!} target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">Full license</a></>}
                 </p>
               )}
-              {asset.mine && asset.takenDownAt && (
-                <p className="rounded-md border border-red-900/60 bg-red-900/20 p-3 text-sm text-red-300" role="status">
-                  Virvi took this model down{asset.takedownReason ? `: ${asset.takedownReason}` : ''}. It stays in your library and in scenes that have it, but it can’t be shared. Email support@virvi.io if you think that’s a mistake.
-                </p>
-              )}
+              {asset.mine && asset.takenDownAt && <TakedownNotice assetId={asset.id} reason={asset.takedownReason ?? null} />}
 
               {/* Stats grid */}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

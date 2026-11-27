@@ -25,6 +25,7 @@ import { deleteMyGiveawayData, giveawaysBlockingDelete } from '../giveaways/acco
 import { handOverDesigns } from '../studio/handover.js'
 import { privacyStatusesFor } from '../auth/privacy.js'
 import { termsStatusesFor } from '../auth/terms.js'
+import { logModeration } from '../library/moderation-log.js'
 
 
 export default async function adminRoutes(app: FastifyInstance) {
@@ -79,6 +80,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (!isUuid(request.params.id)) return reply.status(404).send({ error: 'not_found' })
     const [row] = await db.update(arReports).set({ status }).where(eq(arReports.id, request.params.id)).returning({ id: arReports.id, status: arReports.status })
     if (!row) return reply.status(404).send({ error: 'not_found' })
+    await logModeration({ targetType: 'ar_report', targetId: row.id, action: status === 'resolved' ? 'resolved' : 'reopened', actorId: request.user.id })
     return reply.send({ report: row })
   })
 

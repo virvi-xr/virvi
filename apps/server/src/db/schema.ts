@@ -868,6 +868,43 @@ export const assetReports = pgTable('asset_reports', {
   statusIdx: index('asset_reports_status_idx').on(t.status, t.createdAt),
 }))
 
+/**
+ * Every moderation decision a site admin makes (LIV-34): what was acted on, what was done, why, by whom, and whose
+ * content it was. Read on the admin Moderation log; never shown to the public.
+ */
+export const moderationActions = pgTable('moderation_actions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  /** asset (a shared 3D model), asset_report, ar_report or appeal */
+  targetType: text('target_type').notNull(),
+  targetId: text('target_id').notNull(),
+  /** taken_down, dismissed, restored, appeal_rejected, resolved, reopened */
+  action: text('action').notNull(),
+  reason: text('reason'),
+  actorId: uuid('actor_id').references(() => users.id, { onDelete: 'set null' }),
+  /** Whose content it was, when it is someone's */
+  ownerId: uuid('owner_id').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  byCreated: index('moderation_actions_created_idx').on(t.createdAt),
+  byTarget: index('moderation_actions_target_idx').on(t.targetType, t.targetId),
+}))
+
+/** An owner asking Virvi to look again at a model it took down (LIV-34). One open appeal per model. */
+export const moderationAppeals = pgTable('moderation_appeals', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  assetItemId: uuid('asset_item_id').notNull().references(() => assetLibraryItems.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  message: text('message').notNull(),
+  /** open, restored or rejected */
+  status: text('status').notNull().default('open'),
+  response: text('response'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+}, (t) => ({
+  openUq: uniqueIndex('moderation_appeals_open_uq').on(t.assetItemId).where(sql`${t.status} = 'open'`),
+  statusIdx: index('moderation_appeals_status_idx').on(t.status, t.createdAt),
+}))
+
 export const assetLibraryItemsRelations = relations(assetLibraryItems, ({ one }) => ({
   uploader: one(users, {
     fields: [assetLibraryItems.uploadedBy],
