@@ -103,9 +103,8 @@ The project includes a `Dockerfile` (Railway builds it automatically) and `.rail
 # Single mode (one server + Postgres)
 docker compose -f docker-compose.single.yml up -d
 
-# Scalable mode (multiple servers + Postgres + Redis)
-docker compose -f docker-compose.scalable.yml up -d
-docker compose -f docker-compose.scalable.yml up -d --scale virvi=3
+# Scalable mode (two servers behind Caddy + Postgres + Redis; see the Docker Compose docs to add more)
+docker compose -f docker-compose.scalable.yml up -d --build
 ```
 
 ## Features

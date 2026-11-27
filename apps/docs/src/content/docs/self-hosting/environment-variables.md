@@ -31,6 +31,8 @@ Never commit secret values. The tables describe each secret; they never show one
 | `JWT_SECRET` | Required | Required | `dev-secret-change-me` | Signs every sign-in token. Use a long random string (`openssl rand -hex 32`). When `NODE_ENV=production` (always true in the Docker image) or in cloud mode, the server refuses to start without it or with the default. Changing it signs everyone out. |
 | `PUBLIC_URL` | Required | Required | `http://localhost:3010` | The public origin of this server, such as `https://virvi.example.com`. Used in uploaded file URLs, OAuth redirects and the API docs' server URL. |
 | `REDIS_URL` | Not used | Required | none | Redis for cross-server rooms. The server won't start in `scalable` mode without it. |
+| `ROOM_SERVER_PATH` | Not used | Optional | none | With several servers behind one address: this server's own path, such as `/n1`. Visitors joining a room on this server are sent to `PUBLIC_URL`'s host plus this path, which your proxy must route to this server only. One path segment. See [Scalable mode](/docs/self-hosting/docker-compose/#scalable-mode). |
+| `COLYSEUS_PUBLIC_ADDRESS` | Not used | Optional | none | Overrides `ROOM_SERVER_PATH`: the host (and optional path) where visitors reach this server's rooms, such as `rooms-1.example.com`, with no `https://`. |
 
 ## Server and network
 

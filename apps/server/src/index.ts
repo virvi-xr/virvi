@@ -82,7 +82,9 @@ async function main() {
     }),
     presence,
     ...(driver ? { driver } : {}),
+    ...(config.colyseusPublicAddress ? { publicAddress: config.colyseusPublicAddress } : {}),
   })
+  if (config.colyseusPublicAddress) console.log(`[virvi-server] Rooms on this server are reached at ${config.colyseusPublicAddress}`)
 
   // Register rooms
   defineRooms(gameServer)

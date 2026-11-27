@@ -20,6 +20,20 @@ function env(key: string): string | undefined {
   return process.env[key]
 }
 
+/**
+ * Colyseus's publicAddress: host[:port][/path], no protocol (the client keeps its own ws/wss). COLYSEUS_PUBLIC_ADDRESS
+ * as given, else PUBLIC_URL's host plus ROOM_SERVER_PATH (such as /n1, which the proxy routes to this server).
+ */
+export function colyseusPublicAddress(explicit?: string, path?: string, publicUrl?: string): string | undefined {
+  if (explicit?.trim()) return explicit.trim().replace(/^[a-z]+:\/\//i, '').replace(/\/+$/, '')
+  const p = path?.trim().replace(/^\/*/, '').replace(/\/+$/, '')
+  if (!p) return undefined
+  let host: string
+  try { host = new URL(publicUrl || 'http://localhost:3010').host } catch { throw new Error(`ROOM_SERVER_PATH needs a valid PUBLIC_URL (got ${publicUrl})`) }
+  if (!/^[A-Za-z0-9._~-]+$/.test(p)) throw new Error(`ROOM_SERVER_PATH must be one path segment, such as /n1 (got ${path})`)
+  return `${host}/${p}`
+}
+
 function numEnv(key: string, fallback: number): number {
   const n = parseFloat(env(key) ?? '')
   return Number.isFinite(n) && n >= 0 ? n : fallback
@@ -490,6 +504,10 @@ export const config = {
     ? true
     : mode !== 'single',
   redisUrl: env('REDIS_URL'),
+  // The address clients use to reach THIS server's rooms, when several servers share one domain (LIV-156): Colyseus
+  // hands it out with each seat, so a client joins the server holding its room instead of whichever one the load
+  // balancer picks. Unset with one server.
+  colyseusPublicAddress: colyseusPublicAddress(env('COLYSEUS_PUBLIC_ADDRESS'), env('ROOM_SERVER_PATH'), env('PUBLIC_URL')),
 
   // ── Billing & Feature Gating ────────────────────────────────────────────
   billingEnabled: env('STRIPE_SECRET_KEY')

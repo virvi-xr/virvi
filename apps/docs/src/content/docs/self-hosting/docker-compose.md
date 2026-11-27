@@ -115,24 +115,30 @@ docker compose -f docker-compose.single.yml up -d
 
 ## Scalable mode
 
-`docker-compose.scalable.yml` adds Redis (`REDIS_URL=redis://redis:6379`) so real-time rooms work across several Virvi containers. Redis has no password, so its port 6379 is published on `127.0.0.1` only.
+`docker-compose.scalable.yml` runs two Virvi servers, `virvi-1` and `virvi-2`, with Postgres, Redis and a [Caddy](https://caddyserver.com) proxy in front of them on host port `${PORT:-3010}`. Redis (`REDIS_URL=redis://redis:6379`) shares real-time rooms between the servers. It has no password, so its port 6379 is published on `127.0.0.1` only.
 
 ```bash
 docker compose -f docker-compose.scalable.yml up -d --build
 ```
 
-**Scaling past one container needs a change.** The `virvi` service publishes host port `${PORT:-3010}`, and only one container can hold it, so `--scale virvi=3` fails as written. To run several:
+**How requests reach the servers.** A real-time room lives on one server, so a visitor has to reach that server. Each server has its own path, set by `ROOM_SERVER_PATH` (`/n1`, `/n2`). It tells visitors that path when they join a room, and Caddy sends that path to that server only. Everything else (the dashboard, the API, joining a room) can go to either server, and Caddy takes turns between them. The routes are in `deploy/caddy/Caddyfile.scalable`.
 
-1. Remove the `ports:` entry from the `virvi` service.
-2. Add a load balancer service on the same Compose network that forwards to `virvi:3010` and passes WebSocket upgrades.
-3. Then run `docker compose -f docker-compose.scalable.yml up -d --scale virvi=3`.
+`docker compose up --scale` doesn't work with this file, because each server needs its own path. **To add a server:**
+
+1. In the Compose file, copy the `virvi-2` service as `virvi-3`, with `ROOM_SERVER_PATH: /n3`.
+2. In `deploy/caddy/Caddyfile.scalable`, add a `handle_path /n3/*` block for `virvi-3:3010`, and add `virvi-3:3010` to the shared `reverse_proxy` line.
+3. Run `docker compose -f docker-compose.scalable.yml up -d`.
+
+**HTTPS.** Caddy serves plain HTTP on the published port. Either put your HTTPS proxy in front of it and set `TRUST_PROXY_HOPS=2` in `.env` (your proxy and Caddy), or give Caddy your domain in place of `:80` so it gets a certificate itself, and publish ports 80 and 443. With Caddy alone in front, keep the default `TRUST_PROXY_HOPS=1`.
+
+If your servers aren't all behind one address, set `COLYSEUS_PUBLIC_ADDRESS` on each instead, to the host (and path) where visitors reach that server, such as `rooms-1.example.com`.
 
 Other things to know:
 
 - All containers share the `uploads` volume, so local storage works only while they run on one Docker host. Across hosts, use `STORAGE_PROVIDER=s3` or `r2`.
 - Scene imports need `SCENE_IMPORT_S3_URI` in scalable mode; the scalable file has no private volume.
 - `/metrics` is served only with `METRICS_TOKEN` set, and a scraper must send it as `Authorization: Bearer <token>`.
-- Every container syncs the database schema when it starts.
+- Every server syncs the database schema when it starts. `virvi-2` waits until `virvi-1` is healthy, so they don't sync at the same time.
 
 ## Live streaming
 

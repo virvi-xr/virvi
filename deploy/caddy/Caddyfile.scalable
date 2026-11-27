@@ -1,0 +1,29 @@
+# Virvi scalable mode (docker-compose.scalable.yml): one address in front of several Virvi servers (LIV-156).
+#
+# Each server's rooms live on that server, so each one has its own path (ROOM_SERVER_PATH), which Colyseus hands to
+# clients with their seat: /n1/* goes to virvi-1 only, /n2/* to virvi-2 only. Everything else (the dashboard, the API,
+# matchmaking) is shared through Postgres and Redis and goes to any server.
+#
+# Adding a server: copy a virvi-N service in the Compose file, then add its handle_path block and upstream here.
+# TLS: put your HTTPS proxy in front (and set TRUST_PROXY_HOPS=2), or replace :80 below with your domain and let Caddy
+# get a certificate (then publish 80 and 443 in the Compose file).
+
+{
+	admin off
+}
+
+:80 {
+	handle_path /n1/* {
+		reverse_proxy virvi-1:3010
+	}
+	handle_path /n2/* {
+		reverse_proxy virvi-2:3010
+	}
+	handle {
+		reverse_proxy virvi-1:3010 virvi-2:3010 {
+			lb_policy round_robin
+			health_uri /api/health
+			health_interval 10s
+		}
+	}
+}

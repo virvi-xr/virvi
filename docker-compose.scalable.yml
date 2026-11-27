@@ -1,14 +1,49 @@
 # =============================================================================
 # Virvi V2 — Scalable Mode (self-hosted, multiple servers)
 #
-# Postgres + Redis for Colyseus cross-server presence.
-# Can run multiple virvi containers behind a load balancer.
+# Postgres + Redis for Colyseus cross-server presence, two Virvi servers, and Caddy in front of them on one address.
+# Each server's rooms are reached through its own path (ROOM_SERVER_PATH), which Caddy routes to that server only:
+# see deploy/caddy/Caddyfile.scalable. `--scale` doesn't work here: every server needs its own path.
 #
 # Usage:
 #   cp .env.example .env   # edit vars
-#   docker compose -f docker-compose.scalable.yml up -d
-#   docker compose -f docker-compose.scalable.yml up -d --scale virvi=3  # 3 servers
+#   docker compose -f docker-compose.scalable.yml up -d --build
+#
+# More servers: copy the virvi-2 service as virvi-3 with ROOM_SERVER_PATH /n3, and add it to the Caddyfile.
 # =============================================================================
+
+x-virvi: &virvi
+    build:
+      context: .
+      # The dashboard is built with its API address inlined (Next.js NEXT_PUBLIC_*): PUBLIC_URL from .env, so a server
+      # on a real domain doesn't get a dashboard that calls localhost. NEXT_PUBLIC_WSS_URL: wss://<your domain>
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-${PUBLIC_URL:-http://localhost:3010}}
+        NEXT_PUBLIC_WSS_URL: ${NEXT_PUBLIC_WSS_URL:-ws://localhost:3010}
+        NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+    image: virvi-scalable:local
+    restart: unless-stopped
+    # Everything in .env reaches the server (SMTP, OAuth...); the lines below win over it.
+    env_file: .env
+    environment: &virvi-env
+      VIRVI_MODE: scalable
+      DATABASE_URL: postgresql://vlm:${POSTGRES_PASSWORD:-vlm_prod}@postgres:5432/vlm
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3010}
+      STORAGE_PROVIDER: local
+      LOCAL_STORAGE_PATH: /app/uploads
+      PORT: 3010 # the container's port; PORT in .env is the host port Caddy publishes
+      # Caddy is one proxy hop; with your own HTTPS proxy in front of it, set TRUST_PROXY_HOPS=2 in .env
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
+    volumes:
+      - uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3010/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
 
 services:
   postgres:
@@ -41,36 +76,37 @@ services:
       timeout: 5s
       retries: 5
 
-  virvi:
-    build:
-      context: .
-      # The dashboard is built with its API address inlined (Next.js NEXT_PUBLIC_*): PUBLIC_URL from .env, so a server
-      # on a real domain doesn't get a dashboard that calls localhost. NEXT_PUBLIC_WSS_URL: wss://<your domain>
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-${PUBLIC_URL:-http://localhost:3010}}
-        NEXT_PUBLIC_WSS_URL: ${NEXT_PUBLIC_WSS_URL:-ws://localhost:3010}
-        NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
-    restart: unless-stopped
-    ports:
-      - "${PORT:-3010}:3010"
+  virvi-1:
+    <<: *virvi
+    environment:
+      <<: *virvi-env
+      ROOM_SERVER_PATH: /n1
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # Everything in .env reaches the server (SMTP, OAuth, TRUST_PROXY_HOPS...); the lines below win over it.
-    env_file: .env
+
+  # Starts once virvi-1 is healthy, so the two don't sync the database schema at the same time
+  virvi-2:
+    <<: *virvi
     environment:
-      VIRVI_MODE: scalable
-      DATABASE_URL: postgresql://vlm:${POSTGRES_PASSWORD:-vlm_prod}@postgres:5432/vlm
-      REDIS_URL: redis://redis:6379
-      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
-      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3010}
-      STORAGE_PROVIDER: local
-      LOCAL_STORAGE_PATH: /app/uploads
-      PORT: 3010 # the container's port; PORT in .env is the host port
+      <<: *virvi-env
+      ROOM_SERVER_PATH: /n2
+    depends_on:
+      virvi-1:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3010}:80"
     volumes:
-      - uploads:/app/uploads
+      - ./deploy/caddy/Caddyfile.scalable:/etc/caddy/Caddyfile:ro
+    depends_on:
+      virvi-1:
+        condition: service_started
 
 volumes:
   pgdata:
