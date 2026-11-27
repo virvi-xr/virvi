@@ -163,6 +163,11 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS hyperfy_worlds_slug_uq ON hyperfy_worlds (slug) WHERE purged_at IS NULL\`;
         console.log('[virvi-server] hyperfy worlds ensured');
       } catch(e) { console.log('[virvi-server] hyperfy worlds:', e.message); }
+      // Tenant areas (LIV-32): an editor wallet role limited to part of the scene; matches sceneRoles.area in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE scene_roles ADD COLUMN IF NOT EXISTS area JSONB\`;
+        console.log('[virvi-server] scene role areas ensured');
+      } catch(e) { console.log('[virvi-server] scene role areas:', e.message); }
       // Ads; matches ads / adCreatives / adPlacements / adEvents / adReviews / adSpaceSettings / adSpaceApprovals in src/db/schema.ts
       try {
         await sql\`ALTER TYPE element_type ADD VALUE IF NOT EXISTS 'ad_space'\`;

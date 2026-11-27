@@ -1,6 +1,10 @@
 import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm'
 import {
   VENUE_SCOPES,
+  OUTSIDE_AREA,
+  insideEditAreas,
+  outsideAreaMessage,
+  type EditArea,
   type BookingWindow,
   type VenueAccessMessage,
   type VenueRole,
@@ -10,10 +14,10 @@ import {
 import { db } from '../db/connection.js'
 import { accessGrants, bookings, sceneCollaborators, sceneRoles, scenes, venues } from '../db/schema.js'
 import type { Actor } from './actor.js'
-import { sceneRoleFor } from './scene-roles.js'
+import { sceneRoleAccess } from './scene-roles.js'
 
 export type SceneScope = VenueScope | 'scene.edit' | 'scene.admin' | 'analytics.view' | 'roles.manage' | 'events.run'
-export type AccessLevel = 'admin' | 'owner' | 'cohost' | 'editor' | 'viewer' | 'grant' | 'none'
+export type AccessLevel = 'admin' | 'owner' | 'cohost' | 'editor' | 'tenant' | 'viewer' | 'grant' | 'none'
 
 export interface BookingAccess {
   bookingId: string
@@ -29,6 +33,11 @@ export interface SceneAccess {
   level: AccessLevel
   scopes: Set<SceneScope>
   booking: BookingAccess | null
+  /**
+   * A tenant's areas (LIV-32): an editor limited to part of the scene. A tenant has no scopes, so every scope check
+   * refuses them; only the item and copy routes let them in, for what lies inside an area (tenantMay*).
+   */
+  areas?: EditArea[]
 }
 
 const ALL_SCOPES: SceneScope[] = [...VENUE_SCOPES, 'scene.edit', 'scene.admin', 'analytics.view', 'roles.manage', 'events.run']
@@ -96,9 +105,11 @@ export async function getSceneAccess(actor: Actor, sceneId: string, at = new Dat
     where: and(eq(sceneCollaborators.sceneId, sceneId), eq(sceneCollaborators.userId, actor.userId)),
   })
   // The strongest of the person's collaborator invite and wallet role: a co-host who is also an account editor is a co-host
-  const role = await sceneRoleFor(sceneId, actor)
+  const { role, tenant, areas } = await sceneRoleAccess(sceneId, actor)
   if (role === 'cohost') return full('cohost')
   if (collab?.role === 'editor' || role === 'editor') return { level: 'editor', scopes: new Set(EDITOR_SCOPES), booking: null }
+  // A tenant (LIV-32): stronger than a booking grant or viewing; a malformed stored area limits them to nothing
+  if (tenant) return { level: 'tenant', scopes: new Set(), booking: null, areas }
 
   const subject = actor.wallet
     ? or(eq(accessGrants.userId, actor.userId), eq(accessGrants.walletAddress, actor.wallet))
@@ -246,3 +257,23 @@ export async function linkWalletGrants(userId: string, wallet: string): Promise<
     .returning({ id: sceneRoles.id })
   return rows.length + roles.length
 }
+
+// ── tenants (LIV-32) ────────────────────────────────────────────────────────
+
+type Pos = { x?: unknown; z?: unknown } | null | undefined
+
+/** A tenant may place or move a copy to this position: top-level (no parent: a child's position is relative) and inside an area. */
+export function tenantMayPlace(access: SceneAccess, position: unknown, parentInstanceId?: unknown): boolean {
+  return access.level === 'tenant' && !parentInstanceId && insideEditAreas(access.areas ?? [], position as Pos)
+}
+
+/**
+ * A tenant may change or delete an item when it has copies and every one is a top-level copy inside an area. An item
+ * with no copies is anyone's, so it is refused (a tenant places what they create straight away).
+ */
+export function tenantMayChangeItem(access: SceneAccess, instances: Array<{ position: unknown; parentInstanceId: string | null }>): boolean {
+  return access.level === 'tenant' && instances.length > 0 && instances.every((i) => tenantMayPlace(access, i.position, i.parentInstanceId))
+}
+
+/** The 403 for a tenant's edit outside their area, with the reason. */
+export const outsideAreaReply = (access: SceneAccess) => ({ error: OUTSIDE_AREA, message: outsideAreaMessage(access.areas ?? []) })

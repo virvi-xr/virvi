@@ -5,6 +5,7 @@ import { sceneRoles, scenes, userAuthMethods, users } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess, isFullAccess, isHostAccess } from '../auth/permissions.js'
+import { checkEditArea, describeEditArea, type EditArea } from '@virvixr/shared'
 import { verifiedWalletsOf } from '../analytics/claims.js'
 import { fromParam } from '../auth/scene-from.js'
 import { listSceneActivity, recordSceneActivity, requestActor } from '../scenes/activity.js'
@@ -40,7 +41,7 @@ export default async function sceneRoleRoutes(app: FastifyInstance) {
     if (!scene) return
     const owner = await db.query.users.findFirst({ where: eq(users.id, scene.ownerId) })
     const rows = await db
-      .select({ wallet: sceneRoles.walletAddress, role: sceneRoles.role, userId: sceneRoles.userId, displayName: users.displayName, createdAt: sceneRoles.createdAt })
+      .select({ wallet: sceneRoles.walletAddress, role: sceneRoles.role, area: sceneRoles.area, userId: sceneRoles.userId, displayName: users.displayName, createdAt: sceneRoles.createdAt })
       .from(sceneRoles)
       .leftJoin(users, eq(users.id, sceneRoles.userId))
       .where(and(eq(sceneRoles.sceneId, scene.id), isNull(sceneRoles.revokedAt)))
@@ -51,23 +52,37 @@ export default async function sceneRoleRoutes(app: FastifyInstance) {
     })
   })
 
-  app.post<{ Params: { sceneId: string }; Body: { wallet?: string; role?: string } }>('/api/scenes/:sceneId/roles', { config: { scenePass: { sceneFrom: fromParam('sceneId'), ar: 'personal' } } }, async (request, reply) => {
+  app.post<{ Params: { sceneId: string }; Body: { wallet?: string; role?: string; area?: unknown } }>('/api/scenes/:sceneId/roles', { config: { scenePass: { sceneFrom: fromParam('sceneId'), ar: 'personal' } } }, async (request, reply) => {
     const scene = await guard(request, reply)
     if (!scene) return
     const wallet = typeof request.body?.wallet === 'string' ? request.body.wallet.toLowerCase() : ''
     const role = request.body?.role ?? ''
     if (!WALLET_RE.test(wallet) || !ROLES.has(role)) return reply.status(400).send({ error: 'wallet (0x…) and role (cohost, editor or viewer) are required' })
+    // An editor can be limited to an area (LIV-32, a tenant); null or absent edits everywhere
+    const rawArea = request.body?.area
+    let area: EditArea | null = null
+    if (rawArea !== undefined && rawArea !== null) {
+      if (role !== 'editor') return reply.status(400).send({ error: 'area_editor_only', message: 'Only an editor can be limited to an area.' })
+      const c = checkEditArea(rawArea)
+      if (!c.ok) return reply.status(400).send({ error: 'bad_area', message: c.error })
+      area = c.value
+    }
     if ((await verifiedWalletsOf(scene.ownerId)).includes(wallet)) return reply.status(409).send({ error: 'is_host' })
     const existing = await activeRow(scene.id, wallet)
+    // Left out, an editor's area stays as it was (the HUDs send only wallet and role); null clears it
+    if (rawArea === undefined && role === 'editor' && existing?.role === 'editor') area = existing.area ?? null
     const linked = await db.query.userAuthMethods.findFirst({ where: and(eq(userAuthMethods.type, 'wallet'), eq(userAuthMethods.identifier, wallet)) })
     const userId = linked && (linked.metadata as { verified?: boolean } | null)?.verified ? linked.userId : null
     const [row] = existing
-      ? await db.update(sceneRoles).set({ role: role as 'cohost', userId: existing.userId ?? userId }).where(eq(sceneRoles.id, existing.id)).returning()
-      : await db.insert(sceneRoles).values({ sceneId: scene.id, walletAddress: wallet, role: role as 'cohost', userId, grantedByUserId: request.user.id }).returning()
-    if (!existing || existing.role !== row.role) {
-      await recordSceneActivity(scene.id, requestActor(request.user), 'role.granted', { type: 'wallet', id: wallet, name: await walletName(row.userId) }, { role: row.role, ...(existing ? { from: existing.role } : {}) })
+      ? await db.update(sceneRoles).set({ role: role as 'cohost', area, userId: existing.userId ?? userId }).where(eq(sceneRoles.id, existing.id)).returning()
+      : await db.insert(sceneRoles).values({ sceneId: scene.id, walletAddress: wallet, role: role as 'cohost', area, userId, grantedByUserId: request.user.id }).returning()
+    const areaChanged = JSON.stringify(existing?.area ?? null) !== JSON.stringify(row.area ?? null)
+    if (!existing || existing.role !== row.role || areaChanged) {
+      await recordSceneActivity(scene.id, requestActor(request.user), 'role.granted', { type: 'wallet', id: wallet, name: await walletName(row.userId) }, {
+        role: row.role, ...(existing ? { from: existing.role } : {}), ...(row.area ? { area: describeEditArea(row.area) } : {}),
+      })
     }
-    return reply.status(201).send({ role: { wallet: row.walletAddress, role: row.role, userId: row.userId } })
+    return reply.status(201).send({ role: { wallet: row.walletAddress, role: row.role, area: row.area ?? null, userId: row.userId } })
   })
 
   app.delete<{ Params: { sceneId: string; wallet: string } }>('/api/scenes/:sceneId/roles/:wallet', { config: { scenePass: { sceneFrom: fromParam('sceneId'), ar: 'personal' } } }, async (request, reply) => {

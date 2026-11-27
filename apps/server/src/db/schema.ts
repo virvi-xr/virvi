@@ -23,7 +23,7 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
-import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus, BeatChain, BeatLocationType, BeatStatus, BeatClaimStatus, BeatClaimSource, BeatArcKind, ArDevicePurpose, BeatReissueStatus, BeatReissueLoss, BeatReissueItemState, BeatReissueFileStatus, GiveawayChain, GiveawayClaimStatus, GiveawayPauseReason, GiveawayMintState, SignInMethod, ShowItem } from '@virvixr/shared'
+import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus, BeatChain, BeatLocationType, BeatStatus, BeatClaimStatus, BeatClaimSource, BeatArcKind, ArDevicePurpose, EditArea, BeatReissueStatus, BeatReissueLoss, BeatReissueItemState, BeatReissueFileStatus, GiveawayChain, GiveawayClaimStatus, GiveawayPauseReason, GiveawayMintState, SignInMethod, ShowItem } from '@virvixr/shared'
 import type { PoolEntry } from '../raffles/draw.js'
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -1584,6 +1584,8 @@ export const sceneRoles = pgTable(
     userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
     role: sceneRoleEnum('role').notNull(),
     grantedByUserId: uuid('granted_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    // An editor limited to part of the scene (LIV-32, a tenant): x and z bounds in metres; null edits everywhere
+    area: jsonb('area').$type<EditArea>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
   },

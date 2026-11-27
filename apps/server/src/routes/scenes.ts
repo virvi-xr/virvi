@@ -18,7 +18,7 @@ import { authenticate } from '../middleware/auth.js'
 import type { AuthUser } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { recordTrialBlocked } from '../auth/trial-events.js'
-import { getSceneAccess, hasScope, isFullAccess, canWriteElement, diffKeys } from '../auth/permissions.js'
+import { getSceneAccess, hasScope, isFullAccess, canWriteElement, diffKeys, outsideAreaReply, tenantMayChangeItem, tenantMayPlace } from '../auth/permissions.js'
 import { config } from '../config.js'
 import { publishElementChanged, publishSceneTouched, publishVenueEvent } from '../realtime/bus.js'
 import { activatePreset, canManagePresets, cleanPresetName, createPreset, deletePreset, deleteRefusal, PRESET_NAME_MAX, renamePreset } from '../scenes/presets.js'
@@ -136,6 +136,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /** Same limit as the New Scene Wizard. */
 const SCENE_NAME_MAX = 120
+/** What a tenant (LIV-32) may add in their area: plain media, no ad spaces, kiosks or widgets. */
+const TENANT_TYPES = new Set(['model', 'image', 'video', 'sound'])
+
+/** An item's copies, for a tenant's "every copy is inside the area" check. */
+const copiesOf = (elementId: string) =>
+  db.select({ position: sceneElementInstances.position, parentInstanceId: sceneElementInstances.parentInstanceId })
+    .from(sceneElementInstances).where(eq(sceneElementInstances.elementId, elementId))
 
 /** The element types a trial may make; the rest (ad spaces, widgets, NFTs, custom) need an account. */
 const TRIAL_ELEMENT_TYPES = new Set(['model', 'image', 'video', 'sound'])
@@ -459,7 +466,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
     }
 
     // `dclHud`: the Decentraland HUD release the scene runs, whether it is behind (LIV-33) and whether Virvi deploys it (LIV-13); null until a HUD has called
-    return reply.send({ scene: { ...scene, presets: await withRoomSets(scene.presets), canDelete: await mayManageDeletion(actorFromClaims(request.user), scene), dclHud: dclHudStatus(scene, undefined, scene.dclHudSeenAt ? await virviDeploysDcl(scene.id) : true) } })
+    return reply.send({ scene: { ...scene, presets: await withRoomSets(scene.presets), canDelete: await mayManageDeletion(actorFromClaims(request.user), scene), editAreas: access.level === 'tenant' ? access.areas ?? [] : null, dclHud: dclHudStatus(scene, undefined, scene.dclHudSeenAt ? await virviDeploysDcl(scene.id) : true) } })
   })
 
   // ── PUT /api/scenes/:sceneId — update scene ─────────────────────────────
@@ -658,8 +665,11 @@ export default async function sceneRoutes(app: FastifyInstance) {
         with: { scene: true },
       })
       if (!preset) return reply.status(404).send({ error: 'Preset not found' })
-      if (!hasScope(await accessFor(request, preset.sceneId), 'scene.edit')) {
-        return reply.status(403).send({ error: 'Forbidden' })
+      const access = await accessFor(request, preset.sceneId)
+      if (!hasScope(access, 'scene.edit')) {
+        // A tenant (LIV-32) adds plain media, then places it inside their area
+        if (access.level !== 'tenant') return reply.status(403).send({ error: 'Forbidden' })
+        if (!TENANT_TYPES.has(type)) return reply.status(403).send({ error: 'tenant_type', message: 'In your area you can add images, videos, 3D models and sounds.' })
       }
       const trialRefusal = request.user.trial ? trialElementRefusal(type, properties) : null
       if (trialRefusal) return refuseTrial(request, reply, trialRefusal)
@@ -732,7 +742,11 @@ export default async function sceneRoutes(app: FastifyInstance) {
       const fieldKeys = (['type', 'name', 'enabled', 'customId', 'customRendering', 'clickEvent'] as const).filter(
         (k) => request.body[k] !== undefined && JSON.stringify(request.body[k]) !== JSON.stringify((element as any)[k]),
       )
-      if (!canWriteElement(access, element, { propertyKeys, fieldKeys })) {
+      if (access.level === 'tenant') {
+        // Only an item whose every copy is inside the area, and it stays the same kind of item
+        if (fieldKeys.includes('type')) return reply.status(403).send({ error: 'Forbidden' })
+        if (!tenantMayChangeItem(access, await copiesOf(elementId))) return reply.status(403).send(outsideAreaReply(access))
+      } else if (!canWriteElement(access, element, { propertyKeys, fieldKeys })) {
         return reply.status(403).send({ error: 'Forbidden' })
       }
       // A trial may keep what an element already is (a locked type, a room set placed before); only a new one is refused (LIV-138)
@@ -810,8 +824,11 @@ export default async function sceneRoutes(app: FastifyInstance) {
       })
       if (!element) return reply.status(404).send({ error: 'Element not found' })
       // Deleting is structural (like instance delete and the room's delete guard): editors only, never renters.
-      if (!hasScope(await accessFor(request, element.preset.sceneId), 'scene.edit')) {
-        return reply.status(403).send({ error: 'Forbidden' })
+      // A tenant (LIV-32) may delete an item whose every copy is inside their area.
+      const access = await accessFor(request, element.preset.sceneId)
+      if (!hasScope(access, 'scene.edit')) {
+        if (access.level !== 'tenant') return reply.status(403).send({ error: 'Forbidden' })
+        if (!tenantMayChangeItem(access, await copiesOf(elementId))) return reply.status(403).send(outsideAreaReply(access))
       }
 
       const roomSetsToDelete = await sceneOwnedRoomSets({ elementId })
@@ -842,8 +859,11 @@ export default async function sceneRoutes(app: FastifyInstance) {
         with: { preset: { with: { scene: true } } },
       })
       if (!element) return reply.status(404).send({ error: 'Element not found' })
-      if (!hasScope(await accessFor(request, element.preset.sceneId), 'scene.edit')) {
-        return reply.status(403).send({ error: 'Forbidden' })
+      const access = await accessFor(request, element.preset.sceneId)
+      if (!hasScope(access, 'scene.edit')) {
+        if (access.level !== 'tenant') return reply.status(403).send({ error: 'Forbidden' })
+        // A tenant (LIV-32) places top-level copies inside their area
+        if (!tenantMayPlace(access, request.body?.position, request.body?.parentInstanceId)) return reply.status(403).send(outsideAreaReply(access))
       }
 
       const {
@@ -903,8 +923,15 @@ export default async function sceneRoutes(app: FastifyInstance) {
         with: { element: { with: { preset: { with: { scene: true } } } } },
       })
       if (!instance) return reply.status(404).send({ error: 'Instance not found' })
-      if (!hasScope(await accessFor(request, instance.element.preset.sceneId), 'scene.edit')) {
-        return reply.status(403).send({ error: 'Forbidden' })
+      const access = await accessFor(request, instance.element.preset.sceneId)
+      if (!hasScope(access, 'scene.edit')) {
+        if (access.level !== 'tenant') return reply.status(403).send({ error: 'Forbidden' })
+        // A tenant (LIV-32): a copy inside their area, staying inside it and top-level
+        const body = request.body ?? {}
+        const stays = body.position === undefined || tenantMayPlace(access, body.position, null)
+        if (!tenantMayPlace(access, instance.position, instance.parentInstanceId) || !stays || (body.parentInstanceId !== undefined && body.parentInstanceId !== null)) {
+          return reply.status(403).send(outsideAreaReply(access))
+        }
       }
 
       const updates: Record<string, unknown> = { updatedAt: new Date() }
@@ -957,8 +984,10 @@ export default async function sceneRoutes(app: FastifyInstance) {
         with: { element: { with: { preset: { with: { scene: true } } } } },
       })
       if (!instance) return reply.status(404).send({ error: 'Instance not found' })
-      if (!hasScope(await accessFor(request, instance.element.preset.sceneId), 'scene.edit')) {
-        return reply.status(403).send({ error: 'Forbidden' })
+      const access = await accessFor(request, instance.element.preset.sceneId)
+      if (!hasScope(access, 'scene.edit')) {
+        if (access.level !== 'tenant') return reply.status(403).send({ error: 'Forbidden' })
+        if (!tenantMayPlace(access, instance.position, instance.parentInstanceId)) return reply.status(403).send(outsideAreaReply(access))
       }
 
       await db.delete(sceneElementInstances).where(eq(sceneElementInstances.id, instanceId))
@@ -986,9 +1015,11 @@ export default async function sceneRoutes(app: FastifyInstance) {
         with: { preset: { with: { scene: true } } },
       })
       if (!element) return reply.status(404).send({ error: 'Element not found' })
-      // Same rule as deleting one instance: editors and above
-      if (!hasScope(await accessFor(request, element.preset.sceneId), 'scene.edit')) {
-        return reply.status(403).send({ error: 'Forbidden' })
+      // Same rule as deleting one instance: editors and above, or a tenant when every copy is in their area (LIV-32)
+      const access = await accessFor(request, element.preset.sceneId)
+      if (!hasScope(access, 'scene.edit')) {
+        if (access.level !== 'tenant') return reply.status(403).send({ error: 'Forbidden' })
+        if (!tenantMayChangeItem(access, await copiesOf(elementId))) return reply.status(403).send(outsideAreaReply(access))
       }
 
       // One statement, so every instance goes or none do; the element stays

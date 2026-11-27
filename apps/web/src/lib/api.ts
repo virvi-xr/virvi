@@ -13,7 +13,7 @@ import { reporter } from './errors/reporter'
 import type { ErrorDetail, ErrorSettings, ErrorsOverview, ErrorThresholds } from './errors/admin'
 import { accountRequired, openSignUp, readTextRecovering, sendRecovering, type BlockedCtx } from './trial'
 import { backupPath } from './backup'
-import type { Plot, RoomSetOptions } from '@virvixr/shared'
+import type { EditArea, Plot, RoomSetOptions } from '@virvixr/shared'
 import type { RoomNudge } from './room-set'
 import type { MediaNames } from './media-names'
 import type { AuthChain } from '@dcl/crypto'
@@ -524,13 +524,14 @@ function useRealApi() {
 
     // Scene roles (wallet-based)
     getSceneRoles: (sceneId: string) =>
-      apiFetch<{ host: { userId: string; displayName: string | null; wallets: string[] }; roles: { wallet: string; role: 'cohost' | 'editor' | 'viewer'; userId: string | null; displayName: string | null; createdAt: string }[] }>(`/api/scenes/${sceneId}/roles`),
+      apiFetch<{ host: { userId: string; displayName: string | null; wallets: string[] }; roles: { wallet: string; role: 'cohost' | 'editor' | 'viewer'; area: EditArea | null; userId: string | null; displayName: string | null; createdAt: string }[] }>(`/api/scenes/${sceneId}/roles`),
     getCollection: () => apiFetch<Collection>('/api/collection'),
     getSceneHealth: (sceneId: string) => apiFetch<SceneHealth>(`/api/scenes/${sceneId}/health`),
     getSceneActivity: (sceneId: string, before?: string) =>
       apiFetch<{ entries: SceneActivityEntry[]; more: boolean }>(`/api/scenes/${sceneId}/activity${before ? `?before=${encodeURIComponent(before)}` : ''}`),
-    addSceneRole: (sceneId: string, wallet: string, role: 'cohost' | 'editor' | 'viewer') =>
-      apiFetch(`/api/scenes/${sceneId}/roles`, { method: 'POST', body: JSON.stringify({ wallet, role }) }),
+    /** `area` limits an editor to part of the scene (LIV-32); left out keeps an editor's area, null removes it. */
+    addSceneRole: (sceneId: string, wallet: string, role: 'cohost' | 'editor' | 'viewer', area?: EditArea | null) =>
+      apiFetch(`/api/scenes/${sceneId}/roles`, { method: 'POST', body: JSON.stringify(area === undefined ? { wallet, role } : { wallet, role, area }) }),
     removeSceneRole: (sceneId: string, wallet: string) => apiFetch(`/api/scenes/${sceneId}/roles/${wallet}`, { method: 'DELETE' }),
     transferHost: (sceneId: string, wallet: string) =>
       apiFetch<{ host: string }>(`/api/scenes/${sceneId}/transfer-host`, { method: 'POST', body: JSON.stringify({ wallet }) }),

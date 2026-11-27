@@ -17,6 +17,7 @@ Venue bookings add a third, time-boxed kind of access for an organizer and their
 | **Host** | Owning the scene | Everything |
 | **Co-host** | Wallet role | Everything except handing over the host role and deleting the scene |
 | **Editor** | Wallet role or collaborator | Building and running the scene |
+| **Editor in an area** (a tenant) | Wallet role | Building inside one part of the scene, such as a plot or a shop |
 | **Viewer** | Wallet role or collaborator | Watching how the scene does |
 
 If a person has more than one (say, a collaborator invite and a wallet role), they get the strongest.
@@ -39,6 +40,22 @@ If a person has more than one (say, a collaborator invite and a wallet role), th
 Deploying also needs a wallet that owns the World, or controls the parcels, linked to your account.
 
 A collaborator can remove themselves from a scene at any time. The host can't be removed. To change hosts, the host makes a signed-in co-host the new host from the Roles tab, and becomes a co-host themselves.
+
+## Tenants: editors limited to an area
+
+An editor wallet role can be limited to part of the scene, for a tenant who rents a plot, a stall or a shop. In the **Roles** tab, tick **Only inside an area** when you add the editor, or use **Limit to an area** on an editor already listed. The area is a box on the scene's floor: **Min x**, **Max x**, **Min z** and **Max z**, in metres, in the same coordinates as item positions in the editor. Height isn't limited.
+
+Inside their area, a tenant can:
+
+- add images, videos, 3D models and sounds, and place them;
+- move, turn, resize and remove copies whose position is inside the area, as long as they stay inside it;
+- change or delete an item when every copy of it is inside the area.
+
+Everything else stays with you and your co-hosts and editors. That includes items with any copy outside the area, presets, the scene's name and settings, roles, deploys, raffles, BEATs and analytics. Tenants can't attach a copy to another one (a child copy's position is relative to its parent), and they can't add ad spaces, claim points or widgets. An edit outside the area is refused with a message naming the area. The scene page shows a tenant their area.
+
+**Change area** moves it, and **Edit everywhere** removes the limit. A role change in the HUD keeps the area, and making the tenant a co-host or viewer removes it. If the same person also has an unlimited editor role, through another wallet or a collaborator invite, the stronger one wins.
+
+For now, tenants edit from the dashboard. Editing inside an area from the Decentraland HUD comes with the next `@virvixr/dcl` release.
 
 ## In-world
 

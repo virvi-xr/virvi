@@ -1,4 +1,5 @@
 'use client'
+import { tenantNote, type EditArea } from '@/lib/edit-areas'
 import Link from 'next/link'
 import { useApi, fileToBase64, mediaContentType, uploadErrorMessage } from '@/lib/api'
 import { ASSET_LIBRARY, MEDIA_LIBRARY } from '@/lib/libraries'
@@ -91,6 +92,8 @@ interface Scene {
   name: string
   /** LIV-33: the Decentraland HUD release it runs, and whether it is behind (null until a HUD has called). */
   dclHud?: DclHudStatus
+  /** LIV-32: a tenant's areas (they can only edit inside these); null for everyone else. */
+  editAreas?: EditArea[] | null
   /** LIV-88: shown here and on the Scenes list, and deployed to Decentraland as the scene's navmapThumbnail. */
   thumbnailUrl?: string | null
   /** LIV-89: 'import' when it came from an imported scene's own scene.json (not deployed by Virvi). */
@@ -1894,6 +1897,12 @@ export default function SceneEditorPage() {
           </Badge>
         ) : undefined}
       />
+
+      {scene.editAreas && (
+        <div className="rounded-lg border border-blue-500/40 bg-blue-500/10 px-4 py-3 text-sm text-blue-100" role="status">
+          {tenantNote(scene.editAreas)}
+        </div>
+      )}
 
       {hudBehindNote(scene.dclHud) && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100" role="status">
