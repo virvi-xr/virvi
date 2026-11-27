@@ -672,6 +672,21 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE INDEX IF NOT EXISTS assistant_shows_event_idx ON assistant_shows (event_id)\`;
         console.log('[virvi-server] assistant tables ensured');
       } catch(e) { console.log('[virvi-server] assistant tables:', e.message); }
+      // Scene activity (LIV-32); matches sceneActivity
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS scene_activity (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), scene_id UUID NOT NULL CONSTRAINT scene_activity_scene_id_scenes_id_fk REFERENCES scenes(id) ON DELETE CASCADE, actor_user_id UUID CONSTRAINT scene_activity_actor_user_id_users_id_fk REFERENCES users(id) ON DELETE SET NULL, actor_wallet TEXT, via TEXT NOT NULL, action TEXT NOT NULL, subject_type TEXT, subject_id TEXT, subject_name TEXT, detail JSONB, count INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE INDEX IF NOT EXISTS scene_activity_scene_time_idx ON scene_activity (scene_id, last_at)\`;
+        console.log('[virvi-server] scene activity table ensured');
+      } catch(e) { console.log('[virvi-server] scene activity table:', e.message); }
+      // Status page (LIV-40); matches statusChecks, statusIncidents, statusIncidentUpdates
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS status_checks (component TEXT NOT NULL, minute TIMESTAMPTZ NOT NULL, state TEXT NOT NULL, detail TEXT, CONSTRAINT status_checks_component_minute_pk PRIMARY KEY (component, minute))\`;
+        await sql\`CREATE TABLE IF NOT EXISTS status_incidents (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), title TEXT NOT NULL, status TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'incident', components JSONB NOT NULL DEFAULT '[]'::jsonb, created_by UUID CONSTRAINT status_incidents_created_by_users_id_fk REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), resolved_at TIMESTAMPTZ)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS status_incidents_created_idx ON status_incidents (created_at)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS status_incident_updates (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), incident_id UUID NOT NULL CONSTRAINT status_incident_updates_incident_id_status_incidents_id_fk REFERENCES status_incidents(id) ON DELETE CASCADE, status TEXT NOT NULL, body TEXT NOT NULL, created_by UUID CONSTRAINT status_incident_updates_created_by_users_id_fk REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE INDEX IF NOT EXISTS status_incident_updates_incident_idx ON status_incident_updates (incident_id, created_at)\`;
+        console.log('[virvi-server] status page tables ensured');
+      } catch(e) { console.log('[virvi-server] status page tables:', e.message); }
       await sql.end();
     })();
   " 2>&1 || echo "[virvi-server] SQL fallback had errors"
