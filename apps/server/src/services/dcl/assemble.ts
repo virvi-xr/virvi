@@ -40,7 +40,7 @@ import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
 import { DCL_MAX_FILE_BYTES, DEPLOYED_THUMBNAIL_RE, frameEntitiesIn, frameEntityCount, PLACEMENTS_FILE, encodePlacements, localModelFile, type Placement, type Vec3 } from '@virvixr/shared'
 import { config } from '../../config.js'
 import { db } from '../../db/connection.js'
-import { assetLibraryItems, mediaAssets, sceneElementInstances, sceneElements, sceneImports, scenes } from '../../db/schema.js'
+import { assetLibraryItems, mediaAssets, modelStats, sceneElementInstances, sceneElements, sceneImports, scenes } from '../../db/schema.js'
 import { assertPublicHttpUrl } from '../../net/public-url.js'
 import { deployedThumbnailFile } from '../../scenes/thumbnail.js'
 import { buildEntity, dclHash, type ContentRef, type SceneMetadata } from './entity.js'
@@ -58,6 +58,8 @@ export interface ModelNeed {
   bytes: number | null
   /** Placed instances of every element using this file (the wizard counts triangles per instance). */
   instances: number
+  /** Measured from the GLB (model_stats, LIV-41); absent until it has been */
+  textures?: { count: number; bytes: number; maxPx: number } | null
   /** The scene's thumbnail rather than a model (no element, no instances). */
   kind?: 'thumbnail'
   /** pendingModels only: the deployed thumbnail at `file` was removed in Virvi; nothing to fetch. */
@@ -183,18 +185,25 @@ async function modelElements(sceneId: string): Promise<ModelNeed[]> {
     .where(inArray(mediaAssets.publicUrl, urls))
   const libByUrl = new Map(lib.map((l) => [l.url, l]))
   const mediaByUrl = new Map(media.map((m) => [m.url, m]))
+  const measured = await db
+    .select()
+    .from(modelStats)
+    .where(inArray(modelStats.url, urls))
+  const measuredByUrl = new Map(measured.map((m) => [m.url, m]))
 
   return picked.map((p) => {
     const l = libByUrl.get(p.url)
     const m = mediaByUrl.get(p.url)
+    const ms = measuredByUrl.get(p.url)
     return {
       elementId: p.id,
       name: p.name,
       url: p.url,
       file: p.file,
-      triangles: l?.triangles ?? null,
+      triangles: l?.triangles ?? ms?.triangles ?? null,
       bytes: l?.bytes ?? m?.bytes ?? null,
       instances: p.instances,
+      textures: ms && ms.textureCount !== null ? { count: ms.textureCount, bytes: ms.textureBytes ?? 0, maxPx: ms.maxTexturePx ?? 0 } : null,
     }
   })
 }

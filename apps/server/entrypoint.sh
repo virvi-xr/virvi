@@ -687,6 +687,11 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE INDEX IF NOT EXISTS status_incident_updates_incident_idx ON status_incident_updates (incident_id, created_at)\`;
         console.log('[virvi-server] status page tables ensured');
       } catch(e) { console.log('[virvi-server] status page tables:', e.message); }
+      // Model stats (LIV-41); matches modelStats
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS model_stats (url TEXT PRIMARY KEY, triangles INTEGER, texture_count INTEGER, texture_bytes BIGINT, max_texture_px INTEGER, error TEXT, measured_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        console.log('[virvi-server] model stats table ensured');
+      } catch(e) { console.log('[virvi-server] model stats table:', e.message); }
       await sql.end();
     })();
   " 2>&1 || echo "[virvi-server] SQL fallback had errors"

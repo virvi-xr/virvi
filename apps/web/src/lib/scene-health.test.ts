@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { fill, formatBytes, metricLine, overNote, targetLabel, type BudgetMetric } from './scene-health'
+import { fill, formatBytes, metricLine, overNote, targetLabel, textureMemoryLine, type BudgetMetric } from './scene-health'
 
 const m = (over: Partial<BudgetMetric>): BudgetMetric => ({ key: 'triangles', used: 12_000, limit: 10_000, state: 'over', blocks: false, ...over })
 
@@ -26,5 +26,10 @@ describe('scene budget wording (LIV-41)', () => {
   it('names where the budget applies', () => {
     expect(targetLabel({ id: 'd', name: 'club.dcl.eth', kind: 'world', parcels: 4, state: 'within', metrics: [] })).toBe('club.dcl.eth (World, 4 parcels)')
     expect(targetLabel({ id: null, name: 'One parcel', kind: 'none', parcels: 1, state: 'within', metrics: [] })).toBe('Not set up to deploy yet: shown for one parcel')
+  })
+
+  it('sums texture memory in plain words', () => {
+    expect(textureMemoryLine({ bytes: 48 * 1024 * 1024, textures: 3 })).toBe('Textures use about 48.0 MB of graphics memory (3 textures).')
+    expect(textureMemoryLine({ bytes: 0, textures: 0 })).toBeNull()
   })
 })

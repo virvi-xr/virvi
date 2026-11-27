@@ -1,12 +1,12 @@
 /** A scene's performance budget (LIV-41): what /api/scenes/:id/health returns, and how the panel words it. */
 
 export type BudgetState = 'within' | 'close' | 'over'
-export interface BudgetMetric { key: 'triangles' | 'entities' | 'bytes'; used: number; limit: number | null; state: BudgetState; blocks: boolean }
-export interface BudgetContributor { elementId: string; name: string; copies: number; triangles: number | null; bytes: number | null }
+export interface BudgetMetric { key: 'triangles' | 'entities' | 'bytes' | 'textures'; used: number; limit: number | null; state: BudgetState; blocks: boolean }
+export interface BudgetContributor { elementId: string; name: string; copies: number; triangles: number | null; bytes: number | null; textureBytes: number | null; maxTexturePx: number | null }
 export interface BudgetTarget { id: string | null; name: string; kind: 'world' | 'parcels' | 'none'; parcels: number; state: BudgetState; metrics: BudgetMetric[] }
-export interface SceneHealth { state: BudgetState; targets: BudgetTarget[]; byTriangles: BudgetContributor[]; bySize: BudgetContributor[]; unmeasured: number; frames: number; suggestions: string[] }
+export interface SceneHealth { state: BudgetState; targets: BudgetTarget[]; byTriangles: BudgetContributor[]; bySize: BudgetContributor[]; unmeasured: number; measuring: number; textureMemory: { bytes: number; textures: number }; byTextureMemory: BudgetContributor[]; frames: number; suggestions: string[] }
 
-export const METRIC_LABEL: Record<BudgetMetric['key'], string> = { triangles: 'Triangles', entities: 'Entities', bytes: 'File size' }
+export const METRIC_LABEL: Record<BudgetMetric['key'], string> = { triangles: 'Triangles', entities: 'Entities', bytes: 'File size', textures: 'Textures' }
 export const STATE_LABEL: Record<BudgetState, string> = { within: 'Within budget', close: 'Close to the limit', over: 'Over the limit' }
 
 const MB = 1024 * 1024
@@ -32,4 +32,10 @@ export function targetLabel(t: BudgetTarget): string {
   const parcels = `${t.parcels} ${t.parcels === 1 ? 'parcel' : 'parcels'}`
   if (t.kind === 'none') return "Not set up to deploy yet: shown for one parcel"
   return t.kind === 'world' ? `${t.name} (World, ${parcels})` : `${t.name} (Genesis City, ${parcels})`
+}
+
+/** "Textures use about 48.0 MB of graphics memory (3 textures)." */
+export function textureMemoryLine(t: SceneHealth['textureMemory']): string | null {
+  if (!t.textures) return null
+  return `Textures use about ${formatBytes(t.bytes)} of graphics memory (${t.textures} ${t.textures === 1 ? 'texture' : 'textures'}).`
 }

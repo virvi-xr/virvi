@@ -16,8 +16,11 @@ The scene's **Performance** tab compares the live preset with Decentraland's lim
 - **Triangles:** 10,000 per parcel, counted for every placed copy. A scene over this still deploys, but may run slowly for visitors.
 - **Entities:** 200 per parcel, less 20 that Virvi's runtime needs. Every placed model copy counts, and so do picture frames (4 to 8 per framed copy). Decentraland refuses a deploy over this.
 - **File size:** 15 MB per parcel in Genesis City. A World's storage belongs to its owner's wallet, so there's no fixed figure; it's checked when you deploy.
+- **Textures:** 10 for one parcel, growing with the parcels (log₂(parcels + 1) × 10). Each texture counts once, however many copies use it. Decentraland warns over this but still takes the deploy.
 
-Each one reads within budget, close (80% or more), or over. The tab lists the models with the most triangles and the largest files, and suggests what to change, such as a lower-detail model or smaller textures. Models that haven't been measured yet count as 0, and the tab says how many there are. Texture memory isn't measured yet.
+Each one reads within budget, close (80% or more), or over. The tab lists the models with the most triangles and the largest files, and suggests what to change, such as a lower-detail model or smaller textures. It also shows roughly how much graphics memory the textures take, and which models use the most. A texture over 1024 px gets a suggestion to resize it, since Decentraland recommends 1024 px or smaller.
+
+Virvi measures each model's triangles and textures from its file the first time the tab looks at it, and the tab updates by itself when that's done. Models that can't be measured, such as ones hosted elsewhere, count as 0, and the tab says how many there are.
 
 ### Activity
 

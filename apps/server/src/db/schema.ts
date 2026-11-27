@@ -1554,6 +1554,22 @@ export const sceneRoles = pgTable(
 )
 
 /**
+ * What a Virvi-hosted model costs to draw (LIV-41), measured from its GLB once and kept by URL (a model URL's file never
+ * changes). Filled in the background by scenes/model-stats.ts; `error` when the file couldn't be read.
+ */
+export const modelStats = pgTable('model_stats', {
+  url: text('url').primaryKey(),
+  triangles: integer('triangles'),
+  textureCount: integer('texture_count'),
+  /** Estimated GPU memory of its textures, mipmaps included */
+  textureBytes: bigint('texture_bytes', { mode: 'number' }),
+  /** Longest side of its largest texture, in pixels */
+  maxTexturePx: integer('max_texture_px'),
+  error: text('error'),
+  measuredAt: timestamp('measured_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/**
  * Who changed what in a scene, and when (LIV-32). One row per change; repeat edits of the same thing by the same person
  * within a minute are folded into one row (`count`), so dragging a model around doesn't fill the log. Written by
  * recordSceneActivity (scenes/activity.ts), never in the way of the change itself.

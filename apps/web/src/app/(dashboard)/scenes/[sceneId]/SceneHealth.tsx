@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import { fill, formatBytes, METRIC_LABEL, metricLine, overNote, STATE_LABEL, targetLabel, type BudgetState, type SceneHealth as Health } from '@/lib/scene-health'
+import { fill, formatBytes, METRIC_LABEL, metricLine, overNote, STATE_LABEL, targetLabel, textureMemoryLine, type BudgetState, type SceneHealth as Health } from '@/lib/scene-health'
 
 const TONE: Record<BudgetState, { bar: string; text: string }> = {
   within: { bar: 'bg-emerald-500', text: 'text-emerald-300' },
@@ -24,6 +24,13 @@ export function SceneHealth({ sceneId }: { sceneId: string }) {
   // useApi() returns new functions every render; reload when the scene or session changes
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [sceneId, token])
+  // Models are measured in the background on the first look: check back until they're done
+  useEffect(() => {
+    if (!health?.measuring) return
+    const t = setTimeout(() => load(), 5_000)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [health])
 
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-6">
@@ -36,6 +43,8 @@ export function SceneHealth({ sceneId }: { sceneId: string }) {
       {health && (
         <div className="space-y-6">
           <p className={`text-sm font-medium ${TONE[health.state].text}`}>{STATE_LABEL[health.state]}</p>
+          {health.measuring > 0 && <p role="status" className="text-xs text-gray-400">Measuring {health.measuring} {health.measuring === 1 ? 'model' : 'models'}… this updates by itself.</p>}
+          {textureMemoryLine(health.textureMemory) && <p className="text-sm text-gray-300">{textureMemoryLine(health.textureMemory)}</p>}
           {health.targets.map((t) => (
             <section key={t.id ?? 'none'} aria-label={targetLabel(t)}>
               <h3 className="mb-2 text-sm text-gray-200">{targetLabel(t)}</h3>
@@ -65,10 +74,11 @@ export function SceneHealth({ sceneId }: { sceneId: string }) {
             </section>
           )}
 
-          {(health.byTriangles.length > 0 || health.bySize.length > 0) && (
-            <div className="grid gap-6 sm:grid-cols-2">
+          {(health.byTriangles.length > 0 || health.bySize.length > 0 || health.byTextureMemory.length > 0) && (
+            <div className="grid gap-6 sm:grid-cols-3">
               <Top title="Most triangles" rows={health.byTriangles.map((c) => ({ id: c.elementId, name: c.name, value: `${((c.triangles ?? 0) * c.copies).toLocaleString('en-US')}${c.copies > 1 ? ` (${c.copies} copies)` : ''}` }))} />
               <Top title="Largest files" rows={health.bySize.map((c) => ({ id: c.elementId || c.name, name: c.name, value: formatBytes(c.bytes ?? 0) }))} />
+              <Top title="Most texture memory" rows={health.byTextureMemory.map((c) => ({ id: c.elementId, name: c.name, value: `${formatBytes(c.textureBytes ?? 0)}${c.maxTexturePx ? ` (${c.maxTexturePx} px)` : ''}` }))} />
             </div>
           )}
           {health.unmeasured > 0 && (

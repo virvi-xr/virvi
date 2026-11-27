@@ -4,6 +4,7 @@ import { db } from '../db/connection.js'
 import { dclWorldDestinations } from '../db/schema.js'
 import { frameEntitiesInScene, modelsInScene, type ModelNeed } from '../services/dcl/assemble.js'
 import { PARCEL_MAX_BYTES_PER_PARCEL } from '../services/dcl/world-deployer.js'
+import { measureMissing, statsFor } from './model-stats.js'
 
 /**
  * A scene's performance budget (LIV-41): its triangles, entities and file size against Decentraland's limits for each
@@ -14,9 +15,13 @@ import { PARCEL_MAX_BYTES_PER_PARCEL } from '../services/dcl/world-deployer.js'
 export type BudgetState = 'within' | 'close' | 'over'
 /** From this share of a limit on, a metric is close to it. */
 export const CLOSE_AT = 0.8
+/** Decentraland's texture limit: log2(parcels + 1) × 10. Its explorer warns over it; the content server still takes it. */
+export const dclTextureLimit = (parcels: number) => Math.floor(Math.log2(parcels + 1) * 10)
+/** Decentraland's recommended largest texture side; bigger ones cost memory and are scaled down on many devices. */
+export const DCL_TEXTURE_MAX_PX = 1024
 
 export interface BudgetMetric {
-  key: 'triangles' | 'entities' | 'bytes'
+  key: 'triangles' | 'entities' | 'bytes' | 'textures'
   used: number
   /** null: no fixed limit here (a World's storage is per wallet, checked when deploying) */
   limit: number | null
@@ -25,7 +30,7 @@ export interface BudgetMetric {
   blocks: boolean
 }
 
-export interface BudgetContributor { elementId: string; name: string; copies: number; triangles: number | null; bytes: number | null }
+export interface BudgetContributor { elementId: string; name: string; copies: number; triangles: number | null; bytes: number | null; textureBytes: number | null; maxTexturePx: number | null }
 export interface BudgetTarget { id: string | null; name: string; kind: 'world' | 'parcels' | 'none'; parcels: number; state: BudgetState; metrics: BudgetMetric[] }
 export interface SceneHealth {
   state: BudgetState
@@ -34,6 +39,11 @@ export interface SceneHealth {
   bySize: BudgetContributor[]
   /** Models with no triangle count or size yet, counted as 0 */
   unmeasured: number
+  /** Models being measured right now (refresh to see them) */
+  measuring: number
+  /** Estimated GPU memory of every model's textures, each texture once */
+  textureMemory: { bytes: number; textures: number }
+  byTextureMemory: BudgetContributor[]
   frames: number
   suggestions: string[]
 }
@@ -49,10 +59,14 @@ export function budgetFor(models: ModelNeed[], frames: number, target: { kind: B
   const entities = models.reduce((n, m) => n + m.instances, 0) + frames
   const bytes = models.reduce((n, m) => n + (m.bytes ?? 0), 0)
   const sizeLimit = target.kind === 'world' ? null : PARCEL_MAX_BYTES_PER_PARCEL * Math.max(1, target.parcels)
+  // A texture is loaded once however many copies use it
+  const textures = models.reduce((n, m) => n + (m.textures?.count ?? 0), 0)
+  const textureLimit = dclTextureLimit(Math.max(1, target.parcels))
   const metrics: BudgetMetric[] = [
     { key: 'triangles', used: triangles, limit: budget.triangles, state: stateOf(triangles, budget.triangles), blocks: false },
     { key: 'entities', used: entities, limit: budget.entities, state: stateOf(entities, budget.entities), blocks: true },
     { key: 'bytes', used: bytes, limit: sizeLimit, state: stateOf(bytes, sizeLimit), blocks: sizeLimit !== null },
+    { key: 'textures', used: textures, limit: textureLimit, state: stateOf(textures, textureLimit), blocks: false },
   ]
   return { state: worst(metrics.map((m) => m.state)), metrics }
 }
@@ -81,12 +95,18 @@ export function suggestionsFor(targets: BudgetTarget[], models: ModelNeed[], fra
       ? `Make "${big.name}" smaller (${(big.bytes! / MB).toFixed(1)} MB): most of a model's size is usually its textures, so resize them to 1024 px or less and compress them.`
       : 'Make your largest models smaller: resize and compress their textures.')
   }
+  if (hot('textures')) out.push('Use fewer textures: models that share one texture atlas load it once, and small details can be a colour instead of an image.')
+  const huge = models.filter((m) => (m.textures?.maxPx ?? 0) > DCL_TEXTURE_MAX_PX).sort((a, b) => b.textures!.bytes - a.textures!.bytes)[0]
+  if (huge) out.push(`"${huge.name}" has a ${huge.textures!.maxPx} px texture: Decentraland recommends ${DCL_TEXTURE_MAX_PX} px or less, and resizing it cuts its memory by about ${huge.textures!.maxPx >= 2 * DCL_TEXTURE_MAX_PX ? 'three quarters' : 'half'}.`)
   const tooBig = models.find((m) => (m.bytes ?? 0) > DCL_MAX_FILE_BYTES)
   if (tooBig) out.push(`"${tooBig.name}" is over Decentraland's ${DCL_MAX_FILE_BYTES / MB} MB limit for one file, so it can't deploy until it's smaller.`)
   return out
 }
 
-const contributor = (m: ModelNeed): BudgetContributor => ({ elementId: m.elementId, name: m.name, copies: m.instances, triangles: m.triangles, bytes: m.bytes })
+const contributor = (m: ModelNeed): BudgetContributor => ({
+  elementId: m.elementId, name: m.name, copies: m.instances, triangles: m.triangles, bytes: m.bytes,
+  textureBytes: m.textures?.bytes ?? null, maxTexturePx: m.textures?.maxPx ?? null,
+})
 
 export async function sceneHealth(sceneId: string): Promise<SceneHealth> {
   const [all, frames, dests] = await Promise.all([
@@ -98,12 +118,17 @@ export async function sceneHealth(sceneId: string): Promise<SceneHealth> {
     ? dests.map((d) => ({ id: d.id, name: d.worldName ?? `Parcels at ${d.base}`, kind: d.kind, parcels: d.parcels.length, ...budgetFor(all, frames, { kind: d.kind, parcels: d.parcels.length }) }))
     : [{ id: null, name: 'One parcel', kind: 'none', parcels: 1, ...budgetFor(all, frames, { kind: 'none', parcels: 1 }) }]
   const models = all.filter((m) => m.kind !== 'thumbnail')
+  // Models never measured are measured now, in the background: the next look has them
+  const measuring = measureMissing(models.filter((m) => m.textures == null).map((m) => m.url), await statsFor(models.map((m) => m.url)))
   return {
     state: worst(targets.map((t) => t.state)),
     targets,
     byTriangles: models.filter((m) => m.triangles).sort((a, b) => b.triangles! * b.instances - a.triangles! * a.instances).slice(0, TOP).map(contributor),
     bySize: all.filter((m) => m.bytes).sort((a, b) => b.bytes! - a.bytes!).slice(0, TOP).map(contributor),
     unmeasured: models.filter((m) => m.triangles == null || m.bytes == null).length,
+    measuring,
+    textureMemory: { bytes: models.reduce((n, m) => n + (m.textures?.bytes ?? 0), 0), textures: models.reduce((n, m) => n + (m.textures?.count ?? 0), 0) },
+    byTextureMemory: models.filter((m) => m.textures?.bytes).sort((a, b) => b.textures!.bytes - a.textures!.bytes).slice(0, TOP).map(contributor),
     frames,
     suggestions: suggestionsFor(targets, all, frames),
   }

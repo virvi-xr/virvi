@@ -3,6 +3,7 @@ import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
 import { assetLibraryItems, dclWorldDestinations, sceneRoles } from '../src/db/schema.js'
 import { budgetFor, suggestionsFor } from '../src/scenes/health.js'
+import { measurementsSettled, setModelFetcher } from '../src/scenes/model-stats.js'
 import type { ModelNeed } from '../src/services/dcl/assemble.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, createElement, createInstance, tokenFor, randomWallet } from './helpers/factories.js'
@@ -59,9 +60,12 @@ describe('GET /api/scenes/:sceneId/health', () => {
     await resetDb()
     savedCdn = config.cdnUrl
     ;(config as { cdnUrl: string | null }).cdnUrl = CDN
+    setModelFetcher(async () => { throw new Error('offline in tests') })
     app = await testApp()
   })
   afterEach(async () => {
+    await measurementsSettled()
+    setModelFetcher(null)
     ;(config as { cdnUrl: string | null }).cdnUrl = savedCdn
     await app.close()
   })
@@ -80,7 +84,7 @@ describe('GET /api/scenes/:sceneId/health', () => {
     let body = (await get(host)).json()
     expect(body.targets).toEqual([expect.objectContaining({ id: null, kind: 'none', parcels: 1, state: 'over' })])
     expect(body.targets[0].metrics.find((m: any) => m.key === 'triangles')).toMatchObject({ used: 12_000, limit: 10_000, state: 'over' })
-    expect(body.byTriangles).toEqual([{ elementId: statue.id, name: 'Statue', copies: 3, triangles: 4_000, bytes: 3_000_000 }])
+    expect(body.byTriangles).toEqual([{ elementId: statue.id, name: 'Statue', copies: 3, triangles: 4_000, bytes: 3_000_000, textureBytes: null, maxTexturePx: null }])
     expect(body.unmeasured).toBe(1)
     expect(body.suggestions[0]).toMatch(/lower-detail version of "Statue" \(4,000 triangles × 3 copies\)/)
 
