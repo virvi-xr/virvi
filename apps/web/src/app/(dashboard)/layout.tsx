@@ -22,7 +22,7 @@ import { AssistantPanel } from '@/components/assistant/AssistantPanel'
 import { ASSET_LIBRARY, MEDIA_LIBRARY } from '@/lib/libraries'
 import {
   BroadcastIcon, CalendarIcon, ChartIcon, CityIcon, CubeIcon, GearIcon, GiftIcon, HomeIcon, LayersIcon, LockIcon, LogoutIcon, MediaIcon,
-  MedalIcon, ShieldIcon, SparkleIcon, SyncIcon, BugIcon, BookIcon,
+  MedalIcon, ShieldIcon, SparkleIcon, SyncIcon, BugIcon, BookIcon, HangerIcon,
 } from '@/components/icons'
 import { siteLinks } from '@/lib/site'
 import { reporter } from '@/lib/errors/reporter'
@@ -52,6 +52,7 @@ const baseNavSections: NavSection[] = [
       { href: '/assets', label: ASSET_LIBRARY.name, icon: LayersIcon, description: ASSET_LIBRARY.subtitle },
       { href: '/streaming', label: 'Streaming', icon: BroadcastIcon },
       { href: '/analytics', label: 'Analytics', icon: ChartIcon },
+      { href: '/collection', label: 'Collection', icon: HangerIcon, description: 'What your wallets hold in Decentraland' },
     ],
   },
   { label: 'System', items: [{ href: '/settings', label: 'Settings', icon: GearIcon }] },
