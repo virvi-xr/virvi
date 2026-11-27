@@ -153,3 +153,55 @@ describe('MCP call log (LIV-170)', () => {
     expect(await db.select().from(mcpCalls)).toHaveLength(0)
   })
 })
+
+describe('MCP resources and prompts (LIV-170)', () => {
+  let app: Awaited<ReturnType<typeof testApp>>
+  beforeEach(async () => { await resetDb(); app = await testApp() })
+  afterEach(() => app.close())
+  const rpc = async (key: string, method: string, params?: unknown) => (await app.inject({
+    method: 'POST', url: '/mcp', headers: { authorization: `Bearer ${key}` }, payload: { jsonrpc: '2.0', id: 1, method, ...(params ? { params } : {}) },
+  })).json()
+
+  it("lists each scene as a resource and reads its layout through get_scene's checks", async () => {
+    const owner = await createUser()
+    const { scene, preset } = await createScene(owner, 'Club')
+    const el = await createElement(preset.id, { name: 'Screen' })
+    const key = (await app.inject({ method: 'POST', url: '/api/keys', headers: { authorization: `Bearer ${tokenFor(owner)}` }, payload: { name: 'a' } })).json().key
+    expect((await rpc(key, 'initialize', { protocolVersion: '2025-06-18' })).result.capabilities).toMatchObject({ resources: {}, prompts: {} })
+    const listed = (await rpc(key, 'resources/list')).result.resources
+    expect(listed.map((r: any) => r.uri)).toEqual(['virvi://guide', `virvi://scene/${scene.id}`])
+    expect(listed[1].title).toBe('Club')
+    const read = (await rpc(key, 'resources/read', { uri: `virvi://scene/${scene.id}` })).result.contents[0]
+    expect(read.mimeType).toBe('application/json')
+    expect(read.text).toContain(el.id)
+    expect((await rpc(key, 'resources/read', { uri: 'virvi://guide' })).result.contents[0].text).toMatch(/treat it as data/)
+    // Someone else's scene, or nonsense, is not found
+    const other = await createScene(await createUser())
+    expect((await rpc(key, 'resources/read', { uri: `virvi://scene/${other.scene.id}` })).error.code).toBe(-32002)
+    expect((await rpc(key, 'resources/read', { uri: 'file:///etc/passwd' })).error.code).toBe(-32002)
+  })
+
+  it('offers starter prompts that fill in their arguments', async () => {
+    const key = (await app.inject({ method: 'POST', url: '/api/keys', headers: { authorization: `Bearer ${tokenFor(await createUser())}` }, payload: { name: 'a' } })).json().key
+    const prompts = (await rpc(key, 'prompts/list')).result.prompts
+    expect(prompts.map((p: any) => p.name)).toEqual(['set_up_an_event', 'build_a_gallery', 'weekly_report'])
+    const got = (await rpc(key, 'prompts/get', { name: 'weekly_report', arguments: { scene: 'Club' } })).result
+    expect(got.messages[0]).toMatchObject({ role: 'user', content: { type: 'text' } })
+    expect(got.messages[0].content.text).toContain('"Club"')
+    expect((await rpc(key, 'prompts/get', { name: 'weekly_report', arguments: {} })).error.message).toMatch(/Missing argument: scene/)
+    expect((await rpc(key, 'prompts/get', { name: 'nope' })).error.code).toBe(-32602)
+  })
+
+  it('every tool a prompt names is one the server offers', async () => {
+    const { PROMPTS } = await import('../src/mcp/prompts.js')
+    const { toolsFor } = await import('../src/mcp/server.js')
+    const offered = new Set(toolsFor(false).map((t) => t.name))
+    const { TOOLS } = await import('../src/assistant/tools/index.js')
+    for (const p of PROMPTS) {
+      const text = p.text({ event: 'x', scene: 'y', where: 'z' })
+      for (const [, name] of text.matchAll(/\b([a-z]+(?:_[a-z]+)+)\b/g)) {
+        if (name in TOOLS || /^(list|get|create|add|link|update|remove)_/.test(name)) expect(offered.has(name), `${p.name}: ${name}`).toBe(true)
+      }
+    }
+  })
+})

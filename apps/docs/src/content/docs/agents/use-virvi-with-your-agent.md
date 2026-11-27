@@ -43,6 +43,11 @@ The tools are the same ones the dashboard's [Assistant](/docs/dashboard/assistan
 
 What costs money or shows something publicly isn't offered through MCP: sending Studio prompts, finalizing, paying for a BEAT, creating or changing raffles, redeploying, and inviting collaborators. Do those in the dashboard, where you confirm them. `remove_instance` can't be undone, so the agent is told to check with you first. Other people's emails and wallets are hidden in results, as they are for the Assistant.
 
+The server also offers:
+
+- **Resources:** each of your scenes as `virvi://scene/<id>`, its current presets, elements and placements, which an agent can attach as context, and `virvi://guide`, a short note on how Virvi's scenes work.
+- **Prompts:** starter workflows your agent may show in its prompt menu: **Set up an event** (create it, link a scene and schedule a preset), **Build a gallery from my media** and **Weekly report for a scene**.
+
 Signing in with your Virvi account through the agent, instead of a key, comes later, along with more tools (events, schedules, uploads, the Design Studio).
 
 ## Prompts that work
