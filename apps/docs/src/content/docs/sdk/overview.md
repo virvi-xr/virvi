@@ -68,7 +68,8 @@ What `createVirvi()` resolves to. These are the members meant for scene code.
 | Member | What it does |
 |---|---|
 | `sendMessage(id, data?)` | Sends `data` to every other client in the scene's room. Not to yourself. See [Multiplayer Events](/docs/custom-features/multiplayer-events/). |
-| `onMessage(id, callback)` | Calls `callback(data)` when a message with that `id` arrives. One callback per `id`; a second call replaces the first. |
+| `onMessage(id, callback)` | Calls `callback(data, from)` when a message with that `id` arrives; `from` is the server-stamped sender (2.24.0). One callback per `id`; a second call replaces the first. Returns a remover (2.24.0). |
+| `offMessage(id, callback?)` | From 2.24.0: stops listening for `id`. |
 | `track(name, props?)` | Records a custom analytics event. |
 | `recordAction(id, metadata?)` | Deprecated name for `track()`. |
 | `storage` | Read-only view of the scene's elements. See [Storage](#storage). |

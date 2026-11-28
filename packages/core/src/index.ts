@@ -1,5 +1,5 @@
 export { Virvi, resolveApiUrl } from './Virvi.js'
-export type { VirviConnectionState, VirviStateListener } from './Virvi.js'
+export type { VirviConnectionState, VirviStateListener, MessageSender } from './Virvi.js'
 export { SceneManager } from './SceneManager.js'
 export { EventBus } from './events/EventBus.js'
 export { VirviStorageImpl } from './storage.js'

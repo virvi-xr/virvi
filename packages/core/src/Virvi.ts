@@ -8,7 +8,20 @@ import { VirviStorageImpl } from './storage.js'
 import type { Selected } from './transform/session.js'
 import { EventBus } from './events/EventBus.js'
 import { AdHost } from './ads/host.js'
+
 import type { KioskClick } from './managers/KioskManager.js'
+
+/** Who sent a message (LIV-158), as the server saw them. */
+export interface MessageSender {
+  /** The sender's connection in the room: stable while they stay. */
+  sessionId: string
+  userId: string | null
+  wallet: string | null
+  /** Not signed in with a checked wallet or Virvi account. */
+  guest: boolean
+  /** A host, co-host or editor of the scene. */
+  staff: boolean
+}
 
 // Default API URLs by environment
 const API_URLS: Record<string, string> = {
@@ -50,7 +63,7 @@ export class Virvi {
   private ads: AdHost
   /** Core event emitter (also carries transform_draft / transform_draft_end / transform_held). */
   public readonly events: EventBus
-  private userMessageHandlers: Map<string, (data: unknown) => void> = new Map()
+  private userMessageHandlers: Map<string, (data: unknown, from: MessageSender | null) => void> = new Map()
   private stateListeners: Set<VirviStateListener> = new Set()
   private handlersRegistered = false
   private _connectionState: VirviConnectionState = 'idle'
@@ -465,9 +478,11 @@ export class Virvi {
 
     this.colyseus.onMessage('user_message', (message: unknown) => {
       const msg = message as any
-      if (msg?.messageId && this.userMessageHandlers.has(msg.messageId)) {
-        this.userMessageHandlers.get(msg.messageId)!(msg.data)
-      }
+      const handler = msg?.messageId ? this.userMessageHandlers.get(msg.messageId) : undefined
+      if (!handler) return
+      // LIV-158: the server stamps the sender; an older server sends none
+      const from: MessageSender | null = msg.from && typeof msg.from === 'object' ? msg.from : null
+      try { handler(msg.data, from) } catch { /* scene code */ }
     })
   }
 
@@ -784,8 +799,20 @@ export class Virvi {
     this.colyseus.send('user_message', { messageId: id, data, type: 'outbound' })
   }
 
-  onMessage(id: string, callback: (data: unknown) => void): void {
+  /**
+   * Calls `callback(data, from)` when a message with that `id` arrives from another client. `from` is who sent it, as
+   * the server saw them (null from servers older than LIV-158). One callback per `id`: a second call replaces the
+   * first. Returns a function that removes it.
+   */
+  onMessage(id: string, callback: (data: unknown, from: MessageSender | null) => void): () => void {
     this.userMessageHandlers.set(id, callback)
+    return () => this.offMessage(id, callback)
+  }
+
+  /** Stops listening for message `id` (only if `callback` is still the one listening, when given). */
+  offMessage(id: string, callback?: (data: unknown, from: MessageSender | null) => void): void {
+    if (callback && this.userMessageHandlers.get(id) !== callback) return
+    this.userMessageHandlers.delete(id)
   }
 
   /** @deprecated use track() */

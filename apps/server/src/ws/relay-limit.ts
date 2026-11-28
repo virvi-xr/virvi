@@ -38,3 +38,21 @@ export function relayUserMessage(message: unknown): { messageId: string; data: u
   if (typeof messageId !== 'string' || !messageId || messageId.length > MESSAGE_ID_MAX) return null
   return { messageId, data, type: 'inbound' }
 }
+
+/** Who sent a user_message (LIV-158): stamped by the server. A guest is anyone not signed in with a checked wallet or account. */
+export interface MessageSender {
+  /** This connection's id in the room: stable while they stay connected. */
+  sessionId: string
+  userId: string | null
+  wallet: string | null
+  guest: boolean
+  /** A host, co-host or editor of the scene. */
+  staff: boolean
+}
+
+export function messageSender(sessionId: string, actor: { userId: string | null; wallet: string | null; verified: boolean } | null, staff: boolean): MessageSender {
+  const verified = !!actor?.verified
+  const userId = verified ? actor!.userId : null
+  const wallet = verified ? actor!.wallet : null
+  return { sessionId, userId, wallet, guest: !userId && !wallet, staff }
+}

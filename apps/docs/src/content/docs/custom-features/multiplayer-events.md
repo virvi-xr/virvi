@@ -1,6 +1,6 @@
 ---
 title: Multiplayer Events
-description: Send custom real-time messages between players in a scene with virvi.sendMessage and virvi.onMessage.
+description: Send custom real-time messages between players in a scene with virvi.sendMessage and virvi.onMessage, and see who sent each one.
 ---
 
 `sendMessage` and `onMessage` pass your own messages between everyone connected to a scene. They ride on the scene's Virvi room, so you don't run any networking yourself.
@@ -9,7 +9,7 @@ description: Send custom real-time messages between players in a scene with virv
 
 - Each Virvi scene has one real-time room (`virvi_scene`). Every player whose scene code has connected to Virvi is in it.
 - `sendMessage(id, data)` sends `{ messageId: id, data }` to the room. The server forwards it to **every other** client in the room. The sender does not get its own message back.
-- `onMessage(id, callback)` calls `callback(data)` for each message with that `id`.
+- `onMessage(id, callback)` calls `callback(data, from)` for each message with that `id`. `from` is who sent it, stamped by the server (see [Who sent it](#who-sent-it)).
 - Nothing is stored. A player who connects later never sees earlier messages.
 - `data` must survive JSON-like serialization: plain objects, arrays, strings, numbers, booleans and `null`.
 - **Limits:** a message can be up to about 4 KB, and its `id` up to 128 characters. Each player can send a burst of 20 messages, then 10 a second. Messages over the limit are dropped without an error, so don't send one every frame.
@@ -40,30 +40,47 @@ virvi.onMessage('emoji-reaction', (data) => {
 })
 ```
 
-The callback gets only `data`. Virvi doesn't add who sent it. If you need that, put it in the payload yourself, for example `virvi.user?.id` (and don't trust it: any client can send any payload).
-
 To act on your own message too, call your handler directly when you send.
+
+## Who sent it
+
+From `@virvixr/dcl` 2.24.0, the callback's second argument is the sender, as the server saw them. Scene code can't fake it: the server replaces anything the sender claims.
+
+```typescript
+virvi.onMessage('start-round', (data, from) => {
+  if (!from?.staff) return // only the scene's host, co-hosts and editors may start a round
+  startRound()
+})
+```
+
+| Field | Meaning |
+|---|---|
+| `sessionId` | The sender's connection in the room. Stable while they stay connected |
+| `userId` | Their Virvi account id, or `null` |
+| `wallet` | Their checked wallet address, or `null` |
+| `guest` | `true` when they aren't signed in with a checked wallet or Virvi account |
+| `staff` | `true` for the scene's host, co-hosts and editors |
+
+`from` can be `null` (a message relayed by a server from before this change), so check it before use. The **payload** is still whatever the sender wrote, so check its shape.
 
 ## One handler per message ID
 
-`onMessage` keeps one callback per `id`. Calling it again with the same `id` replaces the earlier callback. It returns nothing, and there is no way to remove a handler. To stop reacting, have your callback check a flag.
+`onMessage` keeps one callback per `id`. Calling it again with the same `id` replaces the earlier callback. It returns a function that removes it, and `offMessage(id)` removes whatever is listening for `id`.
 
 ```typescript
-let listening = true
-virvi.onMessage('emoji-reaction', (data) => {
-  if (!listening) return
-  // ...
-})
+const stop = virvi.onMessage('emoji-reaction', (data) => { /* ... */ })
 // later
-listening = false
+stop() // or virvi.offMessage('emoji-reaction')
 ```
+
+On 2.23.0 and older, `onMessage` returns nothing and there's no `offMessage`: have your callback check a flag instead.
 
 ## Who can send
 
-Any client in the room, signed in or not. The server forwards `user_message` without checking the sender's role or the payload. Treat every message as untrusted input:
+Any client in the room, signed in or not. The server stamps who sent it but doesn't check the payload. Treat every message's data as untrusted input:
 
 - Validate its shape before using it.
-- Never let a message alone grant anything (prizes, access, edits).
+- Never let a message alone grant anything (prizes, access, edits). Check `from.staff` for messages only staff should send.
 - Throttle what you send: don't send every frame.
 
 ## Limits

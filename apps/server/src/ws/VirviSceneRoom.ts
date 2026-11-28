@@ -39,7 +39,7 @@ import { FRAMEABLE_TYPES, KIOSK_ITEMS_KEY, VideoSourceType, checkFrame, type Ven
 import { screenShowingsMessages, SHOWINGS_REFRESH_MS } from '../scenes/showings.js'
 import { hold, holderOf, release, releaseAll, sweepExpired } from './draft-holds.js'
 import { checkParentInstance } from '../scenes/instance-parent.js'
-import { RelayLimiter, relayUserMessage } from './relay-limit.js'
+import { RelayLimiter, relayUserMessage, messageSender } from './relay-limit.js'
 import { noteSceneActivity, roomActor, type SceneActivityAction } from '../scenes/activity.js'
 
 interface JoinOptions {
@@ -108,6 +108,7 @@ export class VirviSceneRoom extends Room {
   private clientMeta: Map<string, ClientMeta> = new Map()
   /** Open relay messages are rate-limited per client (LIV-156). */
   private relayLimit = new RelayLimiter()
+  private messageChains = new Map<string, Promise<void>>()
   /** Signed-in scene-pass connections, by session: they count as live presence for BEAT check-ins (beats/live.ts). */
   private beatLive: Map<string, { userId: string; since: number }> = new Map()
   /** Whether the scene has a BEAT in its card window (paid or live): presence is only written while it does (M-9). */
@@ -422,10 +423,20 @@ export class VirviSceneRoom extends Room {
 
     // ── User Messaging ────────────────────────────────────────────────────
     // Open to everyone in the room by design (Multiplayer Events); limited per client, and only its id and data go on
+    // LIV-158: the server stamps who sent it (`from`), so scene code can't be fooled by a claimed sender. A client's
+    // messages stay in order while its access is looked up.
     this.onMessage('user_message', (client, message) => {
       const relay = relayUserMessage(message)
       if (!relay || !this.relayLimit.take(client.sessionId, 'user_message')) return
-      this.broadcast('user_message', relay, { except: client })
+      const prev = this.messageChains.get(client.sessionId) ?? Promise.resolve()
+      const next = prev.then(async () => {
+        const actor = (client.auth ?? null) as Actor | null
+        let staff = false
+        try { staff = hasScope(await this.getAccess(client), 'scene.edit') } catch { /* not staff */ }
+        this.broadcast('user_message', { ...relay, from: messageSender(client.sessionId, actor, staff) }, { except: client })
+      }).catch(() => {})
+      this.messageChains.set(client.sessionId, next)
+      void next.then(() => { if (this.messageChains.get(client.sessionId) === next) this.messageChains.delete(client.sessionId) })
     })
 
     // ── Scene state (LIV-158) ─────────────────────────────────────────────
@@ -619,6 +630,7 @@ export class VirviSceneRoom extends Room {
 
   onLeave(client: Client, consented: boolean) {
     this.relayLimit.forget(client.sessionId)
+    this.messageChains.delete(client.sessionId)
     const meta = this.clientMeta.get(client.sessionId)
     console.log(`[VirviSceneRoom] ${meta?.clientType || 'unknown'} left: ${meta?.displayName || client.sessionId}`)
 
