@@ -10,6 +10,18 @@ import { EventBus } from './events/EventBus.js'
 import { AdHost } from './ads/host.js'
 
 import type { KioskClick } from './managers/KioskManager.js'
+import type { DrawnType } from './CustomRendering.js'
+
+/** LIV-158: (type, element, instance?): `instance` is set when the event is about one placed copy. */
+export type ElementListener = (type: DrawnType, element: Record<string, any>, instance?: Record<string, any>) => void
+
+/** LIV-158: what changed in storage. `type` and `id` are null for a whole preset arriving. */
+export interface StorageChange {
+  action: 'init' | 'create' | 'update' | 'upsert' | 'delete'
+  type: string | null
+  id: string | null
+  instance: boolean
+}
 
 /** Who sent a message (LIV-158), as the server saw them. */
 export interface MessageSender {
@@ -244,8 +256,9 @@ export class Virvi {
    * Can be called standalone before scene discovery.
    */
   async authenticate(config: VirviInitConfig): Promise<void> {
-    // LIV-158: the scene code's widget handlers and defaults, before anything can arrive
+    // LIV-158: the scene code's widget handlers and defaults, and whether it draws everything itself, before anything arrives
     this.sceneManager.widgets.define(config.widgets)
+    this.sceneManager.custom.setAll(config.customRendering === true)
     const env = config.env || 'prod'
     const apiUrl = resolveApiUrl(config)
     this.wssUrl = config.wssUrl || WSS_URLS[env] || WSS_URLS.prod
@@ -671,6 +684,36 @@ export class Virvi {
     }
     this.events.on('giveaway_available', handler)
     return () => this.events.off('giveaway_available', handler)
+  }
+
+  // ── Custom rendering (LIV-158) ─────────────────────────────────────────
+
+  private onCustom(event: string, listener: ElementListener): () => void {
+    const handler = (type: DrawnType, element: Record<string, any>, instance?: Record<string, any>) => {
+      try { listener(type, element, instance) } catch { /* swallow */ }
+    }
+    this.events.on(event, handler)
+    return () => this.events.off(event, handler)
+  }
+
+  /**
+   * An element (no `instance`) or one placed copy (`instance`) that scene code draws itself has appeared: an element
+   * or copy whose customRendering is true, or everything with `createVirvi({ customRendering: true })`. Virvi doesn't
+   * draw it. Returns an unsubscribe.
+   */
+  onElementCreate(listener: ElementListener): () => void { return this.onCustom('element_create', listener) }
+  /** A custom-rendered element or copy changed (its full new data). Returns an unsubscribe. */
+  onElementUpdate(listener: ElementListener): () => void { return this.onCustom('element_update', listener) }
+  /** A custom-rendered element or copy is gone (deleted, hidden, or Virvi draws it again). Returns an unsubscribe. */
+  onElementDelete(listener: ElementListener): () => void { return this.onCustom('element_delete', listener) }
+
+  /** Something in `storage` changed: any element, drawn by Virvi or not. Returns an unsubscribe. */
+  onStorageChange(listener: (change: StorageChange) => void): () => void {
+    const handler = (c: StorageChange) => {
+      try { listener(c) } catch { /* swallow */ }
+    }
+    this.events.on('storage_change', handler)
+    return () => this.events.off('storage_change', handler)
   }
 
   // ── Widgets (LIV-158) ──────────────────────────────────────────────────

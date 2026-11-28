@@ -17,6 +17,7 @@ No release so far has needed changes to scene code, so none is marked as breakin
 - **Widgets for scene code:** `onWidgetChange`, `onWidgetClick`, `getWidgetValue` and `listWidgets`, `virvi.storage.widgets`, and the `widgets` option's handlers and defaults now work. Scene code hears a widget the moment it changes on the dashboard. See [Widgets](/docs/custom-features/widgets/).
 - **Scene state:** `virvi.state` (`get`, `all`, `set`, `delete`, `on`) is a small shared key-value store per scene, saved by Virvi. Every visitor sees the same values, and late joiners get them on arrival. Editors write by default; a scene setting lets every visitor's scene code write too. See [Scene State](/docs/custom-features/scene-state/).
 - **Who sent a message:** `onMessage` callbacks get a second argument, `from`, stamped by the server: the sender's `sessionId`, `userId`, `wallet`, and whether they're a `guest` or `staff`. `onMessage` now returns a remover, and `offMessage(id)` is new. See [Multiplayer Events](/docs/custom-features/multiplayer-events/#who-sent-it).
+- **Custom rendering:** your scene's code can draw an image, video screen, model or sound itself. Set `customRendering` on an element or one placed copy, or pass `createVirvi({ customRendering: true })` for everything. Virvi then calls `onElementCreate`, `onElementUpdate` and `onElementDelete` instead of drawing it. `onStorageChange` reports every change to the scene's elements. See [Custom Rendering](/docs/custom-features/custom-rendering/).
 
 ## 2.23.0 — 2026-11-27
 

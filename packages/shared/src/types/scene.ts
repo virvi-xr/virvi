@@ -45,6 +45,11 @@ export interface VirviInitConfig {
   wssUrl?: string;
   debug?: boolean | string[];
   widgets?: WidgetConfig[];
+  /**
+   * LIV-158: scene code draws every image, video screen, model and sound itself (onElementCreate/Update/Delete);
+   * Virvi draws none of them. Without it, only elements and copies whose own customRendering is true are handed over.
+   */
+  customRendering?: boolean;
   /** Automatic analytics (default true). */
   analytics?: boolean;
 }

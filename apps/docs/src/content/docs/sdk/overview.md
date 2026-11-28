@@ -75,6 +75,7 @@ What `createVirvi()` resolves to. These are the members meant for scene code.
 | `storage` | Read-only view of the scene's elements. See [Storage](#storage). |
 | `state` | From 2.24.0: the scene's shared, saved key-value store (`get`, `all`, `set`, `delete`, `on`). See [Scene State](/docs/custom-features/scene-state/). |
 | `onWidgetChange(id, listener)`, `onWidgetClick(id, listener)` | From 2.24.0: a dashboard widget's changes and Trigger presses. See [Widgets](/docs/custom-features/widgets/). |
+| `onElementCreate`, `onElementUpdate`, `onElementDelete`, `onStorageChange` | From 2.24.0: draw elements yourself, and hear every change to the scene's elements. See [Custom Rendering](/docs/custom-features/custom-rendering/). |
 | `sceneId` | The connected Virvi scene's ID, or `null`. |
 | `user` | The signed-in user (`id`, `displayName`, `role`), or `null`. |
 | `connectionState` | `idle`, `authenticating`, `authenticated`, `discovering_scene`, `scene_ready`, `connecting`, `connected` or `error`. |
