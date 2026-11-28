@@ -58,6 +58,8 @@ export interface HWorld {
     cb: (e: { playerId: string; cmd?: string; value?: string; args?: string[] }) => void,
   ): void
   /** Seconds on the world's shared clock: the world server's, which each client tracks (server and client). */
+  /** An event to the world's other apps on this side (LIV-158 widgets); missing on Hyperfy builds without it. */
+  emit?(name: string, data: unknown): void
   getTime(): number
   getPlayers(): HPlayer[]
   /** The local player (client) or the player with this id. */

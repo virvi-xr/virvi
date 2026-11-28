@@ -47,7 +47,7 @@ An app downloaded before 2026-11-27 doesn't report a release, so its world shows
 
 Media Hyperfy can't play, such as gifs and webm videos, is skipped and the rest of the scene still shows.
 
-Not yet supported: ad spaces and ad modes, NFTs, widgets and claim points.
+Not yet supported: ad spaces and ad modes, NFTs and claim points. Widgets reach your own apps as world events from app 1.3.0 (see [Widgets](/docs/custom-features/widgets/#in-a-hyperfy-world)), and rules work with any version.
 
 ## Editing from inside Hyperfy
 

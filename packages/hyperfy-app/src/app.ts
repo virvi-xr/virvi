@@ -10,6 +10,7 @@
  *   server only; the world secret stays in Node); self-run worlds pair from the browser with a code.
  */
 import type { HyperfyFeedResponse, SerializedScene, ShowingInstance } from '@virvixr/shared'
+import { widgetEvents, WIDGET_CLICK_EVENT, WIDGET_EVENT, type WidgetEvent } from './widget-events.js'
 import { RuleClickLimiter } from './rule-clicks.js'
 import { clickHandler, renderedItem } from './edit/controller.js'
 import { runHud } from './hud/client.js'
@@ -73,6 +74,7 @@ function runServer(): void {
     return
   }
   let latest: SceneMessage | null = null
+  let serverWidgets: Map<string, WidgetEvent> | null = null
 
   new FeedPoller({
     feedUrl,
@@ -83,6 +85,7 @@ function runServer(): void {
       // Pinned to the world's shared clock here, so visitors' own clocks don't matter (scheduled showings).
       latest = typeof r.serverTime === 'number' ? { ...r, clockOffsetMs: virviClockOffset(r.serverTime, world.getTime()) } : r
       app.send(SCENE, latest)
+      serverWidgets = announceWidgets(serverWidgets, r.scene)
     },
   }).start()
 
@@ -117,6 +120,16 @@ function runServer(): void {
   world.on('enter', (e) => visits.enter(e.playerId))
   world.on('leave', (e) => visits.leave(e.playerId))
   visits.start()
+}
+
+/** Widgets to the world's other apps (LIV-158): every widget on the first snapshot, then changes and Trigger presses. */
+function announceWidgets(prev: Map<string, WidgetEvent> | null, scene: unknown): Map<string, WidgetEvent> {
+  const { changes, clicks, next } = widgetEvents(prev, scene as { widgets?: unknown[] } | null)
+  if (world.emit) {
+    for (const e of changes) world.emit(WIDGET_EVENT, e)
+    for (const e of clicks) world.emit(WIDGET_CLICK_EVENT, { id: e.id, customId: e.customId, name: e.name })
+  }
+  return next
 }
 
 export type { ClientEditHooks } from './sandbox.js'
@@ -353,8 +366,10 @@ function runClient(): ClientEditHooks {
     setTimeout(checkScreens, PLAYLIST_CHECK_MS)
   }
 
+  let clientWidgets: Map<string, WidgetEvent> | null = null
   app.on(SCENE, (data) => {
     const r = data as SceneMessage
+    clientWidgets = announceWidgets(clientWidgets, r?.scene as { widgets?: unknown[] } | null)
     showings = new Map((r?.showings ?? []).map((s) => [s.elementId, s.showings]))
     if (typeof r?.clockOffsetMs === 'number') clockOffsetMs = r.clockOffsetMs
     let next: RenderItem[]

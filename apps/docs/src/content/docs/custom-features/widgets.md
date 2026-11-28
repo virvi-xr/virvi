@@ -71,7 +71,29 @@ virvi.listWidgets()                   // every widget: id, customId, name, type,
 
 Hosts, co-hosts and editors can also change widgets in-world, from the HUD's **Widgets** tab (see [In-World HUD](/docs/dashboard/in-world-hud/#widgets)). `onWidgetChange('*', …)` listens to every widget.
 
-Scenes on 2.23.0 or older don't pass widgets to scene code: update `@virvixr/dcl` and redeploy. The Hyperfy app doesn't support widgets yet.
+Scenes on 2.23.0 or older don't pass widgets to scene code: update `@virvixr/dcl` and redeploy.
+
+## In a Hyperfy world
+
+A Hyperfy world has no scene code, so from Virvi app 1.3.0 the app tells the world's other apps about the scene's widgets with world events. Your own app's script can listen, on the server or in each visitor's client:
+
+```js
+world.on('virvi:widget', (w) => {
+  // w: { id, customId, name, type, value, options, removed? }
+  if (w.name === 'Stage lights') lights.visible = w.value === true
+})
+
+world.on('virvi:widget-click', (w) => {
+  if (w.name === 'Fireworks') launch()
+})
+```
+
+- `virvi:widget` comes once for every widget when the Virvi app gets the scene, then each time one changes. A widget that's removed or hidden comes once more with `removed: true`.
+- `virvi:widget-click` comes when a Trigger is pressed.
+- `type` is the control type number (see the table below), and a Selector's `value` is its chosen option, from `options`.
+- Listen as your app starts: the first round comes when the Virvi app gets the scene, a few seconds after the world opens.
+
+For changes that need no code at all, use [rules](#rules-make-a-widget-do-something-no-code).
 
 ## Control types
 
