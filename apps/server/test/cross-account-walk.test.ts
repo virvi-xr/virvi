@@ -12,8 +12,7 @@ import {
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
   studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws, beats, beatScenes, beatClaims, beatPayments,
   beatReissueRequests, beatReissueItems, beatReissueFiles, walletBlocks, accountWalletEvents,
-  assistantConversations, assistantMessages, assistantActions, assistantUsage, assistantShows, subscriptions, webhooks,
-} from '../src/db/schema.js'
+  assistantConversations, assistantMessages, assistantActions, assistantUsage, assistantShows, subscriptions, webhooks, sceneRules } from '../src/db/schema.js'
 import { clearPlanPrices, setStripe } from '../src/integrations/stripe.js'
 import { config } from '../src/config.js'
 import { memoryStudioStore, setStudioStore, uploadKey } from '../src/studio/store.js'
@@ -118,6 +117,7 @@ async function fixtures() {
   const [sceneImport] = await db.insert(sceneImports).values({
     userId: b.id, sceneId: scene.id, worldName: 'b-world.dcl.eth', kind: 'sdk7', status: 'failed', sourceKey: 'imports/b/source.zip', logKey: 'imports/b/build.log',
   }).returning()
+  const [bRule] = await db.insert(sceneRules).values({ presetId: preset.id, trigger: { type: 'widget', widgetId: element.id, when: 'change' }, actions: [{ type: 'hide', elementId: element.id }] }).returning()
   const [bKey] = await db.insert(apiKeys).values({ userId: b.id, name: 'B key', keyHash: 'b-hash', keyPrefix: 'virvi_k1' }).returning()
 
   const [design] = await db.insert(studioDesigns).values({ ownerId: b.id, name: 'B cap', kind: 'wearable', agent: 'claude' }).returning()
@@ -238,7 +238,7 @@ async function fixtures() {
   return {
     a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
     asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, pastPackage, notification, raffle, raffleSnapshot, raffleDraw, beat, arcBeat, reissueRequest, reissueFile, aScene, aPreset, aKiosk, aImage, aEvent, deletedScene, removal,
-    conversation, planId, doneAction, show, aShow, bWebhook,
+    conversation, planId, doneAction, show, aShow, bWebhook, bRule,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -331,6 +331,10 @@ const CASES: Case[] = [
   { route: 'DELETE /api/showings/:showingId', url: (f) => `/api/showings/${f.showing.id}` },
   { route: 'PATCH /api/presets/:presetId', url: (f) => `/api/presets/${f.preset.id}`, body: () => ({ name: 'pwned' }) },
   { route: 'DELETE /api/presets/:presetId', url: (f) => `/api/presets/${f.preset.id}` },
+  { route: 'GET /api/presets/:presetId/rules', url: (f) => `/api/presets/${f.preset.id}/rules` },
+  { route: 'POST /api/presets/:presetId/rules', url: (f) => `/api/presets/${f.preset.id}/rules`, body: (f) => ({ trigger: { type: 'widget', widgetId: f.element.id, when: 'change' }, actions: [{ type: 'hide', elementId: f.element.id }] }) },
+  { route: 'PATCH /api/rules/:ruleId', url: (f) => `/api/rules/${f.bRule.id}`, body: () => ({ enabled: false }) },
+  { route: 'DELETE /api/rules/:ruleId', url: (f) => `/api/rules/${f.bRule.id}` },
   { route: 'POST /api/presets/:presetId/activate', url: (f) => `/api/presets/${f.preset.id}/activate` },
   { route: 'POST /api/presets/:presetId/elements', url: (f) => `/api/presets/${f.preset.id}/elements`, body: () => ({ type: 'image', name: 'pwned' }) },
   { route: 'PUT /api/elements/:elementId', url: (f) => `/api/elements/${f.element.id}`, body: () => ({ name: 'pwned' }) },

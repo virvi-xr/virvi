@@ -26,6 +26,7 @@ import analyticsReadRoutes from './routes/analytics-read.js'
 import sceneRoutes from './routes/scenes.js'
 import sceneErrorRoutes from './routes/scene-errors.js'
 import sceneStateRoutes from './routes/scene-state.js'
+import sceneRuleRoutes from './routes/scene-rules.js'
 import sceneRoleRoutes from './routes/scene-roles.js'
 import sceneLibraryRoutes from './routes/scene-library.js'
 import { runStartupBackfill } from './library/scene-library.js'
@@ -263,6 +264,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(sceneRoutes)
   await app.register(sceneErrorRoutes)
   await app.register(sceneStateRoutes)
+  await app.register(sceneRuleRoutes)
   await app.register(sceneDeleteRoutes)
   await app.register(sceneRoleRoutes)
   await app.register(sceneLibraryRoutes)

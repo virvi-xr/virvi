@@ -5,6 +5,26 @@ description: Widgets store a control value in a scene's preset, set on the dashb
 
 A widget is a scene element that holds one control value, such as an on/off switch or a number, which you set from the dashboard.
 
+## Rules: make a widget do something, no code
+
+On the scene's **Widgets** tab, under **Rules**, choose **+ Add rule** and pick:
+
+1. **When:** a widget, and what it does. A **Toggle** can be turned on, turned off, or switched either way. A **Trigger** is pressed. Any other widget changes.
+2. **Do:** one or more actions, run in order (up to 10):
+   - **Show**, **Hide**, or **Show or hide (switch)** an item of the preset.
+   - **Switch to the preset** you pick.
+
+For example: *When Stage lights is turned off, hide Light rig 1, then hide Light rig 2.*
+
+Rules run on Virvi's servers the moment a widget changes, whether it changed on the dashboard, in the in-world HUD, from the Virvi Assistant or through the API. So they work the same in Decentraland, Hyperfy and AR Spaces, for everyone in the scene, on any SDK version, with no redeploy.
+
+- Each preset has its own rules, up to 50. Copying a preset copies its rules too.
+- Switch a rule off with its **On** box to keep it without running it.
+- Rules never change widgets, so a rule can't set itself off.
+- The scene's Activity tab shows each change a rule made, and whose widget change set it off.
+
+Timed rules (a date and time arriving), item clicks as triggers, and setting volume or brightness from a slider are coming later.
+
 ## In your scene's code
 
 From `@virvixr/dcl` 2.24.0, scene code gets every widget of the live preset, and hears changes the moment they're saved on the dashboard. Name a widget by its **custom id**, its **name**, or its element id.

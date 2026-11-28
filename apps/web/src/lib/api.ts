@@ -45,6 +45,7 @@ import { beatApiPath, sceneBeatsPath, type BeatAvailability, type BeatCheckoutRe
 
 /** One notice group in Settings (LIV-30). */
 import type { Onboarding } from './onboarding'
+import type { RuleAction, RuleTrigger, SceneRule } from './scene-rules'
 /** LIV-37: where new accounts stop, for admins. */
 /** LIV-39 */
 export interface Webhook { id: string; url: string; events: string[]; createdAt: string }
@@ -542,6 +543,12 @@ function useRealApi() {
     dismissOnboarding: (dismissed: boolean) => apiFetch<Onboarding>('/api/me/onboarding/dismiss', { method: 'POST', body: JSON.stringify({ dismissed }) }),
     getOnboardingFunnel: (days = 90) => apiFetch<OnboardingFunnel>(`/api/admin/onboarding?days=${days}`),
     getSceneHealth: (sceneId: string) => apiFetch<SceneHealth>(`/api/scenes/${sceneId}/health`),
+    getPresetRules: (presetId: string) => apiFetch<{ rules: SceneRule[]; limit: number }>(`/api/presets/${presetId}/rules`),
+    createRule: (presetId: string, rule: { name?: string; trigger: RuleTrigger; actions: RuleAction[] }) =>
+      apiFetch<{ rule: SceneRule }>(`/api/presets/${presetId}/rules`, { method: 'POST', body: JSON.stringify(rule) }),
+    updateRule: (ruleId: string, patch: Partial<Pick<SceneRule, 'name' | 'enabled' | 'trigger' | 'actions'>>) =>
+      apiFetch<{ rule: SceneRule }>(`/api/rules/${ruleId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+    deleteRule: (ruleId: string) => apiFetch(`/api/rules/${ruleId}`, { method: 'DELETE' }),
     getSceneState: (sceneId: string) =>
       apiFetch<{ state: Record<string, unknown>; writes: 'staff' | 'everyone'; limits: { keys: number; valueBytes: number } }>(`/api/scenes/${sceneId}/state`),
     deleteSceneStateKey: (sceneId: string, key: string) => apiFetch(`/api/scenes/${sceneId}/state/${encodeURIComponent(key)}`, { method: 'DELETE' }),

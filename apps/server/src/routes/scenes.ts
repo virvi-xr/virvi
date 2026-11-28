@@ -1,4 +1,5 @@
 import { checkClickEvent, checkFrame, checkKioskProperties, FRAMEABLE_TYPES, KIOSK_ITEMS_KEY, kioskSettings } from '@virvixr/shared'
+import { runWidgetRules } from '../rules/rules.js'
 import { dclHudStatus, virviDeploysDcl } from '../scenes/hud-version.js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { eq, and, or, isNull, sql, inArray } from 'drizzle-orm'
@@ -775,6 +776,17 @@ export default async function sceneRoutes(app: FastifyInstance) {
         elementType: updated.type,
         deleted: false,
       }, { user: request.user, action: 'element.updated', name: updated.name, detail: { changed: [...fieldKeys, ...propertyKeys.map((k) => `properties.${k}`)].slice(0, 20) } })
+      // A widget's new value sets off its preset's rules (LIV-196); their changes go out like this one
+      if (updated.type === 'widget') {
+        const prev = (element.properties as Record<string, unknown> | null)?.value
+        const next = (updated.properties as Record<string, unknown> | null)?.value
+        if (JSON.stringify(prev ?? null) !== JSON.stringify(next ?? null)) {
+          await runWidgetRules({
+            sceneId: element.preset.sceneId, presetId: element.presetId, widget: updated, prev, next,
+            elementChanged: (e, name, rule) => elementChanged(e, { user: request.user, action: 'element.updated', name, detail: { changed: ['enabled'], rule } }),
+          })
+        }
+      }
       return reply.send({ element: updated })
     },
   )

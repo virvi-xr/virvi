@@ -92,7 +92,7 @@ try {
       ALTER INDEX IF EXISTS giveaway_claims_pkey RENAME TO giveaway_claims_legacy_pkey;
     END IF;
   END $$`
-  console.log('[virvi-server] pre-push upgrade: legacy analytics tables cleared, scene_state dropped, deployment_wallets retired, vlm_scene_id renamed, playback_id ensured, heatmap cell_y ensured') // virvi-rename: keep
+  console.log('[virvi-server] pre-push upgrade: legacy analytics tables cleared, v1 scene_state dropped if present, deployment_wallets retired, vlm_scene_id renamed, playback_id ensured, heatmap cell_y ensured') // virvi-rename: keep
 } finally {
   await sql.end()
 }

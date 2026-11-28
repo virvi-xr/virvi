@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNotNull, isNull, notLike, sql } from 'drizzle-orm'
+import { copyRules } from '../rules/rules.js'
 import {
   DEFAULT_VENUE_RULES,
   VENUE_ROLE_SCOPES,
@@ -170,6 +171,7 @@ export async function clonePreset(tx: Tx, presetId: string, name: string, opts: 
   const [copy] = await tx.insert(scenePresets).values({ sceneId: source.sceneId, name, locale: source.locale }).returning()
 
   const instanceIdMap = new Map<string, string>()
+  const elementIdMap = new Map<string, string>()
   const pendingParents: { newId: string; oldParent: string }[] = []
   for (const el of source.elements) {
     const [newEl] = await tx
@@ -186,6 +188,7 @@ export async function clonePreset(tx: Tx, presetId: string, name: string, opts: 
         clonedFromId: opts.independent ? null : el.id,
       })
       .returning()
+    elementIdMap.set(el.id, newEl.id)
     if (opts.independent && el.type === 'model') await copyRoomSetLink(tx, el.id, newEl.id)
     for (const inst of el.instances) {
       const [newInst] = await tx
@@ -211,6 +214,8 @@ export async function clonePreset(tx: Tx, presetId: string, name: string, opts: 
     const parent = instanceIdMap.get(p.oldParent)
     if (parent) await tx.update(sceneElementInstances).set({ parentInstanceId: parent }).where(eq(sceneElementInstances.id, p.newId))
   }
+  // Its rules (LIV-196), pointing at the copied widgets and items
+  await copyRules(tx as any, source.id, copy.id, elementIdMap)
   return copy.id
 }
 

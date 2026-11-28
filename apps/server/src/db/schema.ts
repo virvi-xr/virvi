@@ -1697,6 +1697,28 @@ export const modelStats = pgTable('model_stats', {
  * within a minute are folded into one row (`count`), so dragging a model around doesn't fill the log. Written by
  * recordSceneActivity (scenes/activity.ts), never in the way of the change itself.
  */
+/**
+ * Scene rules (LIV-196, rules/rules.ts): "when this widget does this, do that", per preset. `trigger` is
+ * { type: 'widget', widgetId, when }, `actions` a list of { type: 'show' | 'hide' | 'toggle', elementId } or
+ * { type: 'preset', presetId }. The server runs them when a widget's value changes.
+ */
+export const sceneRules = pgTable(
+  'scene_rules',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    presetId: uuid('preset_id').notNull().references(() => scenePresets.id, { onDelete: 'cascade' }),
+    name: text('name').notNull().default(''),
+    enabled: boolean('enabled').notNull().default(true),
+    trigger: jsonb('trigger').notNull(),
+    actions: jsonb('actions').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byPreset: index('scene_rules_preset_idx').on(t.presetId),
+  }),
+)
+
 /** Scene state (LIV-158, scenes/state.ts): a small key-value store per scene for scene code; up to 100 keys of 4 KB. */
 export const sceneState = pgTable(
   'scene_state',

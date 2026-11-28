@@ -25,6 +25,7 @@ import {
 import { SceneRoles } from './SceneRoles'
 import { SceneActivity } from './SceneActivity'
 import { SceneStatePanel } from './SceneStatePanel'
+import { SceneRules } from './SceneRules'
 import { SceneHealth } from './SceneHealth'
 import { Raffles } from './Raffles'
 import { SceneBeats } from '@/components/beats/SceneBeats'
@@ -2021,6 +2022,7 @@ export default function SceneEditorPage() {
                   onDelete={handleDeleteElement} />
               ))
           )}
+          {activePreset && <SceneRules presetId={activePreset.id} elements={elements} presets={scene.presets.map(p => ({ id: p.id, name: p.name }))} />}
         </div>
       )}
 

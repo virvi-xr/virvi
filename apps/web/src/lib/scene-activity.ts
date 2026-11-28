@@ -35,7 +35,7 @@ export function describeActivity(e: SceneActivityEntry): string {
   const times = e.count > 1 ? ` (${e.count} times)` : ''
   switch (e.action) {
     case 'element.created': return `added ${thing}`
-    case 'element.updated': return `changed ${thing}${times}`
+    case 'element.updated': return typeof d.rule === 'string' ? `changed ${thing} through ${d.rule ? `the rule “${d.rule}”` : 'a rule'}${times}` : `changed ${thing}${times}`
     case 'element.deleted': return `deleted ${thing}`
     case 'element.live_on': return `turned on the live stream on ${thing}`
     case 'element.live_off': return `turned off the live stream on ${thing}`
@@ -60,6 +60,9 @@ export function describeActivity(e: SceneActivityEntry): string {
     case 'role.granted': return d.from ? `made ${who} ${role('role')} (was ${role('from')})` : `made ${who} ${role('role')}`
     case 'role.revoked': return `removed ${who} as ${role('role')}`
     case 'host.transferred': return `made ${who} the host`
+    case 'rule.created': return `added the rule ${name || 'without a name'}`
+    case 'rule.updated': return `changed the rule ${name || 'without a name'}${times}`
+    case 'rule.deleted': return `deleted the rule ${name || 'without a name'}`
     case 'deploy.started': return `${d.signed ? 'prepared a deploy to' : 'deployed to'} ${e.subject.name ?? 'Decentraland'}`
     default: return 'made a change'
   }

@@ -17,6 +17,7 @@ export const SCENE_ACTIVITY_ACTIONS = [
   'collaborator.added', 'collaborator.changed', 'collaborator.removed',
   'role.granted', 'role.revoked', 'host.transferred',
   'deploy.started',
+  'rule.created', 'rule.updated', 'rule.deleted',
 ] as const
 export type SceneActivityAction = (typeof SCENE_ACTIVITY_ACTIONS)[number]
 
