@@ -16,6 +16,7 @@
  * deployment is linked to the import when it is created, and the import settles with it: deployed, or, when the World
  * accepted nothing, back to `built` (or `failed` for a PERMANENT error), all through `markFailed` (Ruling R19).
  */
+import { emitDeploymentFinished } from '../../webhooks/webhooks.js'
 import { and, eq, inArray, isNull, lt, lte, or, sql, TransactionRollbackError } from 'drizzle-orm'
 import { DCL_MAX_FILE_BYTES, DCL_PARCEL_M, PLACEMENTS_FILE, dclBudget, parseParcel, type ImportLocation } from '@virvixr/shared'
 import { db } from '../../db/connection.js'
@@ -582,6 +583,8 @@ export async function markFailed(
     .returning({ id: sceneDeployments.id, sceneId: sceneDeployments.sceneId, deployedBy: sceneDeployments.deployedBy })
   if (failed.length) {
     recordJobFailure('deploy', err instanceof Error ? err : new Error(message), { sceneId: failed[0].sceneId, owner: failed[0].deployedBy ?? failed[0].sceneId })
+    // LIV-39: the scene's owner's webhooks hear it (background; never fails the caller)
+    void emitDeploymentFinished({ deploymentId, sceneId: failed[0].sceneId, status: 'failed', error: message })
   }
   if (failed.length) await importDeployFailed([deploymentId], { code: errorCodeOf(err), message: extra.importMessage ?? message })
 }
@@ -646,6 +649,8 @@ export async function afterDeploy(
       .set({ status: 'deployed', errorCode: null, errorMessage: null, finishedAt: now, updatedAt: now })
       .where(and(eq(sceneImports.deploymentId, deploymentId), eq(sceneImports.status, 'deploying')))
   })
+  // LIV-39: the scene's owner's webhooks hear it went live (background; never fails the deploy)
+  void emitDeploymentFinished({ deploymentId, sceneId: dest.sceneId, status: 'deployed', entityId })
   try {
     const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, dest.sceneId), columns: { name: true } })
     await linkLocation({

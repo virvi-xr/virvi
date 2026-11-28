@@ -684,6 +684,8 @@ export const config = {
   statusChecksEnabled: env('STATUS_CHECKS') !== 'false',
   // Telling scene owners in the bell when their scene's HUD is behind (LIV-30); disabled in tests
   hudNoticesEnabled: env('HUD_NOTICES') !== 'false',
+  /** LIV-39: the webhook retry and event-start sweep (WEBHOOKS=false turns it off; tests run deliveries directly). */
+  webhooksEnabled: env('WEBHOOKS') !== 'false',
   // Filing to Linear is off until both are set. Env only: never logged, never returned
   linearApiKey: env('LINEAR_API_KEY') || null,
   linearTeamId: env('LINEAR_TEAM_ID') || null,

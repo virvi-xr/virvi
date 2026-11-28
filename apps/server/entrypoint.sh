@@ -163,6 +163,16 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS hyperfy_worlds_slug_uq ON hyperfy_worlds (slug) WHERE purged_at IS NULL\`;
         console.log('[virvi-server] hyperfy worlds ensured');
       } catch(e) { console.log('[virvi-server] hyperfy worlds:', e.message); }
+      // Webhooks (LIV-39); matches webhooks and webhookDeliveries in src/db/schema.ts
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS webhooks (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL CONSTRAINT webhooks_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, url TEXT NOT NULL, events TEXT[] NOT NULL, salt TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE INDEX IF NOT EXISTS webhooks_user_idx ON webhooks (user_id)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS webhook_deliveries (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), webhook_id UUID NOT NULL CONSTRAINT webhook_deliveries_webhook_id_webhooks_id_fk REFERENCES webhooks(id) ON DELETE CASCADE, event TEXT NOT NULL, payload JSONB NOT NULL, dedupe_key TEXT, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TIMESTAMPTZ, response_status INTEGER, last_error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), delivered_at TIMESTAMPTZ)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS webhook_deliveries_hook_created_idx ON webhook_deliveries (webhook_id, created_at DESC)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS webhook_deliveries_due_idx ON webhook_deliveries (next_attempt_at) WHERE status = 'pending'\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS webhook_deliveries_dedupe_uq ON webhook_deliveries (webhook_id, dedupe_key)\`;
+        console.log('[virvi-server] webhook tables ensured');
+      } catch(e) { console.log('[virvi-server] webhook tables:', e.message); }
       // OAuth for MCP clients (LIV-170); matches oauthClients, oauthCodes and apiKeys.oauthClientId in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS oauth_clients (id TEXT PRIMARY KEY, name TEXT NOT NULL, redirect_uris TEXT[] NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;

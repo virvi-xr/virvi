@@ -1211,6 +1211,41 @@ export const apiKeys = pgTable('api_keys', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+/**
+ * Webhooks (LIV-39): an account's endpoints for Virvi events, signed with a secret derived from the row's id and salt
+ * (never stored; shown once at creation).
+ */
+export const webhooks = pgTable('webhooks', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  url: text('url').notNull(),
+  events: text('events').array().notNull(),
+  salt: text('salt').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  userIdx: index('webhooks_user_idx').on(t.userId),
+}))
+
+/** Each event sent to a webhook, with its retries; kept 30 days. dedupeKey stops a sweep sending the same event twice. */
+export const webhookDeliveries = pgTable('webhook_deliveries', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  webhookId: uuid('webhook_id').notNull().references(() => webhooks.id, { onDelete: 'cascade' }),
+  event: text('event').notNull(),
+  payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+  dedupeKey: text('dedupe_key'),
+  status: text('status').notNull().default('pending'), // pending | delivered | failed
+  attempts: integer('attempts').notNull().default(0),
+  nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
+  responseStatus: integer('response_status'),
+  lastError: text('last_error'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+}, (t) => ({
+  hookCreatedIdx: index('webhook_deliveries_hook_created_idx').on(t.webhookId, t.createdAt.desc()),
+  dueIdx: index('webhook_deliveries_due_idx').on(t.nextAttemptAt).where(sql`status = 'pending'`),
+  dedupeUq: uniqueIndex('webhook_deliveries_dedupe_uq').on(t.webhookId, t.dedupeKey),
+}))
+
 /** Apps that registered themselves to connect through OAuth (LIV-170, RFC 7591): public clients, PKCE only. */
 export const oauthClients = pgTable('oauth_clients', {
   id: text('id').primaryKey(), // 'vc_' + random

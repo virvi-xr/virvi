@@ -20,6 +20,7 @@ import { useInstance } from '@/lib/instance'
 import { canManageBranding } from '@/lib/branding'
 import { BrandingSettings } from './BrandingSettings'
 import { BillingSection } from './BillingSection'
+import { Webhooks } from './Webhooks'
 
 export default function SettingsPage() {
   const { user, token, updateUser, signOut } = useAuth()
@@ -593,6 +594,8 @@ export default function SettingsPage() {
       {canManageBranding(instance?.mode, user?.role) && <BrandingSettings />}
 
       <BillingSection />
+
+      <Webhooks />
 
       {/* API Keys */}
       <section className="mt-10">

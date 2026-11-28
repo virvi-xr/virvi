@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify'
+import webhookRoutes from './routes/webhooks.js'
 import oauthRoutes from './oauth/routes.js'
 import mcpRoutes from './mcp/server.js'
 import { schemaStatus } from './db/schema-check.js'
@@ -335,6 +336,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(brandingRoutes, { version: SERVER_VERSION })
   await app.register(mcpRoutes, { version: SERVER_VERSION })
   await app.register(oauthRoutes)
+  await app.register(webhookRoutes)
 
   // Health check
   app.get('/api/health', async (_request, reply) => {

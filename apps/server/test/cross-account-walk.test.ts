@@ -12,7 +12,7 @@ import {
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
   studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws, beats, beatScenes, beatClaims, beatPayments,
   beatReissueRequests, beatReissueItems, beatReissueFiles, walletBlocks, accountWalletEvents,
-  assistantConversations, assistantMessages, assistantActions, assistantUsage, assistantShows, subscriptions,
+  assistantConversations, assistantMessages, assistantActions, assistantUsage, assistantShows, subscriptions, webhooks,
 } from '../src/db/schema.js'
 import { clearPlanPrices, setStripe } from '../src/integrations/stripe.js'
 import { config } from '../src/config.js'
@@ -234,10 +234,11 @@ async function fixtures() {
     items: [{ id: crypto.randomUUID(), kind: 'event', label: 'Event', ref: { eventId: event.id } }, { id: crypto.randomUUID(), kind: 'raffle', label: 'Raffle', ref: { raffleId: raffle.id } }],
   }).returning()
   const [aShow] = await db.insert(assistantShows).values({ userId: a.id, title: 'A show', items: [{ id: crypto.randomUUID(), kind: 'raffle', label: 'Raffle', ref: {} }] }).returning()
+  const [bWebhook] = await db.insert(webhooks).values({ userId: b.id, url: 'https://example.com/hook', events: ['deployment.finished'], salt: 'x' }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
     asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, pastPackage, notification, raffle, raffleSnapshot, raffleDraw, beat, arcBeat, reissueRequest, reissueFile, aScene, aPreset, aKiosk, aImage, aEvent, deletedScene, removal,
-    conversation, planId, doneAction, show, aShow,
+    conversation, planId, doneAction, show, aShow, bWebhook,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -529,6 +530,9 @@ const CASES: Case[] = [
   { route: 'DELETE /api/media/:assetId', url: (f) => `/api/media/${f.media.id}` },
   { route: 'DELETE /api/hooks/:hookId', url: (f) => `/api/hooks/${f.hook.id}` },
   { route: 'DELETE /api/keys/:keyId', url: (f) => `/api/keys/${f.bKey.id}` },
+  { route: 'DELETE /api/webhooks/:webhookId', url: (f) => `/api/webhooks/${f.bWebhook.id}` },
+  { route: 'POST /api/webhooks/:webhookId/test', url: (f) => `/api/webhooks/${f.bWebhook.id}/test` },
+  { route: 'GET /api/webhooks/:webhookId/deliveries', url: (f) => `/api/webhooks/${f.bWebhook.id}/deliveries` },
   { route: 'GET /api/keys/:keyId/calls', url: (f) => `/api/keys/${f.bKey.id}/calls` },
   // analytics
   { route: 'GET /api/analytics/locations/:id/summary', url: (f) => `/api/analytics/locations/${f.location.id}/summary` },

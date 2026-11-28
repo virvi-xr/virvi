@@ -224,6 +224,11 @@ See [Command Center](/docs/dashboard/command-center/).
 |--------|------|------|-------------|
 | POST | `/api/keys` | Yes (account, not a key) | Create a key; returned once. `access`: `full` (default) or `read` (read-only: every request but `GET` gets 403 `read_only_key`). `sceneIds`: limit the key to those scenes (up to 50, each one you can open); it then works only on routes whose URL names one of them, plus `GET /api/scenes` (filtered) and `/mcp`, and gets 403 `key_scene_limited` everywhere else |
 | GET | `/api/keys` | Yes | List your keys |
+| GET | `/api/webhooks` | Yes | Your webhooks, and the events they can send ([Webhooks](/docs/api/webhooks/)) |
+| POST | `/api/webhooks` | Yes | Add one: `{ url, events }`; the signing secret is returned once |
+| DELETE | `/api/webhooks/:webhookId` | Yes | Delete one |
+| POST | `/api/webhooks/:webhookId/test` | Yes | Send a `webhook.test` delivery now |
+| GET | `/api/webhooks/:webhookId/deliveries` | Yes | The last 50 deliveries |
 | GET | `/api/keys/:keyId/calls` | Yes | Your key's last 100 MCP tool calls: tool, scene, outcome and time |
 | DELETE | `/api/keys/:keyId` | Yes | Delete a key |
 | POST | `/mcp` | Yes (a key) | The MCP server (Streamable HTTP, JSON-RPC, stateless). See [Use Virvi with your agent](/docs/agents/use-virvi-with-your-agent/#connect-with-mcp) |

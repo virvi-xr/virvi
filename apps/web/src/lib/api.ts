@@ -46,6 +46,10 @@ import { beatApiPath, sceneBeatsPath, type BeatAvailability, type BeatCheckoutRe
 /** One notice group in Settings (LIV-30). */
 import type { Onboarding } from './onboarding'
 /** LIV-37: where new accounts stop, for admins. */
+/** LIV-39 */
+export interface Webhook { id: string; url: string; events: string[]; createdAt: string }
+export interface WebhookDelivery { id: string; event: string; status: 'pending' | 'delivered' | 'failed'; attempts: number; responseStatus: number | null; lastError: string | null; createdAt: string; deliveredAt: string | null }
+
 export interface OnboardingFunnel { days: number; accounts: number; dismissed: number; steps: Array<{ id: string; accounts: number }> }
 
 export interface NotificationGroupSetting { id: string; label: string; description: string; on: boolean }
@@ -633,6 +637,13 @@ function useRealApi() {
         method: 'POST', body: JSON.stringify({ name, access, ...(sceneIds.length ? { sceneIds } : {}) }),
       }),
     deleteApiKey: (keyId: string) => apiFetch(`/api/keys/${keyId}`, { method: 'DELETE' }),
+    /** LIV-39: the account's webhooks. The secret comes back once, when one is made. */
+    getWebhooks: () => apiFetch<{ webhooks: Webhook[]; events: string[] }>('/api/webhooks'),
+    createWebhook: (url: string, events: string[]) =>
+      apiFetch<{ webhook: Webhook; secret: string }>('/api/webhooks', { method: 'POST', body: JSON.stringify({ url, events }) }),
+    deleteWebhook: (id: string) => apiFetch<void>(`/api/webhooks/${id}`, { method: 'DELETE' }),
+    testWebhook: (id: string) => apiFetch<{ delivery: WebhookDelivery | null }>(`/api/webhooks/${id}/test`, { method: 'POST' }),
+    getWebhookDeliveries: (id: string) => apiFetch<{ deliveries: WebhookDelivery[] }>(`/api/webhooks/${id}/deliveries`),
     /** LIV-170: approve an AI app's OAuth request; the reply is where to send the browser (the app's redirect with a code). */
     approveOAuth: (body: { clientId: string; redirectUri: string; codeChallenge: string; codeChallengeMethod: 'S256'; state: string | null; access: 'read' | 'full'; sceneIds?: string[] }) =>
       apiFetch<{ redirect: string }>('/api/oauth/authorize', { method: 'POST', body: JSON.stringify({ ...body, state: body.state ?? undefined }) }),
