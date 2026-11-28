@@ -1699,7 +1699,7 @@ export const modelStats = pgTable('model_stats', {
  */
 /**
  * Scene rules (LIV-196, rules/rules.ts): "when this widget does this, do that", per preset. `trigger` is
- * { type: 'widget', widgetId, when }, `actions` a list of { type: 'show' | 'hide' | 'toggle', elementId } or
+ * { type: 'widget', widgetId, when } or { type: 'time', widgetId, timezone } (a Date and time widget's value arriving), `actions` a list of { type: 'show' | 'hide' | 'toggle', elementId } or
  * { type: 'preset', presetId }. The server runs them when a widget's value changes.
  */
 export const sceneRules = pgTable(
@@ -1711,6 +1711,8 @@ export const sceneRules = pgTable(
     enabled: boolean('enabled').notNull().default(true),
     trigger: jsonb('trigger').notNull(),
     actions: jsonb('actions').notNull(),
+    /** A timed rule: the widget value it last ran (or skipped) for, so each date and time runs once. */
+    firedFor: text('fired_for'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

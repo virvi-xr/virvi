@@ -2,6 +2,8 @@ import { and, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { sceneElements, scenePresets, sceneRules } from '../db/schema.js'
 import { activatePreset } from '../scenes/presets.js'
+import { isTimeZone, zonedToUtc } from '../scenes/schedule-time.js'
+import { recordSceneActivity, type ActivityActor } from '../scenes/activity.js'
 
 /**
  * Scene rules (LIV-196, first part): "when this widget does this, do that", saved with a preset. The server runs them
@@ -16,7 +18,10 @@ export const RULE_NAME_MAX = 80
 
 export const WIDGET_WHEN = ['on', 'off', 'press', 'change'] as const
 export type WidgetWhen = (typeof WIDGET_WHEN)[number]
-export interface RuleTrigger { type: 'widget'; widgetId: string; when: WidgetWhen }
+export type RuleTrigger =
+  | { type: 'widget'; widgetId: string; when: WidgetWhen }
+  /** A Date and time widget's value arriving, read in `timezone` (the widget stores a wall time with no zone). */
+  | { type: 'time'; widgetId: string; timezone: string }
 export type RuleAction =
   | { type: 'show' | 'hide' | 'toggle'; elementId: string }
   | { type: 'preset'; presetId: string }
@@ -25,9 +30,12 @@ export interface RuleInput { name?: unknown; enabled?: unknown; trigger?: unknow
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
 
-/** Toggle (1) and Trigger (5) first; any widget for 'change'. */
+/** Toggle (1) and Trigger (5) first; any widget for 'change'; Date and time (4) for timed rules. */
 const WIDGET_TOGGLE = 1
+const WIDGET_DATETIME = 4
 const WIDGET_TRIGGER = 5
+/** A timed rule whose time passed longer ago than this (the server was down, or the time was set in the past) is skipped. */
+export const TIMED_GRACE_MS = 10 * 60_000
 
 /** Whether a widget going from `prev` to `next` sets off `when`. */
 export function triggerFires(when: WidgetWhen, controlType: number, prev: unknown, next: unknown): boolean {
@@ -61,16 +69,22 @@ export async function checkRule(presetId: string, sceneId: string, input: RuleIn
   const elements = await db.select({ id: sceneElements.id, type: sceneElements.type, properties: sceneElements.properties }).from(sceneElements).where(eq(sceneElements.presetId, presetId))
   const byId = new Map(elements.map((e) => [e.id, e]))
   if (input.trigger !== undefined || !partial) {
-    const t = input.trigger as Partial<RuleTrigger> | undefined
-    if (!t || t.type !== 'widget' || typeof t.widgetId !== 'string' || !WIDGET_WHEN.includes(t.when as WidgetWhen)) {
-      return bad('bad_trigger', "A trigger is { type: 'widget', widgetId, when: 'on' | 'off' | 'press' | 'change' }")
-    }
+    const t = input.trigger as any
+    const shape = "A trigger is { type: 'widget', widgetId, when: 'on' | 'off' | 'press' | 'change' } or { type: 'time', widgetId, timezone }"
+    if (!t || typeof t.widgetId !== 'string' || (t.type !== 'widget' && t.type !== 'time')) return bad('bad_trigger', shape)
     const w = byId.get(t.widgetId)
     if (!w || w.type !== 'widget') return bad('bad_trigger', "The trigger's widget isn't in this preset")
     const controlType = Number((w.properties as Record<string, unknown> | null)?.controlType ?? 0)
-    if ((t.when === 'on' || t.when === 'off') && controlType !== WIDGET_TOGGLE) return bad('bad_trigger', "'on' and 'off' are for Toggle widgets")
-    if (t.when === 'press' && controlType !== WIDGET_TRIGGER) return bad('bad_trigger', "'press' is for Trigger widgets")
-    out.trigger = { type: 'widget', widgetId: t.widgetId, when: t.when as WidgetWhen }
+    if (t.type === 'time') {
+      if (controlType !== WIDGET_DATETIME) return bad('bad_trigger', 'A timed rule starts from a Date and time widget')
+      if (typeof t.timezone !== 'string' || !isTimeZone(t.timezone)) return bad('bad_trigger', 'A timed rule needs a time zone, such as Europe/London')
+      out.trigger = { type: 'time', widgetId: t.widgetId, timezone: t.timezone }
+    } else {
+      if (!WIDGET_WHEN.includes(t.when)) return bad('bad_trigger', shape)
+      if ((t.when === 'on' || t.when === 'off') && controlType !== WIDGET_TOGGLE) return bad('bad_trigger', "'on' and 'off' are for Toggle widgets")
+      if (t.when === 'press' && controlType !== WIDGET_TRIGGER) return bad('bad_trigger', "'press' is for Trigger widgets")
+      out.trigger = { type: 'widget', widgetId: t.widgetId, when: t.when as WidgetWhen }
+    }
   }
   if (input.actions !== undefined || !partial) {
     const list = input.actions
@@ -114,6 +128,8 @@ export async function runWidgetRules(opts: {
   prev: unknown
   next: unknown
   elementChanged: ElementChangedHook
+  /** Who changed the widget, for the activity of a preset switch. */
+  actor: ActivityActor
 }): Promise<number> {
   const controlType = Number((opts.widget.properties as Record<string, unknown> | null)?.controlType ?? 0)
   let rules: (typeof sceneRules.$inferSelect)[]
@@ -126,23 +142,30 @@ export async function runWidgetRules(opts: {
   let ran = 0
   for (const rule of rules) {
     const t = rule.trigger as RuleTrigger
-    if (t?.widgetId !== opts.widget.id || !triggerFires(t.when, controlType, opts.prev, opts.next)) continue
+    if (t?.type !== 'widget' || t.widgetId !== opts.widget.id || !triggerFires(t.when, controlType, opts.prev, opts.next)) continue
     ran++
-    for (const a of (rule.actions as RuleAction[]) ?? []) {
-      try {
-        await runAction(opts.sceneId, opts.presetId, a, rule.name, opts.elementChanged)
-      } catch (err) {
-        console.error(`[rules] rule ${rule.id} action failed:`, err)
-      }
-    }
+    await runActions(opts.sceneId, opts.presetId, rule, opts.elementChanged, opts.actor)
   }
   return ran
 }
 
-async function runAction(sceneId: string, presetId: string, a: RuleAction, ruleName: string, elementChanged: ElementChangedHook): Promise<void> {
+/** A rule's actions, in order; one failing doesn't stop the rest. */
+async function runActions(sceneId: string, presetId: string, rule: typeof sceneRules.$inferSelect, elementChanged: ElementChangedHook, actor: ActivityActor): Promise<void> {
+  for (const a of (rule.actions as RuleAction[]) ?? []) {
+    try {
+      await runAction(sceneId, presetId, a, rule.name, elementChanged, actor)
+    } catch (err) {
+      console.error(`[rules] rule ${rule.id} action failed:`, err)
+    }
+  }
+}
+
+async function runAction(sceneId: string, presetId: string, a: RuleAction, ruleName: string, elementChanged: ElementChangedHook, actor: ActivityActor): Promise<void> {
   if (a.type === 'preset') {
-    const p = await db.query.scenePresets.findFirst({ where: and(eq(scenePresets.id, a.presetId), eq(scenePresets.sceneId, sceneId)), columns: { id: true } })
-    if (p) await activatePreset(sceneId, p.id)
+    const p = await db.query.scenePresets.findFirst({ where: and(eq(scenePresets.id, a.presetId), eq(scenePresets.sceneId, sceneId)), columns: { id: true, name: true } })
+    if (!p) return
+    await activatePreset(sceneId, p.id)
+    await recordSceneActivity(sceneId, actor, 'preset.activated', { type: 'preset', id: p.id, name: p.name }, { rule: ruleName })
     return
   }
   const el = await db.query.sceneElements.findFirst({ where: and(eq(sceneElements.id, a.elementId), eq(sceneElements.presetId, presetId)) })
@@ -163,6 +186,7 @@ export async function copyRules(tx: { select: typeof db.select; insert: typeof d
     name: r.name,
     enabled: r.enabled,
     trigger: { ...(r.trigger as RuleTrigger), widgetId: map((r.trigger as RuleTrigger).widgetId) },
+    firedFor: r.firedFor,
     actions: ((r.actions as RuleAction[]) ?? []).map((a) => (a.type === 'preset' ? a : { ...a, elementId: map(a.elementId) })),
   })))
 }
@@ -172,3 +196,47 @@ export async function rulesOf(presetIds: string[]) {
   if (!presetIds.length) return []
   return db.select().from(sceneRules).where(inArray(sceneRules.presetId, presetIds)).orderBy(sceneRules.createdAt)
 }
+
+
+// ── Timed rules ──────────────────────────────────────────────────────────
+
+/** When a Date and time widget's value ('2026-12-31T20:00', as the dashboard stores it) happens in `tz`; null when it isn't one. */
+export function dueAt(value: unknown, tz: string): Date | null {
+  if (typeof value !== 'string') return null
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/.exec(value.trim())
+  if (!m || !isTimeZone(tz)) return null
+  const at = zonedToUtc(m[1], m[2], tz)
+  return Number.isNaN(at.getTime()) ? null : at
+}
+
+const RULE_ACTOR: ActivityActor = { userId: null, wallet: null, via: 'rule' }
+
+/**
+ * Runs every timed rule whose widget's date and time has arrived, once per value. A time that passed more than
+ * TIMED_GRACE_MS ago is marked done without running (set in the past, or the server was down). Returns how many ran.
+ */
+export async function sweepTimedRules(elementChanged: ElementChangedHook, now = new Date()): Promise<number> {
+  const rules = await db.select().from(sceneRules).where(and(eq(sceneRules.enabled, true), sql`${sceneRules.trigger}->>'type' = 'time'`))
+  let ran = 0
+  for (const rule of rules) {
+    try {
+      const t = rule.trigger as Extract<RuleTrigger, { type: 'time' }>
+      const widget = await db.query.sceneElements.findFirst({ where: and(eq(sceneElements.id, t.widgetId), eq(sceneElements.presetId, rule.presetId)), with: { preset: { columns: { sceneId: true } } } })
+      if (!widget?.enabled) continue
+      const value = (widget.properties as Record<string, unknown> | null)?.value
+      if (typeof value !== 'string' || value === rule.firedFor) continue
+      const due = dueAt(value, t.timezone)
+      if (!due || due.getTime() > now.getTime()) continue
+      // Claimed first, so another server, or a slow action, never runs it twice
+      const claimed = await db.update(sceneRules).set({ firedFor: value }).where(and(eq(sceneRules.id, rule.id), sql`${sceneRules.firedFor} IS DISTINCT FROM ${value}`)).returning({ id: sceneRules.id })
+      if (!claimed.length || now.getTime() - due.getTime() > TIMED_GRACE_MS) continue
+      ran++
+      await runActions(widget.preset.sceneId, rule.presetId, rule, elementChanged, RULE_ACTOR)
+    } catch (err) {
+      console.error(`[rules] timed rule ${rule.id} failed:`, err)
+    }
+  }
+  return ran
+}
+
+export const TIMED_SWEEP_MS = 20_000

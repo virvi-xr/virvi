@@ -110,3 +110,59 @@ describe('scene rules', () => {
     expect(r.actions[0].elementId).toBe(els.find((e) => e.name === 'Light rig')!.id)
   })
 })
+
+import { dueAt, sweepTimedRules, TIMED_GRACE_MS } from '../src/rules/rules.js'
+import { timedRuleChanged } from '../src/rules/sweep.js'
+import { sceneActivity } from '../src/db/schema.js'
+
+describe('timed rules', () => {
+  let app: Awaited<ReturnType<typeof testApp>>
+  beforeEach(async () => { await resetDb(); app = await testApp() })
+  afterEach(async () => { await app.close() })
+
+  it('reads the widget value as a wall time in the rule’s time zone', () => {
+    expect(dueAt('2026-12-31T20:00', 'UTC')!.toISOString()).toBe('2026-12-31T20:00:00.000Z')
+    expect(dueAt('2026-07-01T20:00', 'Europe/London')!.toISOString()).toBe('2026-07-01T19:00:00.000Z')
+    expect(dueAt('2026-12-31 20:00', 'UTC')).toBeNull()
+    expect(dueAt('2026-12-31T20:00', 'Not/AZone')).toBeNull()
+    expect(dueAt(undefined, 'UTC')).toBeNull()
+  })
+
+  it('opens the doors when the time comes, once, and says Virvi did it; a past time set long ago is skipped', async () => {
+    const owner = await createUser()
+    const { scene, preset } = await createScene(owner)
+    const doors = await createElement(preset.id, { type: 'widget', name: 'Doors open', properties: { controlType: 4, value: '2030-01-01T20:00' } })
+    const gate = await createElement(preset.id, { type: 'image', name: 'Gate', properties: { imageSrc: 'https://x/g.png' } })
+    const make = await app.inject({ method: 'POST', url: `/api/presets/${preset.id}/rules`, headers: as(owner), payload: { name: 'Open up', trigger: { type: 'time', widgetId: doors.id, timezone: 'UTC' }, actions: [{ type: 'hide', elementId: gate.id }] } })
+    expect(make.statusCode).toBe(201)
+    const gateOn = async () => (await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, gate.id) }))!.enabled
+
+    expect(await sweepTimedRules(timedRuleChanged, new Date('2030-01-01T19:59:00Z'))).toBe(0)
+    expect(await gateOn()).toBe(true)
+    expect(await sweepTimedRules(timedRuleChanged, new Date('2030-01-01T20:00:30Z'))).toBe(1)
+    expect(await gateOn()).toBe(false)
+    expect(await sweepTimedRules(timedRuleChanged, new Date('2030-01-01T20:01:00Z'))).toBe(0)
+    const [act] = await db.select().from(sceneActivity).where(eq(sceneActivity.subjectId, gate.id))
+    expect(act).toMatchObject({ via: 'rule', actorUserId: null, action: 'element.updated' })
+    expect(act.detail).toMatchObject({ rule: 'Open up' })
+
+    // A new time, already well past when it's set: marked done, nothing runs
+    await db.update(sceneElements).set({ enabled: true }).where(eq(sceneElements.id, gate.id))
+    await app.inject({ method: 'PUT', url: `/api/elements/${doors.id}`, headers: as(owner), payload: { properties: { controlType: 4, value: '2030-01-01T08:00' } } })
+    expect(await sweepTimedRules(timedRuleChanged, new Date(Date.parse('2030-01-01T08:00:00Z') + TIMED_GRACE_MS + 60_000))).toBe(0)
+    expect(await gateOn()).toBe(true)
+    expect(scene.id).toBeTruthy()
+  })
+
+  it('a timed rule needs a Date and time widget and a real time zone', async () => {
+    const owner = await createUser()
+    const { preset } = await createScene(owner)
+    const lights = await createElement(preset.id, { type: 'widget', name: 'Lights', properties: { controlType: 1, value: false } })
+    const doors = await createElement(preset.id, { type: 'widget', name: 'Doors', properties: { controlType: 4, value: '' } })
+    const gate = await createElement(preset.id, { type: 'image', name: 'Gate' })
+    const post = (trigger: unknown) => app.inject({ method: 'POST', url: `/api/presets/${preset.id}/rules`, headers: as(owner), payload: { trigger, actions: [{ type: 'hide', elementId: gate.id }] } as any })
+    expect((await post({ type: 'time', widgetId: lights.id, timezone: 'UTC' })).json().error).toBe('bad_trigger')
+    expect((await post({ type: 'time', widgetId: doors.id, timezone: 'Mars/Base' })).json().error).toBe('bad_trigger')
+    expect((await post({ type: 'time', widgetId: doors.id, timezone: 'America/New_York' })).statusCode).toBe(201)
+  })
+})

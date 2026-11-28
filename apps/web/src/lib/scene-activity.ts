@@ -21,6 +21,7 @@ const short = (a: string) => (a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}
 
 /** Who did it: their Virvi name, else their wallet, shortened. */
 export function activityActor(e: SceneActivityEntry): string {
+  if (e.via === 'rule') return 'Virvi'
   return e.actor.name || (e.actor.wallet ? short(e.actor.wallet) : 'Someone')
 }
 
@@ -68,7 +69,7 @@ export function describeActivity(e: SceneActivityEntry): string {
   }
 }
 
-export const VIA_LABEL: Record<string, string> = { dashboard: 'Dashboard', in_world: 'In-world', api: 'API' }
+export const VIA_LABEL: Record<string, string> = { dashboard: 'Dashboard', in_world: 'In-world', api: 'API', rule: 'Timed rule' }
 
 /** The cursor for the page after this one. */
 export const nextCursor = (entries: SceneActivityEntry[]) => {

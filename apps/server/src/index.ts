@@ -2,6 +2,7 @@ import { createRequire } from 'node:module'
 const _require = createRequire(import.meta.url)
 const { Server: ColyseusServer } = _require('colyseus') as any
 const { WebSocketTransport } = _require('@colyseus/ws-transport') as any
+import { startTimedRuleSweep } from './rules/sweep.js'
 import { config, assertProductionSecrets, assertScalableRedis, roomsDistributed } from './config.js'
 import { startHookCrons } from './integrations/platform-hooks.js'
 import { defineRooms } from './ws/registry.js'
@@ -126,6 +127,8 @@ async function main() {
   // LIV-83: deleted scenes are removed for good after their 30 days
   startScenePurgeSweep()
   console.log(`[virvi-server] Deleted scene purge (after ${PURGE_AFTER_DAYS} days) 10 min after boot, then every ${PURGE_SWEEP_MS}ms`)
+  startTimedRuleSweep()
+  console.log('[virvi-server] Timed scene rules sweep every 20s')
   startDurationBackfill()
   console.log('[virvi-server] Video length backfill 2 min after boot')
   startAnalyticsJobs()

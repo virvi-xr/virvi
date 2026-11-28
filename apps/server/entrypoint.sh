@@ -720,7 +720,8 @@ if [ -n "$DATABASE_URL" ]; then
       } catch(e) { console.log('[virvi-server] scene activity table:', e.message); }
       // Scene rules (LIV-196); matches sceneRules
       try {
-        await sql\`CREATE TABLE IF NOT EXISTS scene_rules (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), preset_id UUID NOT NULL CONSTRAINT scene_rules_preset_id_scene_presets_id_fk REFERENCES scene_presets(id) ON DELETE CASCADE, name TEXT NOT NULL DEFAULT '', enabled BOOLEAN NOT NULL DEFAULT true, trigger JSONB NOT NULL, actions JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE TABLE IF NOT EXISTS scene_rules (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), preset_id UUID NOT NULL CONSTRAINT scene_rules_preset_id_scene_presets_id_fk REFERENCES scene_presets(id) ON DELETE CASCADE, name TEXT NOT NULL DEFAULT '', enabled BOOLEAN NOT NULL DEFAULT true, trigger JSONB NOT NULL, actions JSONB NOT NULL, fired_for TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`ALTER TABLE scene_rules ADD COLUMN IF NOT EXISTS fired_for TEXT\`;
         await sql\`CREATE INDEX IF NOT EXISTS scene_rules_preset_idx ON scene_rules (preset_id)\`;
         console.log('[virvi-server] scene rules table ensured');
       } catch(e) { console.log('[virvi-server] scene rules table:', e.message); }

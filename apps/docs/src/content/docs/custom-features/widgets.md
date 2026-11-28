@@ -9,21 +9,29 @@ A widget is a scene element that holds one control value, such as an on/off swit
 
 On the scene's **Widgets** tab, under **Rules**, choose **+ Add rule** and pick:
 
-1. **When:** a widget, and what it does. A **Toggle** can be turned on, turned off, or switched either way. A **Trigger** is pressed. Any other widget changes.
+1. **When:** a widget, and what it does. A **Toggle** can be turned on, turned off, or switched either way. A **Trigger** is pressed. A **Date and time** widget's date and time arrives, in the time zone you pick (your own, to start with). Any widget can also just change.
 2. **Do:** one or more actions, run in order (up to 10):
    - **Show**, **Hide**, or **Show or hide (switch)** an item of the preset.
    - **Switch to the preset** you pick.
 
 For example: *When Stage lights is turned off, hide Light rig 1, then hide Light rig 2.*
 
-Rules run on Virvi's servers the moment a widget changes, whether it changed on the dashboard, in the in-world HUD, from the Virvi Assistant or through the API. So they work the same in Decentraland, Hyperfy and AR Spaces, for everyone in the scene, on any SDK version, with no redeploy.
+Rules run on Virvi's servers the moment a widget changes (or a timed rule's time arrives), whether it changed on the dashboard, in the in-world HUD, from the Virvi Assistant or through the API. So they work the same in Decentraland, Hyperfy and AR Spaces, for everyone in the scene, on any SDK version, with no redeploy.
 
 - Each preset has its own rules, up to 50. Copying a preset copies its rules too.
 - Switch a rule off with its **On** box to keep it without running it.
 - Rules never change widgets, so a rule can't set itself off.
 - The scene's Activity tab shows each change a rule made, and whose widget change set it off.
 
-Timed rules (a date and time arriving), item clicks as triggers, and setting volume or brightness from a slider are coming later.
+### Timed rules
+
+A timed rule runs once when its widget's date and time arrives, within about 20 seconds. For example: *When the date and time in Doors open arrives (Europe/London time), hide Gate, then switch to the preset Show time.*
+
+- To run it again, set a new date and time on the widget, on the dashboard, in the HUD or through the API.
+- A date and time already more than 10 minutes in the past when it's set is skipped, rather than running late.
+- The Activity tab shows timed rules' changes as done by **Virvi**.
+
+Item clicks as triggers, and setting volume or brightness from a slider, are coming later.
 
 ## In your scene's code
 

@@ -21,7 +21,8 @@ export const SCENE_ACTIVITY_ACTIONS = [
 ] as const
 export type SceneActivityAction = (typeof SCENE_ACTIVITY_ACTIONS)[number]
 
-export type ActivityVia = 'dashboard' | 'in_world' | 'api'
+/** 'rule': a timed scene rule (LIV-196) ran on its own, with no one behind it. */
+export type ActivityVia = 'dashboard' | 'in_world' | 'api' | 'rule'
 
 export interface ActivityActor {
   userId: string | null
@@ -60,7 +61,8 @@ export async function recordSceneActivity(
   now = new Date(),
 ): Promise<void> {
   try {
-    if (!actor.userId && !actor.wallet) return // nobody to name (a guest): nothing worth a row
+    // Nobody to name (a guest): nothing worth a row. A timed rule (LIV-196) is Virvi acting on its own, so it's kept
+    if (!actor.userId && !actor.wallet && actor.via !== 'rule') return
     if (FOLDS.has(action) && (await fold(sceneId, actor, action, subject, detail, now))) return
     await db.insert(sceneActivity).values({
       sceneId,
@@ -82,7 +84,9 @@ export async function recordSceneActivity(
 
 /** Folds into this person's last row for the same edit of the same thing, if it's recent. True when it did. */
 async function fold(sceneId: string, actor: ActivityActor, action: SceneActivityAction, subject: ActivitySubject, detail: Record<string, unknown> | undefined, now: Date): Promise<boolean> {
-    const sameActor = actor.userId ? eq(sceneActivity.actorUserId, actor.userId) : and(isNull(sceneActivity.actorUserId), eq(sceneActivity.actorWallet, actor.wallet!))
+    const sameActor = actor.userId ? eq(sceneActivity.actorUserId, actor.userId)
+      : actor.wallet ? and(isNull(sceneActivity.actorUserId), eq(sceneActivity.actorWallet, actor.wallet))
+      : and(isNull(sceneActivity.actorUserId), isNull(sceneActivity.actorWallet))
     const sameSubject = subject.id ? eq(sceneActivity.subjectId, subject.id) : isNull(sceneActivity.subjectId)
     const [folded] = await db
       .update(sceneActivity)

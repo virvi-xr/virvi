@@ -66,7 +66,7 @@ async function dispatchElementCallbacks(e: ElementChange): Promise<void> {
 }
 
 /** After a REST write: broadcast to scene rooms, and push to platform callbacks (fire-and-forget, errors swallowed). */
-async function elementChanged(e: ElementChange, activity?: { user: AuthUser; action: SceneActivityAction; name: string; detail?: Record<string, unknown> }): Promise<void> {
+export async function elementChanged(e: ElementChange, activity?: { user: AuthUser; action: SceneActivityAction; name: string; detail?: Record<string, unknown> }): Promise<void> {
   if (activity) await recordSceneActivity(e.sceneId, requestActor(activity.user), activity.action, { type: e.elementType, id: e.elementId, name: activity.name }, activity.detail)
   await publishElementChanged(e)
   await publishSceneTouched(e.sceneId)
@@ -782,7 +782,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
         const next = (updated.properties as Record<string, unknown> | null)?.value
         if (JSON.stringify(prev ?? null) !== JSON.stringify(next ?? null)) {
           await runWidgetRules({
-            sceneId: element.preset.sceneId, presetId: element.presetId, widget: updated, prev, next,
+            sceneId: element.preset.sceneId, presetId: element.presetId, widget: updated, prev, next, actor: requestActor(request.user),
             elementChanged: (e, name, rule) => elementChanged(e, { user: request.user, action: 'element.updated', name, detail: { changed: ['enabled'], rule } }),
           })
         }

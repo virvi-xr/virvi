@@ -1,14 +1,14 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
-import { ACTIONS_PER_RULE, describeRule, ruleTargets, whenChoices, type RuleAction, type RuleWhen, type SceneRule } from '@/lib/scene-rules'
+import { ACTIONS_PER_RULE, describeRule, localTimeZone, ruleTargets, timeZones, triggerFor, whenChoices, type DraftWhen, type RuleAction, type SceneRule } from '@/lib/scene-rules'
 
 interface El { id: string; name: string; type: string; properties?: any }
 interface Preset { id: string; name: string }
 
 const SELECT = 'rounded border border-gray-800 bg-gray-950 px-2 py-1.5 text-sm text-white outline-none focus:border-blue-400'
 
-type Draft = { name: string; widgetId: string; when: RuleWhen; actions: RuleAction[] }
+type Draft = { name: string; widgetId: string; when: DraftWhen; timezone: string; actions: RuleAction[] }
 
 /** Scene rules (LIV-196): "when this widget does this, do that", for the preset being edited. */
 export function SceneRules({ presetId, elements, presets }: { presetId: string; elements: El[]; presets: Preset[] }) {
@@ -31,13 +31,13 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
   const start = () => {
     const w = widgets[0]
     if (!w) return
-    setDraft({ name: '', widgetId: w.id, when: whenChoices(widgetType(w.id))[0].value, actions: [targets[0] ? { type: 'show', elementId: targets[0].id } : { type: 'preset', presetId: presets[0]?.id ?? '' }] })
+    setDraft({ name: '', widgetId: w.id, when: whenChoices(widgetType(w.id))[0].value, timezone: localTimeZone(), actions: [targets[0] ? { type: 'show', elementId: targets[0].id } : { type: 'preset', presetId: presets[0]?.id ?? '' }] })
   }
   const save = async () => {
     if (!draft) return
     setBusy(true)
     try {
-      await api.createRule(presetId, { name: draft.name.trim(), trigger: { type: 'widget', widgetId: draft.widgetId, when: draft.when }, actions: draft.actions })
+      await api.createRule(presetId, { name: draft.name.trim(), trigger: triggerFor(draft.widgetId, draft.when, draft.timezone), actions: draft.actions })
       setDraft(null)
       await load()
     } catch (e: any) { setError(e?.message ?? 'Could not save the rule') } finally { setBusy(false) }
@@ -70,9 +70,14 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
               onChange={(e) => setDraft({ ...draft, widgetId: e.target.value, when: whenChoices(widgetType(e.target.value))[0].value })}>
               {widgets.map((w) => <option key={w.id} value={w.id}>{w.name || 'Widget'}</option>)}
             </select>
-            <select aria-label="When it" className={SELECT} value={draft.when} onChange={(e) => setDraft({ ...draft, when: e.target.value as RuleWhen })}>
+            <select aria-label="When it" className={SELECT} value={draft.when} onChange={(e) => setDraft({ ...draft, when: e.target.value as DraftWhen })}>
               {whenChoices(widgetType(draft.widgetId)).map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
+            {draft.when === 'time' && (
+              <select aria-label="Time zone" className={SELECT} value={draft.timezone} onChange={(e) => setDraft({ ...draft, timezone: e.target.value })}>
+                {timeZones().map((z) => <option key={z} value={z}>{z.replace(/_/g, ' ')}</option>)}
+              </select>
+            )}
           </div>
           {draft.actions.map((a, i) => (
             <div key={i} className="flex flex-wrap items-center gap-2 text-sm text-gray-300">
@@ -108,7 +113,8 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
             <button type="button" disabled={busy} onClick={save} className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50">Save rule</button>
             <button type="button" onClick={() => setDraft(null)} className="text-sm text-gray-400 hover:text-gray-200">Cancel</button>
           </div>
-          <p className="text-xs text-gray-400">{describeRule({ trigger: { type: 'widget', widgetId: draft.widgetId, when: draft.when }, actions: draft.actions }, elements, presets)}</p>
+          <p className="text-xs text-gray-400">{describeRule({ trigger: triggerFor(draft.widgetId, draft.when, draft.timezone), actions: draft.actions }, elements, presets)}</p>
+          {draft.when === 'time' && <p className="text-xs text-gray-400">It runs once each time the widget&apos;s date and time arrives, within about 20 seconds. Set a new date and time to run it again.</p>}
         </div>
       )}
 

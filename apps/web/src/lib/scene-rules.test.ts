@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { describeRule, ruleTargets, whenChoices, TOGGLE, TRIGGER } from './scene-rules'
+import { describeRule, ruleTargets, triggerFor, whenChoices, DATETIME, TOGGLE, TRIGGER } from './scene-rules'
 
 const els = [{ id: 'w', name: 'Stage lights' }, { id: 'r1', name: 'Light rig 1' }, { id: 'r2', name: 'Light rig 2' }]
 const presets = [{ id: 'p', name: 'Show time' }]
@@ -17,5 +17,13 @@ describe('scene rules wording (LIV-196)', () => {
     expect(whenChoices(TRIGGER).map((c) => c.value)).toEqual(['press'])
     expect(whenChoices(6).map((c) => c.value)).toEqual(['change'])
     expect(ruleTargets([{ type: 'widget' }, { type: 'image' }])).toEqual([{ type: 'image' }])
+  })
+
+  it('timed rules', () => {
+    expect(whenChoices(DATETIME).map((c) => c.value)).toEqual(['time', 'change'])
+    expect(triggerFor('w', 'time', 'Europe/London')).toEqual({ type: 'time', widgetId: 'w', timezone: 'Europe/London' })
+    expect(triggerFor('w', 'on', 'UTC')).toEqual({ type: 'widget', widgetId: 'w', when: 'on' })
+    expect(describeRule({ trigger: { type: 'time', widgetId: 'w', timezone: 'America/New_York' }, actions: [{ type: 'hide', elementId: 'r1' }] }, els, presets))
+      .toBe('When the date and time in Stage lights arrives (America/New York time), hide Light rig 1.')
   })
 })
