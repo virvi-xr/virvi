@@ -613,6 +613,7 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS pin_lat DOUBLE PRECISION\`;
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS pin_lng DOUBLE PRECISION\`;
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS pin_radius_m INTEGER\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS wallet_required BOOLEAN NOT NULL DEFAULT false\`;
         await sql\`ALTER TABLE beat_claims ALTER COLUMN wallet DROP NOT NULL\`;
         await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'decentraland'\`;
         await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS install_key_id TEXT\`;

@@ -51,7 +51,7 @@ const NOT_DRAFT = "Only a raffle that hasn't opened can be scheduled."
 
 const EVENT_FIELDS = ['name', 'description', 'startTime', 'endTime', 'timezone'] as const
 const BEAT_KEYS = ['id', 'name', 'status', 'startsAt', 'endsAt', 'supplyCap', 'sceneIds'] as const
-const BEAT_FIELDS = ['name', 'description', 'startsAt', 'endsAt', 'sceneIds', 'imageMediaId', 'supplyCap', 'minPresentMinutes', 'tradeable'] as const
+const BEAT_FIELDS = ['name', 'description', 'startsAt', 'endsAt', 'sceneIds', 'imageMediaId', 'supplyCap', 'minPresentMinutes', 'tradeable', 'walletRequired'] as const
 
 const ENDS_BEFORE_START = 'The event must end after it starts.'
 const endsAfterStart = (a: { startTime?: string | null; endTime?: string | null }) => !a.startTime || !a.endTime || new Date(a.endTime) > new Date(a.startTime)
@@ -409,6 +409,7 @@ export const SHOWS_TOOLS: ToolDef<any>[] = [
       supplyCap: z.number().int().min(1).max(BEAT_SUPPLY_CAP_MAX).optional(),
       minPresentMinutes: z.number().int().min(0).max(BEAT_MIN_PRESENT_MAX_MINUTES).optional(),
       tradeable: z.boolean().optional(),
+      walletRequired: z.boolean().optional(),
     }),
     effect: 'write',
     call: (a) => ({ method: 'POST', url: '/api/beats', body: pick(a, BEAT_FIELDS) }),

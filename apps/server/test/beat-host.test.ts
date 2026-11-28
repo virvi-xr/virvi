@@ -92,6 +92,15 @@ describe('BEAT host API (LIV-11)', () => {
       expect(res.json().imageUrl).toMatch(/^https:\/\/cdn\.example\//)
     })
 
+    it('wallet required defaults to tradeable, and the host can set it (LIV-198)', async () => {
+      expect((await create({ sceneIds: [sceneA] })).json().walletRequired).toBe(false)
+      const sold = await create({ sceneIds: [sceneB], tradeable: true, startsAt: new Date(Date.now() + 40 * 86_400_000).toISOString(), endsAt: new Date(Date.now() + 41 * 86_400_000).toISOString() })
+      expect(sold.json(), sold.body).toMatchObject({ tradeable: true, walletRequired: true })
+      const off = await call('PATCH', `/api/beats/${sold.json().id}`, host, { walletRequired: false })
+      expect(off.json().walletRequired).toBe(false)
+      expect((await call('PATCH', `/api/beats/${sold.json().id}`, host, { walletRequired: 'yes' })).statusCode).toBe(400)
+    })
+
     it('forbids a scene the caller has no events.run in, and a viewer', async () => {
       const other = await createUser()
       const foreign = (await createScene(other)).scene.id

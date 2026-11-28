@@ -134,6 +134,7 @@ async function toPublic(rows: BeatRow[]): Promise<PublicBeat[]> {
       minPresentSeconds: r.minPresentSeconds,
       supplyCap: r.supplyCap,
       tradeable: r.tradeable,
+      walletRequired: r.walletRequired,
       status: r.status,
       sceneIds: sceneRows.filter((s) => s.beatId === r.id).map((s) => s.sceneId).sort(),
       counts,
@@ -298,6 +299,13 @@ function parseCap(v: unknown): number {
   if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > BEAT_SUPPLY_CAP_MAX) {
     throw new BeatError(400, 'bad_cap', `Supply must be 1 to ${BEAT_SUPPLY_CAP_MAX}.`)
   }
+  return v
+}
+
+/** Wallet required to claim (LIV-198): left out, a new BEAT takes its tradeable value (valuable ones need a wallet). */
+function parseWalletRequired(v: unknown, fallback: boolean): boolean {
+  if (v === undefined) return fallback
+  if (typeof v !== 'boolean') throw new BeatError(400, 'bad_request', 'Wallet required must be true or false.')
   return v
 }
 
@@ -477,6 +485,7 @@ export async function createBeat(c: BeatCaller, body: Body, now = new Date()): P
   const minutes = has(body, 'minPresentMinutes') ? parseMinutes(body.minPresentMinutes) : BEAT_MIN_PRESENT_DEFAULT_MINUTES
   const supplyCap = has(body, 'supplyCap') ? parseCap(body.supplyCap) : BEAT_SUPPLY_CAP_DEFAULT
   const tradeable = parseTradeable(body.tradeable)
+  const walletRequired = parseWalletRequired(body.walletRequired, tradeable)
   const holdMints = parseHold(body.holdMints)
   const autoClaim = parseAutoClaim(body.autoClaim)
   const location = parseLocation(body.location)
@@ -486,7 +495,7 @@ export async function createBeat(c: BeatCaller, body: Body, now = new Date()): P
     await lockScenes(tx, sceneIds)
     await checkOverlap(tx, sceneIds, startsAt, endsAt)
     const [created] = await tx.insert(beats).values({
-      chain, ownerUserId: c.userId, name, description, imageMediaId, startsAt, endsAt, minPresentSeconds: minutes * 60, supplyCap, tradeable, holdMints, autoClaim,
+      chain, ownerUserId: c.userId, name, description, imageMediaId, startsAt, endsAt, minPresentSeconds: minutes * 60, supplyCap, tradeable, walletRequired, holdMints, autoClaim,
       ...location, locationLabel: await locationLabel(tx, location, sceneIds),
     }).returning()
     await tx.insert(beatScenes).values(sceneIds.map((sceneId) => ({ beatId: created.id, sceneId })))
@@ -559,7 +568,7 @@ export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now?
       // A form sent whole is fine: only a field whose value differs counts as a change
       const iso = (d: Date) => d.toISOString()
       const same: Record<string, (v: unknown) => boolean> = {
-        name: (v) => v === row.name, description: (v) => (v ?? '') === row.description, tradeable: (v) => v === row.tradeable,
+        name: (v) => v === row.name, description: (v) => (v ?? '') === row.description, tradeable: (v) => v === row.tradeable, walletRequired: (v) => v === row.walletRequired,
         holdMints: (v) => v === row.holdMints, autoClaim: (v) => v === row.autoClaim, supplyCap: (v) => v === row.supplyCap, minPresentMinutes: (v) => v === row.minPresentSeconds / 60,
         startsAt: (v) => typeof v === 'string' && !Number.isNaN(Date.parse(v)) && iso(new Date(v)) === iso(row.startsAt),
         endsAt: (v) => typeof v === 'string' && !Number.isNaN(Date.parse(v)) && iso(new Date(v)) === iso(row.endsAt),
@@ -588,6 +597,7 @@ export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now?
     const minutes = has(body, 'minPresentMinutes') ? parseMinutes(body.minPresentMinutes) : row.minPresentSeconds / 60
     const supplyCap = has(body, 'supplyCap') ? parseCap(body.supplyCap) : row.supplyCap
     const tradeable = has(body, 'tradeable') ? parseTradeable(body.tradeable) : row.tradeable
+    const walletRequired = has(body, 'walletRequired') ? parseWalletRequired(body.walletRequired, row.walletRequired) : row.walletRequired
     const holdMints = has(body, 'holdMints') ? parseHold(body.holdMints) : row.holdMints
     const autoClaim = has(body, 'autoClaim') ? parseAutoClaim(body.autoClaim) : row.autoClaim
     const location: LocationFields = has(body, 'location') ? parseLocation(body.location) : {
@@ -602,7 +612,7 @@ export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now?
     await lockScenes(tx, sceneIds)
     await checkOverlap(tx, sceneIds, startsAt, endsAt, row.id)
     const [updated] = await tx.update(beats).set({
-      name, description, imageMediaId, startsAt, endsAt, minPresentSeconds: Math.round(minutes * 60), supplyCap, tradeable, holdMints, autoClaim, updatedAt: t,
+      name, description, imageMediaId, startsAt, endsAt, minPresentSeconds: Math.round(minutes * 60), supplyCap, tradeable, walletRequired, holdMints, autoClaim, updatedAt: t,
       ...location, locationLabel: await locationLabel(tx, location, sceneIds),
       // A stale copy (of the old image) never stands for the new one; it is frozen again right after the commit
       ...(imageChanged ? { imageUrl: null, artFailedAt: null, artAttempts: 0, artNextAttemptAt: null } : {}),

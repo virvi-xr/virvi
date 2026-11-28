@@ -256,6 +256,7 @@ function BeatDetail({ availability }: { availability: BeatAvailability }) {
                 {beat.sceneIds.map((id) => <Link key={id} href={`/scenes?id=${encodeURIComponent(id)}`} className="text-blue-300 underline underline-offset-2">{sceneNames[id] ?? 'A scene'}</Link>)}
               </dd>
               <dt className="text-gray-400">Tradeable</dt><dd className="text-gray-200">{beat.tradeable ? 'Yes' : 'No'}</dd>
+              <dt className="text-gray-400">Wallet required to claim</dt><dd className="text-gray-200">{beat.walletRequired ? 'Yes' : 'No'}</dd>
               <dt className="text-gray-400">Check claims first</dt><dd className="text-gray-200">{beat.holdMints ? 'Yes' : 'No'}</dd>
               <dt className="text-gray-400">Claim automatically</dt><dd className="text-gray-200">{beat.autoClaim ? 'Yes' : 'No'}</dd>
             </dl>

@@ -216,6 +216,22 @@ describe('BEATs in AR spaces with the Virvi app', () => {
     expect((await rowOf(b.id, p.user.id)).wallet).toBe(wallets[1].toLowerCase())
   })
 
+  it('a BEAT that requires a wallet refuses a claim with none, and takes one with a wallet (LIV-198)', async () => {
+    const b = await seed()
+    await db.update(beats).set({ walletRequired: true }).where(eq(beats.id, b.id))
+    const none = await phone({ wallets: 0 })
+    await track(none, b)
+    await db.update(beatClaims).set({ secondsPresent: 300 }).where(eq(beatClaims.beatId, b.id))
+    const res = await claim(none, b)
+    expect(res.statusCode).toBe(403)
+    expect(res.json().error).toBe('wallet_required')
+    expect((await rowOf(b.id, none.user.id)).status).toBe('present')
+    const one = await phone({ wallets: 1 })
+    await track(one, b)
+    await db.update(beatClaims).set({ secondsPresent: 300 }).where(eq(beatClaims.userId, one.user.id))
+    expect((await claim(one, b)).json().beat.claim.status).toBe('claimed')
+  })
+
   it('with no wallet the claim waits, holding a copy (takenCount)', async () => {
     const b = await seed({ supplyCap: 1 })
     const p = await phone({ wallets: 0 })

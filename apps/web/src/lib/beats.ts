@@ -55,6 +55,7 @@ export const GENERIC_ERROR = 'Something went wrong. Try again.'
 
 // Form help (plain-ux I4)
 export const TRADEABLE_HINT = "Holders can send it to other wallets. You can't change this once the BEAT starts."
+export const WALLET_REQUIRED_HINT = "Visitors need a wallet to claim. Without this, people with only a Virvi account can claim and choose a wallet later. On by default for tradeable BEATs, so throwaway accounts can't collect ones with resale value."
 export const SUPPLY_HINT = 'The most BEATs that can be claimed. You pay for this many up front. You can raise it later, never lower it.'
 export const PAID_SUPPLY_HINT = "The supply can't be changed after paying. To allow more BEATs, use Raise cap."
 export const MINUTES_HINT = '0 means anyone who agrees can claim once it starts.'
@@ -116,6 +117,8 @@ export interface BeatInput {
   minPresentMinutes: number
   supplyCap: number
   tradeable: boolean
+  /** LIV-198: a claim needs a wallet. Follows Tradeable on a new BEAT until the host sets it. */
+  walletRequired: boolean
   /** Host review: claims wait for the host's Send. */
   holdMints: boolean
   /** Auto-claim (LIV-180): agreeing to tracking also claims, once the visitor meets the rules. */
@@ -209,7 +212,7 @@ export function blankBeat(now: Date, sceneId?: string | null): BeatInput {
   const end = new Date(start.getTime() + 2 * 3_600_000)
   return {
     name: '', description: '', imageMediaId: null, imageUrl: null, startsAt: toLocalInput(start.toISOString()), endsAt: toLocalInput(end.toISOString()),
-    sceneIds: sceneId ? [sceneId] : [], minPresentMinutes: BEAT_MIN_PRESENT_DEFAULT_MINUTES, supplyCap: BEAT_SUPPLY_CAP_DEFAULT, tradeable: false,
+    sceneIds: sceneId ? [sceneId] : [], minPresentMinutes: BEAT_MIN_PRESENT_DEFAULT_MINUTES, supplyCap: BEAT_SUPPLY_CAP_DEFAULT, tradeable: false, walletRequired: false,
     holdMints: false, autoClaim: true, location: blankLocation(),
   }
 }
@@ -218,7 +221,7 @@ export function blankBeat(now: Date, sceneId?: string | null): BeatInput {
 export function beatToInput(b: PublicBeat): BeatInput {
   return {
     name: b.name, description: b.description, imageMediaId: null, imageUrl: b.imageUrl || null, startsAt: toLocalInput(b.startsAt), endsAt: toLocalInput(b.endsAt),
-    sceneIds: [...b.sceneIds], minPresentMinutes: Math.round(b.minPresentSeconds / 60), supplyCap: b.supplyCap, tradeable: b.tradeable,
+    sceneIds: [...b.sceneIds], minPresentMinutes: Math.round(b.minPresentSeconds / 60), supplyCap: b.supplyCap, tradeable: b.tradeable, walletRequired: b.walletRequired,
     holdMints: b.holdMints, autoClaim: b.autoClaim, location: locationToInput(b.location),
   }
 }
@@ -256,7 +259,7 @@ export const FIELD_IDS: Record<Exclude<BeatField, 'pay' | 'form'>, string> = {
 export function beatBody(f: BeatInput) {
   return {
     name: f.name.trim(), description: f.description.trim(), imageMediaId: f.imageMediaId, startsAt: fromLocalInput(f.startsAt), endsAt: fromLocalInput(f.endsAt),
-    sceneIds: f.sceneIds, minPresentMinutes: f.minPresentMinutes, supplyCap: f.supplyCap, tradeable: f.tradeable, holdMints: f.holdMints,
+    sceneIds: f.sceneIds, minPresentMinutes: f.minPresentMinutes, supplyCap: f.supplyCap, tradeable: f.tradeable, walletRequired: f.walletRequired, holdMints: f.holdMints,
     autoClaim: f.autoClaim, location: locationBody(f.location),
   }
 }
@@ -275,9 +278,9 @@ export function beatEditBody(f: BeatInput, status: BeatStatus) {
 }
 
 /** The review step's summary of what is fixed once it starts (plain-ux I4). */
-export function reviewSummary(b: Pick<PublicBeat, 'supplyCap' | 'tradeable' | 'sceneIds' | 'startsAt' | 'holdMints'>): string {
+export function reviewSummary(b: Pick<PublicBeat, 'supplyCap' | 'tradeable' | 'sceneIds' | 'startsAt' | 'holdMints'> & { walletRequired?: boolean }): string {
   const scenes = `${b.sceneIds.length} ${b.sceneIds.length === 1 ? 'scene' : 'scenes'}`
-  return [`Supply cap ${b.supplyCap}`, `Tradeable: ${b.tradeable ? 'Yes' : 'No'}`, scenes, `Starts ${formatWhen(b.startsAt)}`, ...(b.holdMints ? ['You check claims before they are sent'] : [])].join(' · ')
+  return [`Supply cap ${b.supplyCap}`, `Tradeable: ${b.tradeable ? 'Yes' : 'No'}`, ...(b.walletRequired ? ['Wallet required to claim'] : []), scenes, `Starts ${formatWhen(b.startsAt)}`, ...(b.holdMints ? ['You check claims before they are sent'] : [])].join(' · ')
 }
 
 /** The form fields an edit touches. A minimum-time error comes back as `bad_window`, so the minutes clear that too. */

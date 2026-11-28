@@ -50,6 +50,7 @@ const phoneOnly = () => new BeatError(403, 'phone_only', "Scan this BEAT's ARC w
 const thisDevice = () => new BeatError(409, 'this_device', 'This phone already has this BEAT.')
 const walletHasIt = () => new BeatError(409, 'wallet_has_it', 'This wallet already has this BEAT.')
 const allClaimed = () => new BeatError(409, 'all_claimed', 'All of these BEATs have been claimed.')
+const walletRequired = () => new BeatError(403, 'wallet_required', 'This BEAT needs a wallet: link one to your Virvi account, then claim.')
 const beatsBlocked = () => new BeatError(403, 'beats_blocked', "This wallet can't collect BEATs any more.")
 
 /** A unique index the write ran into, as the refusal it means (any other error is thrown as it is). */
@@ -358,6 +359,8 @@ export async function appClaim(beatId: string, c: AppClaim, now = new Date()): P
       if (claim.source === 'app_event' && quest) throw phoneOnly()
       if (checkedInAtEvent(claim)) requireAtVenue(b, c.location, `Come back to ${venueOf(b)} to claim this BEAT.`)
       if ((await takenCount(tx, b.id)) >= b.supplyCap) throw allClaimed()
+      // The host asked for a wallet (LIV-198): no waiting claims for this BEAT
+      if (!wallet && b.walletRequired) throw walletRequired()
       if (wallet) {
         const [other] = await tx.select({ id: beatClaims.id }).from(beatClaims).where(and(eq(beatClaims.beatId, b.id), eq(beatClaims.wallet, wallet), ne(beatClaims.id, claim.id)))
         if (other) throw walletHasIt()

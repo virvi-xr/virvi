@@ -8,7 +8,7 @@ import {
 import { useApi } from '@/lib/api'
 import {
   AUTO_CLAIM_HINT, AUTO_CLAIM_LABEL, BEAT_IMAGE_HINT, FIELD_IDS, HOLD_HINT, HOLD_LABEL, LOCATION_SCENE_ONLY, LOCATION_TYPE_LABELS, MINUTES_HINT, PAID_SUPPLY_HINT, SUPPLY_HINT,
-  TRADEABLE_HINT, beatFormError, fieldsOfPatch, shownFieldError,
+  TRADEABLE_HINT, WALLET_REQUIRED_HINT, beatFormError, fieldsOfPatch, shownFieldError,
   type BeatField, type BeatInput, type BeatLocationType, type FieldError, type LocationInput,
 } from '@/lib/beats'
 import { MediaPicker } from '@/components/MediaPicker'
@@ -62,6 +62,8 @@ export function BeatForm({ initial, editing, error, busy, submitLabel, busyLabel
   const api = useApi()
   const formRef = useRef<HTMLFormElement>(null)
   const [f, setF] = useState<BeatInput>(initial)
+  // Wallet required follows Tradeable until the host sets it themselves (LIV-198); an edit starts from what's saved
+  const [walletTouched, setWalletTouched] = useState(initial.walletRequired !== initial.tradeable)
   const [local, setLocal] = useState<FieldError | null>(null)
   const [picking, setPicking] = useState(false)
   const [fileName, setFileName] = useState<string | null>(null)
@@ -304,10 +306,18 @@ export function BeatForm({ initial, editing, error, busy, submitLabel, busyLabel
         </div>
         <div>
           <label className="inline-flex items-center gap-2 text-sm text-gray-200">
-            <input type="checkbox" checked={f.tradeable} aria-describedby="beat-tradeable-hint" onChange={(e) => set({ tradeable: e.target.checked })} />
+            <input type="checkbox" checked={f.tradeable} aria-describedby="beat-tradeable-hint"
+              onChange={(e) => set({ tradeable: e.target.checked, ...(walletTouched ? {} : { walletRequired: e.target.checked }) })} />
             Tradeable
           </label>
           <p id="beat-tradeable-hint" className={HINT}>{TRADEABLE_HINT}</p>
+        </div>
+        <div>
+          <label className="inline-flex items-center gap-2 text-sm text-gray-200">
+            <input type="checkbox" checked={f.walletRequired} aria-describedby="beat-wallet-hint" onChange={(e) => { setWalletTouched(true); set({ walletRequired: e.target.checked }) }} />
+            Wallet required to claim
+          </label>
+          <p id="beat-wallet-hint" className={HINT}>{WALLET_REQUIRED_HINT}</p>
         </div>
         <div>
           <label className="inline-flex items-center gap-2 text-sm text-gray-200">

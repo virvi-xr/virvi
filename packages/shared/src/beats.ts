@@ -153,6 +153,8 @@ export interface PublicBeat {
   minPresentSeconds: number
   supplyCap: number
   tradeable: boolean
+  /** A claim needs a wallet: visitors without one can't claim and wait (LIV-198). */
+  walletRequired: boolean
   status: BeatStatus
   sceneIds: string[]
   counts: { claimed: number; minting: number; minted: number; failed: number }

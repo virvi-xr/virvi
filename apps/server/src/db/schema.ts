@@ -3136,6 +3136,8 @@ export const beats = pgTable('beats', {
   minPresentSeconds: integer('min_present_seconds').notNull().default(300),
   supplyCap: integer('supply_cap').notNull().default(100),
   tradeable: boolean('tradeable').notNull().default(false),
+  /** LIV-198: a claim needs a wallet (no "Waiting for a wallet" claims from the app). New BEATs default to `tradeable`. */
+  walletRequired: boolean('wallet_required').notNull().default(false),
   status: text('status').$type<BeatStatus>().notNull().default('draft'),
   frozenAt: timestamp('frozen_at', { withTimezone: true }),
   createdOnChainTx: text('created_on_chain_tx'),
