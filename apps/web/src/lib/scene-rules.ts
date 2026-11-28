@@ -5,7 +5,7 @@ export type RuleWhen = 'on' | 'off' | 'press' | 'change'
 export type RuleTrigger = { type: 'widget'; widgetId: string; when: RuleWhen } | { type: 'time'; widgetId: string; timezone: string } | { type: 'click'; elementId: string }
 /** What the form picks: a widget trigger, or 'time' for a Date and time widget's value arriving. */
 export type DraftWhen = RuleWhen | 'time' | 'click'
-export type RuleAction = { type: 'show' | 'hide' | 'toggle' | 'volume'; elementId: string } | { type: 'preset'; presetId: string }
+export type RuleAction = { type: 'show' | 'hide' | 'toggle' | 'volume' | 'brightness'; elementId: string } | { type: 'preset'; presetId: string }
 export interface SceneRule { id: string; presetId: string; name: string; enabled: boolean; trigger: RuleTrigger; actions: RuleAction[] }
 
 export const TOGGLE = 1
@@ -40,6 +40,7 @@ export function describeRule(rule: Pick<SceneRule, 'trigger' | 'actions'>, eleme
   const steps = rule.actions.map((a) => {
     if (a.type === 'preset') return `switch to the preset ${pr(a.presetId)}`
     if (a.type === 'volume') return `set the volume of ${el(a.elementId)} to the slider`
+    if (a.type === 'brightness') return `set the brightness of ${el(a.elementId)} to the slider`
     // A toggle action flips it: hidden items appear, shown ones go
     const verb = a.type === 'show' ? 'show' : a.type === 'hide' ? 'hide' : 'show or hide'
     return `${verb} ${el(a.elementId)}`
@@ -76,3 +77,6 @@ export function timeZones(): string[] {
 
 /** What a volume action can set: sounds and video screens. */
 export const volumeTargets = <T extends { type: string }>(elements: T[]): T[] => elements.filter((e) => e.type === 'sound' || e.type === 'video')
+
+/** What a brightness action can set: images and video screens (drawn brighter in Decentraland). */
+export const brightnessTargets = <T extends { type: string }>(elements: T[]): T[] => elements.filter((e) => e.type === 'image' || e.type === 'video')

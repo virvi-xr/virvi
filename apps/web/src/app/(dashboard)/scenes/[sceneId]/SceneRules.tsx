@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
-import { ACTIONS_PER_RULE, CLICKABLE, ITEM_WHEN, SLIDER, describeRule, volumeTargets, localTimeZone, ruleTargets, timeZones, triggerFor, whenChoices, type DraftWhen, type RuleAction, type SceneRule } from '@/lib/scene-rules'
+import { ACTIONS_PER_RULE, CLICKABLE, ITEM_WHEN, SLIDER, describeRule, volumeTargets, brightnessTargets, localTimeZone, ruleTargets, timeZones, triggerFor, whenChoices, type DraftWhen, type RuleAction, type SceneRule } from '@/lib/scene-rules'
 
 interface El { id: string; name: string; type: string; properties?: any }
 interface Preset { id: string; name: string }
@@ -22,6 +22,8 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
   const clickables = elements.filter((e) => CLICKABLE.has(e.type))
   const targets = ruleTargets(elements)
   const loud = volumeTargets(elements)
+  const bright = brightnessTargets(elements)
+  const poolFor = (type: RuleAction['type']) => (type === 'volume' ? loud : type === 'brightness' ? bright : targets)
   const isItem = (id: string) => clickables.some((c) => c.id === id)
   const choicesFor = (id: string) => (isItem(id) ? ITEM_WHEN : whenChoices(widgetType(id)))
 
@@ -76,7 +78,7 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
               onChange={(e) => {
                 const id = e.target.value
                 const slider = !isItem(id) && widgetType(id) === SLIDER
-                const actions = slider ? draft.actions : draft.actions.map((a) => (a.type === 'volume' ? { type: 'show' as const, elementId: targets[0]?.id ?? a.elementId } : a))
+                const actions = slider ? draft.actions : draft.actions.map((a) => (a.type === 'volume' || a.type === 'brightness' ? { type: 'show' as const, elementId: targets[0]?.id ?? a.elementId } : a))
                 setDraft({ ...draft, widgetId: id, when: choicesFor(id)[0].value, actions })
               }}>
               {widgets.length > 0 && <optgroup label="Widgets">{widgets.map((w) => <option key={w.id} value={w.id}>{w.name || 'Widget'}</option>)}</optgroup>}
@@ -97,7 +99,7 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
               <select aria-label={`Action ${i + 1}`} className={SELECT} value={a.type} onChange={(e) => {
                 const type = e.target.value as RuleAction['type']
                 if (type === 'preset') return setAction(i, { type, presetId: presets[0]?.id ?? '' })
-                const pool = type === 'volume' ? loud : targets
+                const pool = poolFor(type)
                 const keep = 'elementId' in a && pool.some((t) => t.id === a.elementId) ? a.elementId : pool[0]?.id ?? ''
                 setAction(i, { type, elementId: keep })
               }}>
@@ -106,6 +108,7 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
                 <option value="toggle" disabled={!targets.length}>Show or hide (switch)</option>
                 <option value="preset">Switch to the preset</option>
                 {fromSlider && <option value="volume" disabled={!loud.length}>Set the volume from the slider</option>}
+                {fromSlider && <option value="brightness" disabled={!bright.length}>Set the brightness from the slider (Decentraland)</option>}
               </select>
               {a.type === 'preset' ? (
                 <select aria-label={`Preset for action ${i + 1}`} className={SELECT} value={a.presetId} onChange={(e) => setAction(i, { type: 'preset', presetId: e.target.value })}>
@@ -113,7 +116,7 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
                 </select>
               ) : (
                 <select aria-label={`Item for action ${i + 1}`} className={SELECT} value={a.elementId} onChange={(e) => setAction(i, { type: a.type, elementId: e.target.value })}>
-                  {(a.type === 'volume' ? loud : targets).map((t) => <option key={t.id} value={t.id}>{t.name || t.type}</option>)}
+                  {poolFor(a.type).map((t) => <option key={t.id} value={t.id}>{t.name || t.type}</option>)}
                 </select>
               )}
               {draft.actions.length > 1 && (

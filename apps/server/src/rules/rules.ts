@@ -29,6 +29,8 @@ export type RuleAction =
   | { type: 'preset'; presetId: string }
   /** A sound's or screen's volume follows the Slider that set the rule off (0 to 100 → 0 to 1). */
   | { type: 'volume'; elementId: string }
+  /** An image's or screen's brightness (emission) follows the Slider (0 to 100 → 0 to 1). Decentraland draws it. */
+  | { type: 'brightness'; elementId: string }
 export interface RuleInput { name?: unknown; enabled?: unknown; trigger?: unknown; actions?: unknown }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -41,6 +43,10 @@ const WIDGET_TRIGGER = 5
 const WIDGET_SLIDER = 6
 /** What a volume action can set. */
 const HAS_VOLUME = new Set(['sound', 'video'])
+/** What a brightness action can set. */
+const HAS_BRIGHTNESS = new Set(['image', 'video'])
+/** The property and the element types each slider action sets. */
+const SLIDER_ACTIONS = { volume: { prop: 'volume', types: HAS_VOLUME }, brightness: { prop: 'emission', types: HAS_BRIGHTNESS } } as const
 /** A timed rule whose time passed longer ago than this (the server was down, or the time was set in the past) is skipped. */
 export const TIMED_GRACE_MS = 10 * 60_000
 /** What a visitor can click in-world (the types whose copies take click actions). */
@@ -111,26 +117,28 @@ export async function checkRule(presetId: string, sceneId: string, input: RuleIn
         const el = byId.get(a.elementId)
         if (!el || el.type === 'widget') return bad('bad_actions', 'Show and hide work on items of this preset')
         actions.push({ type: a.type, elementId: a.elementId })
-      } else if (a && a.type === 'volume' && typeof a.elementId === 'string') {
+      } else if (a && (a.type === 'volume' || a.type === 'brightness') && typeof a.elementId === 'string') {
         const el = byId.get(a.elementId)
-        if (!el || !HAS_VOLUME.has(el.type)) return bad('bad_actions', 'Volume works on sounds and video screens of this preset')
-        actions.push({ type: 'volume', elementId: a.elementId })
+        if (!el || !SLIDER_ACTIONS[a.type as 'volume' | 'brightness'].types.has(el.type)) {
+          return bad('bad_actions', a.type === 'volume' ? 'Volume works on sounds and video screens of this preset' : 'Brightness works on images and video screens of this preset')
+        }
+        actions.push({ type: a.type, elementId: a.elementId })
       } else if (a && a.type === 'preset' && typeof a.presetId === 'string' && UUID.test(a.presetId)) {
         const p = await db.query.scenePresets.findFirst({ where: and(eq(scenePresets.id, a.presetId), eq(scenePresets.sceneId, sceneId)), columns: { id: true } })
         if (!p) return bad('bad_actions', "Switching presets works with this scene's presets")
         actions.push({ type: 'preset', presetId: a.presetId })
       } else {
-        return bad('bad_actions', "An action is { type: 'show' | 'hide' | 'toggle' | 'volume', elementId } or { type: 'preset', presetId }")
+        return bad('bad_actions', "An action is { type: 'show' | 'hide' | 'toggle' | 'volume' | 'brightness', elementId } or { type: 'preset', presetId }")
       }
     }
     out.actions = actions
   }
-  // A volume action takes its value from a Slider: only a Slider's change can set it off
-  if (out.actions?.some((a) => a.type === 'volume')) {
+  // Volume and brightness take their value from a Slider: only a Slider's change can set them off
+  if (out.actions?.some((a) => a.type === 'volume' || a.type === 'brightness')) {
     const t = out.trigger
     const w = t && t.type === 'widget' ? byId.get(t.widgetId) : undefined
     if (!w || Number((w.properties as Record<string, unknown> | null)?.controlType ?? 0) !== WIDGET_SLIDER) {
-      return bad('bad_actions', 'Volume follows a Slider: start the rule from a Slider changing')
+      return bad('bad_actions', 'Volume and brightness follow a Slider: start the rule from a Slider changing')
     }
   }
   return out
@@ -188,15 +196,16 @@ async function runActions(sceneId: string, presetId: string, rule: typeof sceneR
 }
 
 async function runAction(sceneId: string, presetId: string, a: RuleAction, ruleName: string, elementChanged: ElementChangedHook, actor: ActivityActor, value?: unknown): Promise<void> {
-  if (a.type === 'volume') {
+  if (a.type === 'volume' || a.type === 'brightness') {
     const n = Number(value)
     if (!Number.isFinite(n)) return
+    const { prop, types } = SLIDER_ACTIONS[a.type]
     const el = await db.query.sceneElements.findFirst({ where: and(eq(sceneElements.id, a.elementId), eq(sceneElements.presetId, presetId)) })
-    if (!el || !HAS_VOLUME.has(el.type)) return
-    const volume = Math.round(Math.min(100, Math.max(0, n))) / 100
+    if (!el || !types.has(el.type)) return
+    const level = Math.round(Math.min(100, Math.max(0, n))) / 100
     const props = (el.properties as Record<string, unknown> | null) ?? {}
-    if (props.volume === volume) return
-    await db.update(sceneElements).set({ properties: { ...props, volume }, updatedAt: new Date() }).where(eq(sceneElements.id, el.id))
+    if (props[prop] === level) return
+    await db.update(sceneElements).set({ properties: { ...props, [prop]: level }, updatedAt: new Date() }).where(eq(sceneElements.id, el.id))
     await elementChanged({ sceneId, presetId, elementId: el.id, elementType: el.type, deleted: false }, el.name, ruleName)
     return
   }

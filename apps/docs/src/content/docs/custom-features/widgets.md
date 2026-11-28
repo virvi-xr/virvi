@@ -14,6 +14,7 @@ On the scene's **Widgets** tab, under **Rules**, choose **+ Add rule** and pick:
    - **Show**, **Hide**, or **Show or hide (switch)** an item of the preset.
    - **Switch to the preset** you pick.
    - **Set the volume from the slider** of a sound or video screen (for a rule that starts from a **Slider** changing): the slider's 0 to 100 becomes the volume, so 30 plays at 30%.
+   - **Set the brightness from the slider** of an image or video screen (also from a **Slider**): 0 is unlit and 100 is fully bright (Virvi's default is 60). Decentraland draws brightness; Hyperfy and AR Spaces don't, so there it does nothing.
 
 For example: *When Stage lights is turned off, hide Light rig 1, then hide Light rig 2.*
 
@@ -39,8 +40,6 @@ A click rule runs when anyone in the scene clicks the item, such as a light swit
 - Visitors don't need a role: anyone can click. Clicks are limited per visitor (a short burst, then a few a second).
 - An item with a click action (open a link, play a sound and so on) still does that too.
 - Click rules work in Decentraland scenes on `@virvixr/dcl` 2.24.0 or later, and in Hyperfy worlds running Virvi app 1.2.0 or later (download the app again from the scene's Sync page and drag it into the world). AR Spaces don't send clicks to rules yet.
-
-Setting brightness from a slider is coming later.
 
 ## In your scene's code
 

@@ -259,3 +259,25 @@ describe('slider volume rules', () => {
     expect(res.json().rule).toMatchObject({ enabled: false, name: 'Old' })
   })
 })
+
+describe('slider brightness rules', () => {
+  let app: Awaited<ReturnType<typeof testApp>>
+  beforeEach(async () => { await resetDb(); app = await testApp() })
+  afterEach(async () => { await app.close() })
+
+  it('a slider sets an image’s and a screen’s brightness, not a sound’s', async () => {
+    const owner = await createUser()
+    const { preset } = await createScene(owner)
+    const dimmer = await createElement(preset.id, { type: 'widget', name: 'Dimmer', properties: { controlType: 6, value: 50 } })
+    const poster = await createElement(preset.id, { type: 'image', name: 'Poster', properties: { imageSrc: 'https://x/p.png' } })
+    const screen = await createElement(preset.id, { type: 'video', name: 'Screen' })
+    const music = await createElement(preset.id, { type: 'sound', name: 'Music' })
+    const post = (actions: unknown) => app.inject({ method: 'POST', url: `/api/presets/${preset.id}/rules`, headers: as(owner), payload: { trigger: { type: 'widget', widgetId: dimmer.id, when: 'change' }, actions } as any })
+    expect((await post([{ type: 'brightness', elementId: music.id }])).json().error).toBe('bad_actions')
+    expect((await post([{ type: 'brightness', elementId: poster.id }, { type: 'brightness', elementId: screen.id }])).statusCode).toBe(201)
+    await app.inject({ method: 'PUT', url: `/api/elements/${dimmer.id}`, headers: as(owner), payload: { properties: { controlType: 6, value: 85 } } })
+    const em = async (id: string) => ((await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, id) }))!.properties as any).emission
+    expect(await em(poster.id)).toBe(0.85)
+    expect(await em(screen.id)).toBe(0.85)
+  })
+})
