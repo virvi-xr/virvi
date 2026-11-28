@@ -7,6 +7,7 @@ import { MeshManager } from './managers/MeshManager.js'
 import { SoundManager } from './managers/SoundManager.js'
 import { AdSpaceManager } from './managers/AdSpaceManager.js'
 import { KioskManager } from './managers/KioskManager.js'
+import { WidgetManager } from './managers/WidgetManager.js'
 import type { AdHost } from './ads/host.js'
 import { EventBus } from './events/EventBus.js'
 
@@ -49,7 +50,13 @@ export class SceneManager {
       // keyed by the element type on the wire
       ad_space: new AdSpaceManager(adapter, storage, ads, () => video.isStreamLive()),
       claim_point: new KioskManager(adapter, storage, events),
+      widget: new WidgetManager(storage, events),
     }
+  }
+
+  /** The scene's widgets (LIV-158). */
+  get widgets(): WidgetManager {
+    return this.managers.widget as unknown as WidgetManager
   }
 
   /** True when any video config has a live, enabled stream. */
@@ -196,5 +203,6 @@ export class SceneManager {
     this.managers.sound?.init(preset.sounds || [])
     this.managers.ad_space?.init(preset.adSpaces || [])
     this.managers.claim_point?.init(preset.claimPoints || [])
+    this.managers.widget?.init(preset.widgets || [])
   }
 }

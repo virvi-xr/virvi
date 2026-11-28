@@ -14,6 +14,7 @@ No release so far has needed changes to scene code, so none is marked as breakin
 ## 2.24.0 — unreleased
 
 - **Editing in an area:** an editor whose role is limited to an area of the scene (a tenant) can edit from the HUD. They can place, move and remove items inside their area, and the Layout panel says where it is. An edit outside the area is refused with a message naming the area. Presets, streams and raffles stay with the host, co-hosts and full editors.
+- **Widgets for scene code:** `onWidgetChange`, `onWidgetClick`, `getWidgetValue` and `listWidgets`, `virvi.storage.widgets`, and the `widgets` option's handlers and defaults now work. Scene code hears a widget the moment it changes on the dashboard. See [Widgets](/docs/custom-features/widgets/).
 
 ## 2.23.0 — 2026-11-27
 

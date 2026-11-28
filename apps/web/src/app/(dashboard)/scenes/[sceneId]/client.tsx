@@ -1131,7 +1131,8 @@ function WidgetValueEditor({ controlType, value, onChange }: { controlType: numb
       )
     case 5: // Trigger
       return (
-        <button onClick={() => onChange(true)}
+        // Each press stores its time, so every press is a change scene code can hear (onWidgetClick, LIV-158)
+        <button onClick={() => onChange(Date.now())}
           className="rounded bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-500 transition-colors">
           Trigger
         </button>

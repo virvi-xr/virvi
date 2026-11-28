@@ -1,4 +1,5 @@
 import type { PublicDraw, PublicRaffle, SceneLibraryChangeData, TransformData, TransformDraftData, VirviPlatformAdapter, VirviInitConfig, VirviStorage as VirviStorageType, HUDRenderer, BudgetLimits, Scene } from '@virvixr/shared'
+import { WidgetManager, type WidgetState } from './managers/WidgetManager.js'
 import { BEAT_CONSENT_VERSION, GIVEAWAY_CONSENT_VERSION, type AvailableBeat, type AvailableGiveaway, HUD_PROTOCOL_HEADER, HUD_VERSION_HEADER, RAFFLE_CONSENT_VERSION } from '@virvixr/shared'
 import { VirviHttpClient, ColyseusManager, type RafflePatch } from '@virvixr/client'
 import { SceneManager } from './SceneManager.js'
@@ -219,6 +220,8 @@ export class Virvi {
    * Can be called standalone before scene discovery.
    */
   async authenticate(config: VirviInitConfig): Promise<void> {
+    // LIV-158: the scene code's widget handlers and defaults, before anything can arrive
+    this.sceneManager.widgets.define(config.widgets)
     const env = config.env || 'prod'
     const apiUrl = resolveApiUrl(config)
     this.wssUrl = config.wssUrl || WSS_URLS[env] || WSS_URLS.prod
@@ -636,6 +639,41 @@ export class Virvi {
     }
     this.events.on('giveaway_available', handler)
     return () => this.events.off('giveaway_available', handler)
+  }
+
+  // ── Widgets (LIV-158) ──────────────────────────────────────────────────
+
+  /**
+   * Calls `listener(value, widget)` whenever widget `id` changes: its custom id, its name, or its element id. It also
+   * fires once the widget arrives with the scene (and with `undefined` when it's removed). Returns an unsubscribe.
+   */
+  onWidgetChange(id: string, listener: (value: unknown, widget: WidgetState) => void): () => void {
+    const handler = (w: WidgetState, value: unknown) => {
+      if (!WidgetManager.matches(w, id)) return
+      try { listener(value, w) } catch { /* swallow */ }
+    }
+    this.events.on('widget_change', handler)
+    return () => this.events.off('widget_change', handler)
+  }
+
+  /** Calls `listener(widget)` when Trigger widget `id` is pressed. Returns an unsubscribe. */
+  onWidgetClick(id: string, listener: (widget: WidgetState) => void): () => void {
+    const handler = (w: WidgetState) => {
+      if (!WidgetManager.matches(w, id)) return
+      try { listener(w) } catch { /* swallow */ }
+    }
+    this.events.on('widget_click', handler)
+    return () => this.events.off('widget_click', handler)
+  }
+
+  /** Widget `id`'s current value, or its default from the `widgets` option while it isn't in the scene. */
+  getWidgetValue(id: string): unknown {
+    return this.sceneManager.widgets.value(id)
+  }
+
+  /** Every widget in the live preset. */
+  listWidgets(): WidgetState[] {
+    return this.sceneManager.widgets.list()
   }
 
   /** A giveaway kiosk was clicked (which one, and the giveaway it is for). Returns an unsubscribe. */
