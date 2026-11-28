@@ -1,0 +1,26 @@
+{
+  "name": "@virvixr/sdk",
+  "version": "0.1.0",
+  "description": "Typed client for the Virvi API: scenes, presets, items, events, media and webhooks, with webhook signature checking.",
+  "license": "Apache-2.0",
+  "author": "Livication LLC",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "files": ["dist", "README.md", "LICENSE"],
+  "sideEffects": false,
+  "engines": { "node": ">=18" },
+  "repository": { "type": "git", "url": "https://github.com/virvi-xr/virvi", "directory": "packages/sdk" },
+  "homepage": "https://virvi.io/docs/api/sdk/",
+  "keywords": ["virvi", "metaverse", "decentraland", "hyperfy", "api", "sdk"],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc && node --test test/*.test.mjs",
+    "prepublishOnly": "pnpm run test"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

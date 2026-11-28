@@ -51,6 +51,8 @@ function fromVirvi(rawBody, header, secret) {
 }
 ```
 
+With the [TypeScript SDK](/docs/api/sdk/), `verifyWebhook(rawBody, signatureHeader, secret)` does this for you.
+
 ## Answering, and retries
 
 Answer with any `2xx` status within 10 seconds. Anything else, or no answer, counts as a failure. Virvi tries again after 1 minute, 5 minutes, 30 minutes, 2 hours, 6 hours and 12 hours, then gives up. Redirects aren't followed. **Deliveries** next to the webhook in Settings lists the last 50 with how each went. They are kept 30 days.
