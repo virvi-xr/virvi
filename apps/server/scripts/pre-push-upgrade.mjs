@@ -24,8 +24,17 @@ try {
       DROP TABLE analytics_sessions CASCADE;
     END IF;
   END $$`
-  // Key-value scene state was removed; drizzle push alone is unreliable at dropping it
-  await sql`DROP TABLE IF EXISTS scene_state`
+  // v1's per-user key-value scene state (scene_id, user_id, key) was removed; drizzle push alone is unreliable at
+  // dropping it. LIV-158 brought back a scene_state of its own, with no user_id: only the old shape goes, or every boot
+  // would wipe the scenes' saved state (LIV-211).
+  await sql`DO $$ BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'scene_state' AND column_name = 'user_id'
+    ) THEN
+      DROP TABLE scene_state;
+    END IF;
+  END $$`
   // Per-user deploy wallets were replaced by World destinations. Push would ask whether
   // dcl_world_destinations was renamed from it; move it out of push's schema instead, keeping its rows.
   await sql`DO $$ BEGIN
