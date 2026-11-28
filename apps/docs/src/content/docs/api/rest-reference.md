@@ -11,6 +11,7 @@ description: The main Virvi REST endpoints with method, path and auth, plus wher
 - **Errors:** `{ "error": "…" }`, sometimes with `message`. Other accounts' resources usually answer `404`.
 - **Rate limit:** `RATE_LIMIT_MAX` requests per minute per IP across `/api/` (300 by default).
 - **Request IDs:** every response has an `x-request-id` header. Quote it when reporting a problem.
+- **Versioning:** every `/api/...` route also answers at `/api/v1/...` (for example `GET /api/v1/scenes`), with the same checks. `v1` is the API as it is today: build on the `/api/v1` paths, as the [TypeScript SDK](/docs/api/sdk/) does, and they keep working as they do now. Changes that would break callers come under a new version instead.
 
 ## OpenAPI
 

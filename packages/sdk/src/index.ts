@@ -88,7 +88,7 @@ export class VirviClient {
     this.f = opts.fetch ?? globalThis.fetch.bind(globalThis)
   }
 
-  /** Any route, for what the typed methods don't cover yet. Throws VirviApiError for a non-2xx answer. */
+  /** Any route (such as '/api/v1/scenes'), for what the typed methods don't cover yet. Throws VirviApiError for a non-2xx answer. */
   async request<T = unknown>(method: Method, path: string, body?: unknown): Promise<T> {
     const res = await this.f(`${this.base}${path}`, {
       method,
@@ -107,60 +107,60 @@ export class VirviClient {
   }
 
   readonly scenes = {
-    list: async (): Promise<SceneSummary[]> => (await this.request<{ scenes: SceneSummary[] }>('GET', '/api/scenes')).scenes,
-    get: async (sceneId: string): Promise<Scene> => (await this.request<{ scene: Scene }>('GET', `/api/scenes/${enc(sceneId)}`)).scene,
+    list: async (): Promise<SceneSummary[]> => (await this.request<{ scenes: SceneSummary[] }>('GET', '/api/v1/scenes')).scenes,
+    get: async (sceneId: string): Promise<Scene> => (await this.request<{ scene: Scene }>('GET', `/api/v1/scenes/${enc(sceneId)}`)).scene,
     update: async (sceneId: string, changes: { name?: string; description?: string; activePresetId?: string }): Promise<Scene> =>
-      (await this.request<{ scene: Scene }>('PUT', `/api/scenes/${enc(sceneId)}`, changes)).scene,
+      (await this.request<{ scene: Scene }>('PUT', `/api/v1/scenes/${enc(sceneId)}`, changes)).scene,
     /** How the live preset compares with Decentraland's limits, and suggested fixes. */
-    performance: (sceneId: string) => this.request<Record<string, unknown>>('GET', `/api/scenes/${enc(sceneId)}/health`),
+    performance: (sceneId: string) => this.request<Record<string, unknown>>('GET', `/api/v1/scenes/${enc(sceneId)}/health`),
     /** Who changed what, newest first (hosts and co-hosts). */
-    activity: (sceneId: string) => this.request<Record<string, unknown>>('GET', `/api/scenes/${enc(sceneId)}/activity`),
+    activity: (sceneId: string) => this.request<Record<string, unknown>>('GET', `/api/v1/scenes/${enc(sceneId)}/activity`),
   }
 
   readonly presets = {
     create: async (sceneId: string, name: string, fromPresetId?: string): Promise<Preset> =>
-      (await this.request<{ preset: Preset }>('POST', `/api/scenes/${enc(sceneId)}/presets`, { name, ...(fromPresetId ? { fromPresetId } : {}) })).preset,
-    rename: async (presetId: string, name: string): Promise<Preset> => (await this.request<{ preset: Preset }>('PATCH', `/api/presets/${enc(presetId)}`, { name })).preset,
+      (await this.request<{ preset: Preset }>('POST', `/api/v1/scenes/${enc(sceneId)}/presets`, { name, ...(fromPresetId ? { fromPresetId } : {}) })).preset,
+    rename: async (presetId: string, name: string): Promise<Preset> => (await this.request<{ preset: Preset }>('PATCH', `/api/v1/presets/${enc(presetId)}`, { name })).preset,
     /** Makes it the live preset: everyone in the scene sees the switch within seconds. */
     activate: (sceneId: string, presetId: string) => this.scenes.update(sceneId, { activePresetId: presetId }),
   }
 
   readonly elements = {
     create: async (presetId: string, element: { type: ElementType; name: string; enabled?: boolean; properties?: Record<string, unknown> }): Promise<Element> =>
-      (await this.request<{ element: Element }>('POST', `/api/presets/${enc(presetId)}/elements`, element)).element,
+      (await this.request<{ element: Element }>('POST', `/api/v1/presets/${enc(presetId)}/elements`, element)).element,
     /** Note: `properties` replaces the element's properties whole; send them all (get the scene first to merge). */
     update: async (elementId: string, changes: { name?: string; enabled?: boolean; properties?: Record<string, unknown>; clickEvent?: Record<string, unknown> | null }): Promise<Element> =>
-      (await this.request<{ element: Element }>('PUT', `/api/elements/${enc(elementId)}`, changes)).element,
-    delete: async (elementId: string): Promise<void> => { await this.request('DELETE', `/api/elements/${enc(elementId)}`) },
+      (await this.request<{ element: Element }>('PUT', `/api/v1/elements/${enc(elementId)}`, changes)).element,
+    delete: async (elementId: string): Promise<void> => { await this.request('DELETE', `/api/v1/elements/${enc(elementId)}`) },
   }
 
   readonly instances = {
     create: async (elementId: string, at: { position: Vec3; rotation?: Vec3; scale?: Vec3; enabled?: boolean }): Promise<Instance> =>
-      (await this.request<{ instance: Instance }>('POST', `/api/elements/${enc(elementId)}/instances`, at)).instance,
+      (await this.request<{ instance: Instance }>('POST', `/api/v1/elements/${enc(elementId)}/instances`, at)).instance,
     update: async (instanceId: string, changes: { position?: Vec3; rotation?: Vec3; scale?: Vec3; enabled?: boolean }): Promise<Instance> =>
-      (await this.request<{ instance: Instance }>('PUT', `/api/instances/${enc(instanceId)}`, changes)).instance,
-    delete: async (instanceId: string): Promise<void> => { await this.request('DELETE', `/api/instances/${enc(instanceId)}`) },
+      (await this.request<{ instance: Instance }>('PUT', `/api/v1/instances/${enc(instanceId)}`, changes)).instance,
+    delete: async (instanceId: string): Promise<void> => { await this.request('DELETE', `/api/v1/instances/${enc(instanceId)}`) },
   }
 
   readonly events = {
-    list: async (): Promise<VirviEvent[]> => (await this.request<{ events: VirviEvent[] }>('GET', '/api/events')).events,
+    list: async (): Promise<VirviEvent[]> => (await this.request<{ events: VirviEvent[] }>('GET', '/api/v1/events')).events,
     create: async (event: { name: string; description?: string; startTime?: string; endTime?: string; timezone?: string }): Promise<VirviEvent> =>
-      (await this.request<{ event: VirviEvent }>('POST', '/api/events', event)).event,
+      (await this.request<{ event: VirviEvent }>('POST', '/api/v1/events', event)).event,
   }
 
   readonly media = {
-    list: async (): Promise<MediaAsset[]> => (await this.request<{ assets: MediaAsset[] }>('GET', '/api/media')).assets,
+    list: async (): Promise<MediaAsset[]> => (await this.request<{ assets: MediaAsset[] }>('GET', '/api/v1/media')).assets,
   }
 
   readonly webhooks = {
-    list: async (): Promise<Webhook[]> => (await this.request<{ webhooks: Webhook[] }>('GET', '/api/webhooks')).webhooks,
+    list: async (): Promise<Webhook[]> => (await this.request<{ webhooks: Webhook[] }>('GET', '/api/v1/webhooks')).webhooks,
     /** The signing secret comes back here only: keep it to check deliveries with verifyWebhook. */
     create: (url: string, events: Array<Exclude<WebhookEventType, 'webhook.test'>>) =>
-      this.request<{ webhook: Webhook; secret: string }>('POST', '/api/webhooks', { url, events }),
-    delete: async (webhookId: string): Promise<void> => { await this.request('DELETE', `/api/webhooks/${enc(webhookId)}`) },
-    test: (webhookId: string) => this.request<{ delivery: WebhookDelivery | null }>('POST', `/api/webhooks/${enc(webhookId)}/test`),
+      this.request<{ webhook: Webhook; secret: string }>('POST', '/api/v1/webhooks', { url, events }),
+    delete: async (webhookId: string): Promise<void> => { await this.request('DELETE', `/api/v1/webhooks/${enc(webhookId)}`) },
+    test: (webhookId: string) => this.request<{ delivery: WebhookDelivery | null }>('POST', `/api/v1/webhooks/${enc(webhookId)}/test`),
     deliveries: async (webhookId: string): Promise<WebhookDelivery[]> =>
-      (await this.request<{ deliveries: WebhookDelivery[] }>('GET', `/api/webhooks/${enc(webhookId)}/deliveries`)).deliveries,
+      (await this.request<{ deliveries: WebhookDelivery[] }>('GET', `/api/v1/webhooks/${enc(webhookId)}/deliveries`)).deliveries,
   }
 }
 

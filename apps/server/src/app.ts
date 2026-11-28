@@ -100,6 +100,11 @@ import { globalRateKey } from './http/rate-key.js'
 /** The server release, reported by the API docs, /api/health and /api/instance. */
 const SERVER_VERSION = '2.0.0'
 
+/** `/api/v1/x?q` → `/api/x?q`. v1 is the API as it is today; a later v2 would get routes of its own. */
+export function apiV1Rewrite(url: string): string {
+  return url === '/api/v1' || url.startsWith('/api/v1/') || url.startsWith('/api/v1?') ? `/api${url.slice(7)}` : url
+}
+
 /**
  * A pairing code in the URL path is a credential (the API's /claim is polled, and every approve link and QR scan
  * loads the web page /pair/<code>): log the route shape, never the code.
@@ -145,6 +150,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     trustProxy: config.trustProxyHops, // request.ip = real client behind the proxy (per-IP ingest limits)
     genReqId: () => randomUUID(),
     bodyLimit: config.maxUploadSize, // default 100MB, set MAX_UPLOAD_MB to override
+    // LIV-39: /api/v1/... is the versioned name for today's API, served by the same routes (and their checks)
+    rewriteUrl: (req) => apiV1Rewrite(req.url ?? '/'),
   })
 
   // CORS: any origin, never credentials. Every API caller (the dashboard, a Hyperfy HUD in someone's world) sends a bearer
