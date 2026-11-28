@@ -26,6 +26,8 @@ export type VenueEvent =
   | { type: 'raffle_changed'; sceneId: string; raffle: PublicRaffle | null }
   /** A raffle draw happened (LIV-55): the wheel spins. */
   | { type: 'raffle_draw'; sceneId: string; draw: PublicDraw }
+  /** A scene state key was set or deleted (LIV-158). */
+  | { type: 'state_changed'; sceneId: string; key: string; value: unknown; deleted: boolean }
 
 /** A preset was created, renamed or deleted (the list editors see; switching the live one is preset_changed). */
 export type PresetsChange =

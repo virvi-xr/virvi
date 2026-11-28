@@ -24,6 +24,7 @@ import {
 } from '@/lib/kiosk'
 import { SceneRoles } from './SceneRoles'
 import { SceneActivity } from './SceneActivity'
+import { SceneStatePanel } from './SceneStatePanel'
 import { SceneHealth } from './SceneHealth'
 import { Raffles } from './Raffles'
 import { SceneBeats } from '@/components/beats/SceneBeats'
@@ -1995,6 +1996,7 @@ export default function SceneEditorPage() {
         <>
           <SceneThumbnail sceneId={sceneId} url={scene.thumbnailUrl ?? null} source={scene.thumbnailSource ?? null} api={api}
             onChange={(url, source) => setScene(prev => prev && { ...prev, thumbnailUrl: url, thumbnailSource: source })} />
+          <SceneStatePanel sceneId={sceneId} />
           {scene.canDelete && <DeleteSceneSection sceneId={sceneId} />}
         </>
       )}

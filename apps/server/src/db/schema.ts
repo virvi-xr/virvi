@@ -233,6 +233,8 @@ export const scenes = pgTable('scenes', {
    * LIV-33: the newest Decentraland HUD release seen calling for this scene (x-virvi-hud-version), and when a
    * Decentraland HUD last called. Seen with no version: a HUD released before the header existed, so it is behind
    */
+  /** LIV-158: who may write the scene's state (scene_state): 'staff' (editors) or 'everyone' (any visitor's scene code). */
+  stateWrites: text('state_writes').$type<'staff' | 'everyone'>().notNull().default('staff'),
   dclHudVersion: text('dcl_hud_version'),
   dclHudSeenAt: timestamp('dcl_hud_seen_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1695,6 +1697,20 @@ export const modelStats = pgTable('model_stats', {
  * within a minute are folded into one row (`count`), so dragging a model around doesn't fill the log. Written by
  * recordSceneActivity (scenes/activity.ts), never in the way of the change itself.
  */
+/** Scene state (LIV-158, scenes/state.ts): a small key-value store per scene for scene code; up to 100 keys of 4 KB. */
+export const sceneState = pgTable(
+  'scene_state',
+  {
+    sceneId: uuid('scene_id').notNull().references(() => scenes.id, { onDelete: 'cascade' }),
+    key: text('key').notNull(),
+    value: jsonb('value').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.sceneId, t.key] }),
+  }),
+)
+
 export const sceneActivity = pgTable(
   'scene_activity',
   {

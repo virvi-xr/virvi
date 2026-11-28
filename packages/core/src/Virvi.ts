@@ -1,4 +1,5 @@
 import type { PublicDraw, PublicRaffle, SceneLibraryChangeData, TransformData, TransformDraftData, VirviPlatformAdapter, VirviInitConfig, VirviStorage as VirviStorageType, HUDRenderer, BudgetLimits, Scene } from '@virvixr/shared'
+import { SceneState } from './state/SceneState.js'
 import { WidgetManager, type WidgetState } from './managers/WidgetManager.js'
 import { BEAT_CONSENT_VERSION, GIVEAWAY_CONSENT_VERSION, type AvailableBeat, type AvailableGiveaway, HUD_PROTOCOL_HEADER, HUD_VERSION_HEADER, RAFFLE_CONSENT_VERSION } from '@virvixr/shared'
 import { VirviHttpClient, ColyseusManager, type RafflePatch } from '@virvixr/client'
@@ -63,6 +64,8 @@ export class Virvi {
   private saveTimeoutSystem: ((dt: number) => void) | null = null
   private static SAVE_TIMEOUT_MS = 5000
   public storage: VirviStorageType
+  /** The scene's shared state (LIV-158): get, set, delete, on. */
+  public readonly state: SceneState
   public hud: any | null = null // HUDManager — typed as any to avoid hard dep on @virvixr/hud
 
   constructor(adapter: VirviPlatformAdapter) {
@@ -78,6 +81,14 @@ export class Virvi {
       postEvents: (batch) => this.http.sendAdEvents(adapter, batch),
     })
     this.sceneManager = new SceneManager(adapter, this.storage, this.events, this.ads)
+    this.state = new SceneState({
+      send: (type, message) => {
+        if (!this.colyseus.isConnected()) return false
+        try { this.colyseus.send(type, message); return true } catch { return false }
+      },
+      registerSystem: (fn) => adapter.registerSystem(fn),
+      unregisterSystem: (fn) => adapter.unregisterSystem(fn),
+    })
   }
 
   private _binding: { sceneId: string | null; locationId: string | null } | null = null
@@ -404,6 +415,7 @@ export class Virvi {
       this.stopRoomRenewRetry()
       this.roomRenewAttempts = 0
       this.failSaves('not_connected')
+      this.state.failAll('not_connected')
       this.events.emit('connection_lost', { code })
     })
 
@@ -422,6 +434,11 @@ export class Virvi {
     this.colyseus.onMessage('screen_showings', (message: unknown) => {
       this.sceneManager.handleScreenShowings(message as any)
     })
+
+    // Scene state (LIV-158): the whole state on join, then each change, and the answer to this client's own writes
+    this.colyseus.onMessage('scene_state_init', (message: unknown) => this.state.handleInit(message))
+    this.colyseus.onMessage('scene_state', (message: unknown) => this.state.handleChange(message))
+    this.colyseus.onMessage('scene_state_ack', (message: unknown) => this.state.handleAck(message))
 
     // Raffles (LIV-55): also sent once on join, so guests and late joiners see the running raffle
     this.colyseus.onMessage('raffle_changed', (message: unknown) => {

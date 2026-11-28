@@ -542,6 +542,11 @@ function useRealApi() {
     dismissOnboarding: (dismissed: boolean) => apiFetch<Onboarding>('/api/me/onboarding/dismiss', { method: 'POST', body: JSON.stringify({ dismissed }) }),
     getOnboardingFunnel: (days = 90) => apiFetch<OnboardingFunnel>(`/api/admin/onboarding?days=${days}`),
     getSceneHealth: (sceneId: string) => apiFetch<SceneHealth>(`/api/scenes/${sceneId}/health`),
+    getSceneState: (sceneId: string) =>
+      apiFetch<{ state: Record<string, unknown>; writes: 'staff' | 'everyone'; limits: { keys: number; valueBytes: number } }>(`/api/scenes/${sceneId}/state`),
+    deleteSceneStateKey: (sceneId: string, key: string) => apiFetch(`/api/scenes/${sceneId}/state/${encodeURIComponent(key)}`, { method: 'DELETE' }),
+    setSceneStateWrites: (sceneId: string, writes: 'staff' | 'everyone') =>
+      apiFetch<{ writes: string }>(`/api/scenes/${sceneId}/state-settings`, { method: 'PUT', body: JSON.stringify({ writes }) }),
     getSceneActivity: (sceneId: string, before?: string) =>
       apiFetch<{ entries: SceneActivityEntry[]; more: boolean }>(`/api/scenes/${sceneId}/activity${before ? `?before=${encodeURIComponent(before)}` : ''}`),
     /** `area` limits an editor to part of the scene (LIV-32); left out keeps an editor's area, null removes it. */

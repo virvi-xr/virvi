@@ -251,6 +251,10 @@ const CASES: Case[] = [
   // scenes
   { route: 'GET /api/scenes/:sceneId', url: (f) => `/api/scenes/${f.scene.id}` },
   { route: 'GET /api/scenes/:sceneId/errors', url: (f) => `/api/scenes/${f.scene.id}/errors` },
+  { route: 'GET /api/scenes/:sceneId/state', url: (f) => `/api/scenes/${f.scene.id}/state` },
+  { route: 'PUT /api/scenes/:sceneId/state/:key', url: (f) => `/api/scenes/${f.scene.id}/state/pwned`, body: () => ({ value: 1 }) },
+  { route: 'DELETE /api/scenes/:sceneId/state/:key', url: (f) => `/api/scenes/${f.scene.id}/state/pwned` },
+  { route: 'PUT /api/scenes/:sceneId/state-settings', url: (f) => `/api/scenes/${f.scene.id}/state-settings`, body: () => ({ writes: 'everyone' }) },
   { route: 'PUT /api/scenes/:sceneId', url: (f) => `/api/scenes/${f.scene.id}`, body: () => ({ name: 'pwned' }) },
   { route: 'PUT /api/scenes/:sceneId/thumbnail', url: (f) => `/api/scenes/${f.scene.id}/thumbnail`, body: () => ({ fileData: 'AAAA' }) },
   { route: 'DELETE /api/scenes/:sceneId/thumbnail', url: (f) => `/api/scenes/${f.scene.id}/thumbnail` },

@@ -72,6 +72,8 @@ What `createVirvi()` resolves to. These are the members meant for scene code.
 | `track(name, props?)` | Records a custom analytics event. |
 | `recordAction(id, metadata?)` | Deprecated name for `track()`. |
 | `storage` | Read-only view of the scene's elements. See [Storage](#storage). |
+| `state` | From 2.24.0: the scene's shared, saved key-value store (`get`, `all`, `set`, `delete`, `on`). See [Scene State](/docs/custom-features/scene-state/). |
+| `onWidgetChange(id, listener)`, `onWidgetClick(id, listener)` | From 2.24.0: a dashboard widget's changes and Trigger presses. See [Widgets](/docs/custom-features/widgets/). |
 | `sceneId` | The connected Virvi scene's ID, or `null`. |
 | `user` | The signed-in user (`id`, `displayName`, `role`), or `null`. |
 | `connectionState` | `idle`, `authenticating`, `authenticated`, `discovering_scene`, `scene_ready`, `connecting`, `connected` or `error`. |
@@ -79,7 +81,7 @@ What `createVirvi()` resolves to. These are the members meant for scene code.
 | `onActivePresetChanged(listener)` | Calls `listener(presetId)` when the live preset changes. Returns a remover. |
 | `destroy()` | Leaves the room and stops. |
 
-There is no per-user key-value store in the SDK. See [Scene State](/docs/custom-features/scene-state/) for what to use instead.
+`state` is one set of values for the whole scene; there is no per-player store. Keep per-player data on your own backend.
 
 ## Storage
 

@@ -28,6 +28,7 @@ import { pairingActive, pairingLive } from '../hyperfy/pairing.js'
 import { deviceActive, deviceLive } from '../ar/devices.js'
 import { ANONYMOUS, type Actor } from '../auth/actor.js'
 import { checkedActor } from '../auth/admin.js'
+import { checkState, deleteSceneState, getSceneState, setSceneState, stateWritesFor, STATE_ERROR_MESSAGES } from '../scenes/state.js'
 import { getSceneAccess, hasScope, isFullAccess, toVenueAccessMessage, type SceneAccess } from '../auth/permissions.js'
 import { authorizeSceneMessage, propertiesOf, type GuardResult, type GuardTarget } from './scene-guard.js'
 import { getSceneLibraryItem } from '../library/scene-library.js'
@@ -427,6 +428,34 @@ export class VirviSceneRoom extends Room {
       this.broadcast('user_message', relay, { except: client })
     })
 
+    // ── Scene state (LIV-158) ─────────────────────────────────────────────
+    // Editors write; with the scene's state_writes 'everyone', any visitor's scene code may too. Limited per client.
+    // The change reaches every copy of the scene through the venue bus (scene_state); the sender also gets an ack.
+    for (const type of ['scene_state_set', 'scene_state_delete'] as const) {
+      this.onMessage(type, async (client, message) => {
+        const ref = typeof message?.ref === 'string' ? message.ref.slice(0, 64) : null
+        const ack = (error?: string, text?: string) => client.send('scene_state_ack', { ref, ok: !error, ...(error ? { error, message: text } : {}) })
+        try {
+          if (!this.sceneId) return ack('no_scene', 'This room has no scene')
+          if (!this.relayLimit.take(client.sessionId, 'scene_state')) return ack('rate_limited', 'Too many state changes; slow down')
+          const bad = checkState(message?.key, message?.value, type === 'scene_state_set')
+          if (bad) return ack(bad, STATE_ERROR_MESSAGES[bad])
+          if ((await stateWritesFor(this.sceneId)) !== 'everyone' && !hasScope(await this.getAccess(client), 'scene.edit')) {
+            return ack('forbidden', "Only the scene's editors can change its state")
+          }
+          if (type === 'scene_state_delete') {
+            await deleteSceneState(this.sceneId, message.key)
+            return ack()
+          }
+          const r = await setSceneState(this.sceneId, message.key, message.value)
+          return r.ok ? ack() : ack(r.error, STATE_ERROR_MESSAGES[r.error])
+        } catch (err) {
+          console.error(`[VirviSceneRoom] ${type} failed:`, err)
+          ack('server_error', 'Could not save the state')
+        }
+      })
+    }
+
     // ── Moderator Actions ─────────────────────────────────────────────────
     this.guarded('scene_moderator_message', (client, message) => {
       this.broadcast('scene_moderator_message', message, { except: client })
@@ -477,6 +506,7 @@ export class VirviSceneRoom extends Room {
 
     // Load the active preset and send init data
     await this.sendInitData(client)
+    await this.sendSceneState(client)
 
     await this.sendShowings(client)
 
@@ -767,6 +797,10 @@ export class VirviSceneRoom extends Room {
         }
         return
       }
+      if (e.type === 'state_changed') {
+        this.broadcast('scene_state', { key: e.key, value: e.deleted ? null : e.value, deleted: e.deleted })
+        return
+      }
       if (e.type === 'raffle_changed') {
         this.broadcast('raffle_changed', { raffle: e.raffle })
         return
@@ -832,6 +866,16 @@ export class VirviSceneRoom extends Room {
 
   private getClientMeta(client: Client): ClientMeta | undefined {
     return this.clientMeta.get(client.sessionId)
+  }
+
+  /** The scene's state (LIV-158), right after the preset. */
+  private async sendSceneState(client: Client) {
+    if (!this.sceneId) return
+    try {
+      client.send('scene_state_init', { state: await getSceneState(this.sceneId) })
+    } catch (err) {
+      console.error('[VirviSceneRoom] scene state failed:', err)
+    }
   }
 
   private async sendInitData(client: Client) {

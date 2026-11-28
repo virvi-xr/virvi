@@ -64,6 +64,11 @@ A scene has presets; the live preset's elements (images, video screens, models, 
 | GET/POST | `/api/elements/:elementId/showings` | Yes | A video screen's [scheduled showings](/docs/dashboard/scheduled-showings/) |
 | GET | `/api/scenes/:sceneId/backup.zip` | Yes | A ready-to-deploy Decentraland project of the scene, without Virvi, as a zip (the live preset only; filename in `Content-Disposition`). Needs edit access; an imported scene's own code is included only for its importer and full-access members. Optional `?destination=<id>` (one of the scene's destinations) places a scene built in Virvi there. Errors: `404` (also `destination_not_found`), `403`, `413 backup_too_big` (over 500 MB; the message names the largest files), `422 not_decentraland` (no import and no Decentraland destination), `429 backup_busy`, `504 backup_timeout` |
 
+| GET | `/api/scenes/:sceneId/state` | Yes | The scene's [state](/docs/custom-features/scene-state/): `{ state, writes, limits }`, where `writes` is `staff` or `everyone`. Anyone with a role in the scene |
+| PUT | `/api/scenes/:sceneId/state/:key` | Yes | Set one key: `{ value }` (any JSON, up to 4 KB). Returns `{ key, value }`. Hosts, co-hosts and editors. Errors: `400 bad_key` / `bad_value` / `value_too_large`, `409 too_many_keys` (100 per scene) |
+| DELETE | `/api/scenes/:sceneId/state/:key` | Yes | Delete one key (`204`; `404` if it isn't set) |
+| PUT | `/api/scenes/:sceneId/state-settings` | Yes | Who may change the state from in-world: `{ writes: "staff" }` (editors, the default) or `"everyone"` (every visitor's scene code) |
+
 Changes made through these routes reach players in the scene in real time.
 
 ## Roles and collaborators

@@ -68,6 +68,7 @@ describe('entrypoint schema fallback: scene activity and status page', () => {
     ['Status page', ['status_checks', 'status_incidents', 'status_incident_updates']],
     ['Model stats', ['model_stats']],
     ['Moderation', ['moderation_actions', 'moderation_appeals']],
+    ['Scene state', ['scene_state']],
   ])('%s: creates the tables exactly as schema.ts does, and runs again harmlessly', async (label, tables) => {
     const statements = fallbackBlocks(label)
     await scratch(async () => {
@@ -88,6 +89,17 @@ describe('entrypoint schema fallback: scene activity and status page', () => {
       await db.execute(sql.raw(`ALTER TABLE ${SCHEMA}.analytics_rollup_hourly DROP COLUMN sound`))
       await runFallback(statements)
       expect(await columns(SCHEMA, 'analytics_rollup_hourly')).toEqual(await columns('public', 'analytics_rollup_hourly'))
+      await runFallback(statements)
+    })
+  })
+
+  it('Scene state: adds state_writes to an older scenes table, as schema.ts has it', async () => {
+    const statements = fallbackBlocks('Scene state')
+    await scratch(async () => {
+      await db.execute(sql.raw(`CREATE TABLE ${SCHEMA}.scenes (LIKE public.scenes INCLUDING ALL)`))
+      await db.execute(sql.raw(`ALTER TABLE ${SCHEMA}.scenes DROP COLUMN state_writes`))
+      await runFallback(statements)
+      expect(await columns(SCHEMA, 'scenes')).toEqual(await columns('public', 'scenes'))
       await runFallback(statements)
     })
   })

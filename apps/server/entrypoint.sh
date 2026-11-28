@@ -718,6 +718,12 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE INDEX IF NOT EXISTS scene_activity_scene_time_idx ON scene_activity (scene_id, last_at)\`;
         console.log('[virvi-server] scene activity table ensured');
       } catch(e) { console.log('[virvi-server] scene activity table:', e.message); }
+      // Scene state (LIV-158); matches sceneState and scenes.state_writes
+      try {
+        await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS state_writes TEXT NOT NULL DEFAULT 'staff'\`;
+        await sql\`CREATE TABLE IF NOT EXISTS scene_state (scene_id UUID NOT NULL CONSTRAINT scene_state_scene_id_scenes_id_fk REFERENCES scenes(id) ON DELETE CASCADE, key TEXT NOT NULL, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), CONSTRAINT scene_state_scene_id_key_pk PRIMARY KEY (scene_id, key))\`;
+        console.log('[virvi-server] scene state table ensured');
+      } catch(e) { console.log('[virvi-server] scene state table:', e.message); }
       // Status page (LIV-40); matches statusChecks, statusIncidents, statusIncidentUpdates
       try {
         await sql\`CREATE TABLE IF NOT EXISTS status_checks (component TEXT NOT NULL, minute TIMESTAMPTZ NOT NULL, state TEXT NOT NULL, detail TEXT, CONSTRAINT status_checks_component_minute_pk PRIMARY KEY (component, minute))\`;
