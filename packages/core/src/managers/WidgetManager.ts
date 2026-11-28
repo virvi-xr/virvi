@@ -71,7 +71,7 @@ export class WidgetManager {
 
   /** Whether a listener for `key` should hear about widget `w`. */
   static matches(w: WidgetState, key: string): boolean {
-    return w.customId === key || w.name === key || w.id === key
+    return key === '*' || w.customId === key || w.name === key || w.id === key
   }
 
   private defOf(w: WidgetState): WidgetConfig | undefined {

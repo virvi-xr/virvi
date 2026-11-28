@@ -65,6 +65,18 @@ The Stream panel lists the live preset's video screens. For each one, editors ca
 
 The Hyperfy HUD's Streams panel, the Quest's builder Stream tab and the Vision Pro's Stream tab have the same stream, live and off-image controls. The Quest's Stream tab is on personal headsets only.
 
+## Widgets
+
+In a scene with [widgets](/docs/custom-features/widgets/), hosts, co-hosts and editors get a **Widgets** tab. It lists each widget with its current value, and the change reaches everyone in the scene straight away, the same as changing it on the dashboard:
+
+- **Toggle:** Turn on or Turn off.
+- **Trigger:** Press. Each press counts, so scene code listening with `onWidgetClick` hears every one.
+- **Slider:** -10, -1, +1 and +10, between 0 and 100.
+- **Text** and **Date and time:** type the new value and choose Save. Write a date and time as `YYYY-MM-DD HH:MM`, for example `2026-12-31 20:00`.
+- **Selector:** change its options on the dashboard.
+
+The tab needs `@virvixr/dcl` 2.24.0 or later.
+
 ## Clearing copies
 
 In the Layout panel, an item with copies shows how many (×3) and a **Clear** button. Clear asks first, then removes every copy in one step. The item stays, ready to place again.

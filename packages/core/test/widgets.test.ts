@@ -73,6 +73,10 @@ describe('widgets', () => {
     off()
     sm.handlePresetUpdate({ action: 'update', element: 'widget', id: 'w1', property: 'value', value: false })
     expect(byName).toEqual([false, true])
+    const any: unknown[] = []
+    v.onWidgetChange('*', (value, w) => any.push([w.id, value]))
+    sm.handlePresetUpdate({ action: 'update', element: 'widget', id: 'w1', property: 'value', value: true })
+    expect(any).toEqual([['w1', true]])
     sm.handlePresetChange({ scenePreset: { widgets: [] } })
     expect(del).toHaveBeenCalledTimes(1)
   })

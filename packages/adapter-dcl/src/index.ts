@@ -6,6 +6,7 @@ import { engine, Transform } from '@dcl/sdk/ecs'
 import { DclAdapter } from './DclAdapter'
 import { startVirviAnalytics, getAnalyticsSceneRef } from './analytics.js'
 import { DclHUDRenderer, setSceneActionHandler } from './DclHUDRenderer.js'
+import { widgetRows, withWidgetValue } from './widgets.js'
 import { DclEditMode } from './transform/edit-mode.js'
 import { friendlyEditError, friendlyRenameError, editBlockedMessage, createReconnector, DISCONNECTED } from './edit-errors.js'
 import { applyPresetsChange, friendlyPresetError, nextSwitchFrom, presetsFromScene, type HUDPreset } from './presets.js'
@@ -411,6 +412,9 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
         }),
         // Opens, closes and entry counts (debounced by the server) while the Raffle tab is open
         virvi.onRaffleChanged(() => { if (edits() && renderer?.raffleTabOpen()) void refreshRaffle() }),
+        // Widgets panel (LIV-158): the live preset's widgets, kept current as they change anywhere
+        virvi.onWidgetChange('*', () => renderer?.setWidgets(widgetRows(virvi.listWidgets()))),
+        ((): () => void => { renderer?.setWidgets(widgetRows(virvi.listWidgets())); return () => {} })(),
         () => virvi.events.off('connection_lost', onConnectionLost),
         () => reconnector.stop(),
       ]
@@ -698,6 +702,29 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
         }
 
         // Stream panel (LIV-53): host, co-hosts and editors; the server refuses everyone else
+        // Widgets panel (LIV-158): host, co-hosts and editors set a widget's value; the server refuses everyone else
+        if (action === 'widget_set') {
+          if (!edits() || busy) return
+          busy = true
+          renderer?.setWidgetBusy(true)
+          const elementId = String(data?.elementId)
+          try {
+            const blocked = await editBlockedMessage({ connected: connected(), canEdit: edits, refreshRole })
+            if (blocked) return renderer?.setWidgetsError(blocked)
+            const preset = await activePreset()
+            const element = preset?.elements?.find((el: any) => el.id === elementId)
+            if (!element) throw new Error('HTTP 404: {"error":"Not found"}')
+            await virvi.httpClient.updateElement(elementId, { properties: withWidgetValue(element.properties, data?.value) })
+            renderer?.widgetSaved(elementId)
+          } catch (err) {
+            renderer?.setWidgetsError(friendlyEditError(err, { connected: connected() }))
+          } finally {
+            busy = false
+            renderer?.setWidgetBusy(false)
+          }
+          return
+        }
+
         if (action.startsWith('streams_')) {
           if (!edits()) return
           if (action === 'streams_refresh') {

@@ -719,7 +719,8 @@ export class Virvi {
   // ── Widgets (LIV-158) ──────────────────────────────────────────────────
 
   /**
-   * Calls `listener(value, widget)` whenever widget `id` changes: its custom id, its name, or its element id. It also
+   * Calls `listener(value, widget)` whenever widget `id` changes: its custom id, its name, or its element id ('*' for
+   * every widget). It also
    * fires once the widget arrives with the scene (and with `undefined` when it's removed). Returns an unsubscribe.
    */
   onWidgetChange(id: string, listener: (value: unknown, widget: WidgetState) => void): () => void {

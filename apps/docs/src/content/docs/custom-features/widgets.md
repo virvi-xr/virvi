@@ -32,6 +32,8 @@ virvi.listWidgets()                   // every widget: id, customId, name, type,
 - Each press of a **Trigger** on the dashboard stores the press time, so `onWidgetClick` fires once per press.
 - The `widgets` option's `init` runs when the widget first appears, `update(value)` on each change, and `delete` when it goes.
 
+Hosts, co-hosts and editors can also change widgets in-world, from the HUD's **Widgets** tab (see [In-World HUD](/docs/dashboard/in-world-hud/#widgets)). `onWidgetChange('*', …)` listens to every widget.
+
 Scenes on 2.23.0 or older don't pass widgets to scene code: update `@virvixr/dcl` and redeploy. The Hyperfy app doesn't support widgets yet.
 
 ## Control types

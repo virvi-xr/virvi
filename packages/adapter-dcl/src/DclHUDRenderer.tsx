@@ -8,6 +8,7 @@
  *   idle → authenticating → scene_setup → connected → management panels
  */
 
+import { type HUDWidget, parseDatetime, sliderValue, TYPE_LABEL, widgetValueLabel, WIDGET_TEXT_MAX } from './widgets.js'
 import ReactEcs, { ReactEcsRenderer, UiEntity, Label, Input } from '@dcl/sdk/react-ecs'
 import { copyName, nextSwitchText, presetLabel, PRESET_NAME_MAX, type HUDNextSwitch, type HUDPreset } from './presets.js'
 import { clearCopiesPrompt, type HUDLayoutItem } from './layout.js'
@@ -27,7 +28,7 @@ import type {
   BudgetLimits,
   Scene,
 } from '@virvixr/shared'
-import { HUDPanelType } from '@virvixr/shared'
+import { HUDPanelType, WidgetControlType } from '@virvixr/shared'
 import type { EditArea, EntityHandle, WorldStatus } from '@virvixr/shared'
 import { tenantAreaLine } from './tenant-area.js'
 import type { VirviConnectionState, HUDMediaStatus } from '@virvixr/core'
@@ -136,6 +137,11 @@ interface HUDState {
   offImagePicking: string | null
   streamImages: HUDImage[]
   streamBusy: boolean
+  // Widgets panel (LIV-158)
+  widgets: HUDWidget[]
+  widgetDrafts: Record<string, string>
+  widgetsError: string | null
+  widgetBusy: boolean
   /** The Schedule-mode screen whose showings list is open (LIV-87); its showings, null while loading. */
   showingsFor: string | null
   showings: HUDShowing[] | null
@@ -230,6 +236,10 @@ const state: HUDState = {
   offImagePicking: null,
   streamImages: [],
   streamBusy: false,
+  widgets: [],
+  widgetDrafts: {},
+  widgetsError: null,
+  widgetBusy: false,
   showingsFor: null,
   showings: null,
   showingsNote: null,
@@ -750,6 +760,8 @@ function NavBar() {
     ...panels,
     ...(hasRoles ? [{ type: HUDPanelType.ROLES, label: 'Roles' }] : []),
     ...(canEditAll() ? [{ type: HUDPanelType.RAFFLE, label: 'Raffle' }] : []),
+    // Only in scenes that have widgets: most don't
+    ...(canEditAll() && state.widgets.length > 0 ? [{ type: HUDPanelType.WIDGETS, label: 'Widgets' }] : []),
     // The HUD only renders the NavBar for connected role holders, so every role gets Stats
     { type: ACTION_STATS, label: 'Stats' },
   ]
@@ -793,6 +805,9 @@ function NavBar() {
               state.showingsFor = null
               state.offImagePicking = null
               if (opened && canEditAll()) onSceneAction?.('streams_refresh')
+            } else if (p.type === HUDPanelType.WIDGETS) {
+              state.widgetsError = null
+              state.widgetDrafts = {}
             } else if (p.type === HUDPanelType.RAFFLE) {
               if (opened) onSceneAction?.('raffle_refresh')
             } else if (p.type === HUDPanelType.EVENT_CONTROL) {
@@ -1608,6 +1623,86 @@ function StreamControlPanel() {
 }
 
 // ---------------------------------------------------------------------------
+// Panel: Widgets (LIV-158)
+// ---------------------------------------------------------------------------
+
+function setWidget(w: HUDWidget, value: unknown) {
+  if (!state.widgetBusy) onSceneAction?.('widget_set', { elementId: w.id, value })
+}
+
+function WidgetControl({ w }: { w: HUDWidget }) {
+  const busy = state.widgetBusy
+  switch (w.type) {
+    case WidgetControlType.TOGGLE:
+      return <Button label={w.value ? 'Turn off' : 'Turn on'} color={w.value ? C.danger : C.success} width={90} height={24} fontSize={10}
+        onPress={() => setWidget(w, !w.value)} />
+    case WidgetControlType.TRIGGER:
+      // Each press stores its time, like the dashboard, so scene code hears every press
+      return <Button label="Press" color={C.accent} width={90} height={24} fontSize={10} onPress={() => setWidget(w, Date.now())} />
+    case WidgetControlType.SLIDER: {
+      const v = sliderValue(w.value)
+      return (
+        <UiEntity uiTransform={{ flexDirection: 'row' }}>
+          {[-10, -1, 1, 10].map((d) => (
+            <Button key={d} label={d > 0 ? `+${d}` : String(d)} width={36} height={24} fontSize={10}
+              onPress={() => { const n = Math.min(100, Math.max(0, v + d)); if (n !== v) setWidget(w, n) }} />
+          ))}
+        </UiEntity>
+      )
+    }
+    case WidgetControlType.TEXT:
+    case WidgetControlType.DATETIME: {
+      const isDate = w.type === WidgetControlType.DATETIME
+      return (
+        <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Input uiTransform={{ width: 150, height: 24, margin: { right: 4 } }} uiBackground={{ color: C.bgLight }} color={C.text}
+            placeholderColor={C.textMuted} fontSize={10} placeholder={isDate ? 'YYYY-MM-DD HH:MM' : 'New value'}
+            value={state.widgetDrafts[w.id] ?? ''}
+            onChange={(value) => { state.widgetDrafts = { ...state.widgetDrafts, [w.id]: value.slice(0, WIDGET_TEXT_MAX) } }} />
+          <Button label="Save" width={50} height={24} fontSize={10} onPress={() => {
+            if (busy) return
+            const text = state.widgetDrafts[w.id] ?? ''
+            if (isDate) {
+              const at = parseDatetime(text)
+              if (!at) { state.widgetsError = 'Write the date and time as YYYY-MM-DD HH:MM, for example 2026-12-31 20:00'; return }
+              setWidget(w, at)
+            } else setWidget(w, text)
+          }} />
+        </UiEntity>
+      )
+    }
+    default:
+      return <Label value="Change it on the dashboard" fontSize={10} color={C.textMuted} uiTransform={{ height: 24 }} />
+  }
+}
+
+function WidgetsPanel() {
+  return (
+    <UiEntity uiTransform={{ width: '100%', flexDirection: 'column' }}>
+      <PanelHeader title="Widgets" subtitle="The scene's controls: changes reach everyone straight away" onClose={() => { state.activePanel = null }} />
+      <UiEntity uiTransform={{ padding: 8, flexDirection: 'column' }}>
+        {state.widgetsError && (
+          <Label value={state.widgetsError} fontSize={10} color={C.danger} textAlign="top-left" uiTransform={{ width: '100%', height: 28 }} />
+        )}
+        {state.widgets.length === 0 && <Label value="No widgets in this scene" fontSize={11} color={C.textDim} uiTransform={{ height: 24 }} />}
+        {state.widgets.map((w) => (
+          <UiEntity key={w.id} uiTransform={{ width: '100%', flexDirection: 'column', padding: 8, margin: { bottom: 2 } }} uiBackground={{ color: C.bgCard }}>
+            <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', height: 20 }}>
+              <Label value={w.name} fontSize={11} color={C.text} />
+              <Label value={TYPE_LABEL[w.type]} fontSize={9} color={C.textMuted} uiTransform={{ margin: { left: 8 } }} />
+            </UiEntity>
+            <Label value={widgetValueLabel(w)} fontSize={10} color={C.textDim} textAlign="middle-left" uiTransform={{ width: '100%', height: 18 }} />
+            <UiEntity uiTransform={{ flexDirection: 'row', margin: { top: 4 } }}>
+              <WidgetControl w={w} />
+            </UiEntity>
+          </UiEntity>
+        ))}
+      </UiEntity>
+    </UiEntity>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Panel: World Status
 // ---------------------------------------------------------------------------
 
@@ -1857,6 +1952,7 @@ function VirviHUD() {
                 {state.activePanel === HUDPanelType.NOTIFICATIONS && <NotificationsPanel />}
                 {state.activePanel === HUDPanelType.ROLES && <RolesPanel />}
                 {state.activePanel === HUDPanelType.RAFFLE && canEditAll() && <RafflePanel />}
+                {state.activePanel === HUDPanelType.WIDGETS && canEditAll() && <WidgetsPanel />}
               </UiEntity>
             )
           }
@@ -1986,6 +2082,7 @@ export class DclHUDRenderer implements HUDRenderer {
     if (role === 'viewer') state.updateNotice = null
     if (role !== 'host' && role !== 'cohost' && state.activePanel === HUDPanelType.ROLES) state.activePanel = null
     if (role === 'viewer' && state.activePanel === HUDPanelType.RAFFLE) state.activePanel = null
+    if (role === 'viewer' && state.activePanel === HUDPanelType.WIDGETS) state.activePanel = null
   }
 
   setUpdateNotice(notice: string | null): void {
@@ -2047,6 +2144,28 @@ export class DclHUDRenderer implements HUDRenderer {
 
   setStreamBusy(busy: boolean): void {
     state.streamBusy = busy
+  }
+
+  // --- Widgets panel (LIV-158) ---
+
+  setWidgets(widgets: HUDWidget[]): void {
+    state.widgets = widgets
+    if (widgets.length === 0 && state.activePanel === HUDPanelType.WIDGETS) state.activePanel = null
+  }
+
+  setWidgetsError(msg: string | null): void {
+    state.widgetsError = msg
+  }
+
+  setWidgetBusy(busy: boolean): void {
+    state.widgetBusy = busy
+  }
+
+  /** A text or date value was saved: clear its draft. */
+  widgetSaved(elementId: string): void {
+    const { [elementId]: _gone, ...rest } = state.widgetDrafts
+    state.widgetDrafts = rest
+    state.widgetsError = null
   }
 
   /** Open a screen's showings list (null shows "Loading…"), or fill it in. */
