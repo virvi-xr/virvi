@@ -25,6 +25,7 @@ import {
 import { SceneRoles } from './SceneRoles'
 import { SceneActivity } from './SceneActivity'
 import { SceneStatePanel } from './SceneStatePanel'
+import { parseSelectorOptions, selectorChoice, selectorOptions } from '@virvixr/shared'
 import { SceneRules } from './SceneRules'
 import { SceneHealth } from './SceneHealth'
 import { Raffles } from './Raffles'
@@ -1106,6 +1107,41 @@ function SoundElementEditor({ element, onUpdateElement, onUpdateInstance, onDele
 }
 
 // ---------------------------------------------------------------------------
+// Selector: its options, and the one chosen (LIV-196)
+// ---------------------------------------------------------------------------
+
+function SelectorEditor({ id, properties, onChange }: { id: string; properties: Record<string, any>; onChange: (patch: Record<string, any>) => void }) {
+  const options = selectorOptions(properties)
+  const chosen = selectorChoice(properties)
+  const [text, setText] = useState(options.join(', '))
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <label htmlFor={`opts-${id}`} className="text-xs text-gray-500">Options (comma-separated)</label>
+        <input id={`opts-${id}`} value={text} onChange={e => setText(e.target.value)}
+          onBlur={() => {
+            const next = parseSelectorOptions(text)
+            setText(next.join(', '))
+            // An option that's gone can't stay chosen
+            onChange({ options: next, value: chosen && next.includes(chosen) ? chosen : '' })
+          }}
+          placeholder="Film 1, Film 2, Film 3"
+          className="w-96 max-w-full rounded border border-gray-800 bg-gray-950 px-3 py-1.5 text-sm text-white outline-none focus:border-blue-400" />
+      </div>
+      <div className="flex flex-col gap-1">
+        <label htmlFor={`chosen-${id}`} className="text-xs text-gray-500">Chosen</label>
+        <select id={`chosen-${id}`} value={chosen ?? ''} disabled={!options.length}
+          onChange={e => onChange({ options, value: e.target.value })}
+          className="w-64 rounded border border-gray-800 bg-gray-950 px-3 py-1.5 text-sm text-white outline-none focus:border-blue-400">
+          <option value="">Nothing chosen</option>
+          {options.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Widget Value Editor (renders appropriate input based on controlType)
 // ---------------------------------------------------------------------------
 
@@ -1120,8 +1156,6 @@ function WidgetValueEditor({ controlType, value, onChange }: { controlType: numb
       )
     case 2: // Text
       return <TextInput label="Value" value={value || ''} onChange={onChange} />
-    case 3: // Selector
-      return <TextInput label="Options (comma-separated)" value={value || ''} onChange={onChange} />
     case 4: // DateTime
       return (
         <div className="flex flex-col gap-1">
@@ -1200,7 +1234,9 @@ function WidgetElementEditor({ element, onUpdateElement, onDelete }: {
         </select>
       </div>
 
-      <WidgetValueEditor controlType={props.controlType ?? 0} value={props.value} onChange={v => updateProp('value', v)} />
+      {(props.controlType ?? 0) === 3
+        ? <SelectorEditor id={element.id} properties={props} onChange={patch => onUpdateElement(element.id, { properties: { ...props, ...patch } })} />
+        : <WidgetValueEditor controlType={props.controlType ?? 0} value={props.value} onChange={v => updateProp('value', v)} />}
 
       <NumberInput label="Display Order" value={props.order ?? 0} onChange={v => updateProp('order', v)} />
     </div>

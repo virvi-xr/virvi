@@ -73,7 +73,7 @@ In a scene with [widgets](/docs/custom-features/widgets/), hosts, co-hosts and e
 - **Trigger:** Press. Each press counts, so scene code listening with `onWidgetClick` hears every one.
 - **Slider:** -10, -1, +1 and +10, between 0 and 100.
 - **Text** and **Date and time:** type the new value and choose Save. Write a date and time as `YYYY-MM-DD HH:MM`, for example `2026-12-31 20:00`.
-- **Selector:** change its options on the dashboard.
+- **Selector:** a button for each option (up to 8); the chosen one is highlighted. Its options are set on the dashboard.
 
 The tab needs `@virvixr/dcl` 2.24.0 or later.
 

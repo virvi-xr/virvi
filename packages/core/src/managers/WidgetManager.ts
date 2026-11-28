@@ -1,4 +1,4 @@
-import { WidgetControlType, type VirviStorage, type WidgetConfig, type TransformData } from '@virvixr/shared'
+import { WidgetControlType, selectorOptions, type VirviStorage, type WidgetConfig, type TransformData } from '@virvixr/shared'
 import type { ListedInstance } from './transform-ops.js'
 import type { EventBus } from '../events/EventBus.js'
 
@@ -17,6 +17,8 @@ export interface WidgetState {
   name: string
   type: WidgetControlType
   value: unknown
+  /** A Selector's options (LIV-196); empty for other types. Its value is the chosen one. */
+  options: string[]
   enabled: boolean
 }
 
@@ -34,6 +36,7 @@ const stateOf = (raw: Raw): WidgetState | null => {
     name: typeof raw.name === 'string' ? raw.name : '',
     type: Number.isInteger(type) && type >= 0 && type <= 6 ? (type as WidgetControlType) : WidgetControlType.NONE,
     value: pick('value'),
+    options: Number.isInteger(type) && type === WidgetControlType.SELECTOR ? selectorOptions({ options: pick('options'), value: pick('value') }) : [],
     enabled: raw.enabled !== false,
   }
 }
@@ -138,6 +141,7 @@ export class WidgetManager {
       ...(raw.name !== undefined ? { name: w.name } : {}),
       ...(raw.customId !== undefined ? { customId: w.customId } : {}),
       ...(w.value !== undefined ? { value: w.value } : {}),
+      ...((raw as Raw).options !== undefined || ((raw.properties ?? {}) as Raw).options !== undefined ? { options: w.options } : {}),
       ...(((raw as Raw).controlType ?? ((raw.properties ?? {}) as Raw).controlType) !== undefined ? { type: w.type } : {}),
     } : w
     this.set(merged, !!prev)

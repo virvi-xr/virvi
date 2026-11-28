@@ -8,7 +8,7 @@
  *   idle → authenticating → scene_setup → connected → management panels
  */
 
-import { type HUDWidget, parseDatetime, sliderValue, TYPE_LABEL, widgetValueLabel, WIDGET_TEXT_MAX } from './widgets.js'
+import { type HUDWidget, HUD_SELECTOR_BUTTONS, parseDatetime, sliderValue, TYPE_LABEL, widgetValueLabel, WIDGET_TEXT_MAX } from './widgets.js'
 import ReactEcs, { ReactEcsRenderer, UiEntity, Label, Input } from '@dcl/sdk/react-ecs'
 import { copyName, nextSwitchText, presetLabel, PRESET_NAME_MAX, type HUDNextSwitch, type HUDPreset } from './presets.js'
 import { clearCopiesPrompt, type HUDLayoutItem } from './layout.js'
@@ -1671,6 +1671,19 @@ function WidgetControl({ w }: { w: HUDWidget }) {
         </UiEntity>
       )
     }
+    case WidgetControlType.SELECTOR:
+      if (!w.options.length) return <Label value="Add its options on the dashboard" fontSize={10} color={C.textMuted} uiTransform={{ height: 24 }} />
+      return (
+        <UiEntity uiTransform={{ flexDirection: 'column', width: '100%' }}>
+          {w.options.slice(0, HUD_SELECTOR_BUTTONS).map((o) => (
+            <Button key={o} label={o} width={240} height={24} fontSize={10} color={w.value === o ? C.accent : undefined}
+              onPress={() => { if (w.value !== o) setWidget(w, o) }} />
+          ))}
+          {w.options.length > HUD_SELECTOR_BUTTONS && (
+            <Label value={`+${w.options.length - HUD_SELECTOR_BUTTONS} more: choose them on the dashboard`} fontSize={9} color={C.textMuted} uiTransform={{ height: 16 }} />
+          )}
+        </UiEntity>
+      )
     default:
       return <Label value="Change it on the dashboard" fontSize={10} color={C.textMuted} uiTransform={{ height: 24 }} />
   }

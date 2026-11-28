@@ -2,15 +2,15 @@
  * The HUD's Widgets panel (LIV-158): the live preset's widgets, and what each control can change in-world.
  * Pure (no @dcl/sdk), so it is unit-tested. Matches the dashboard's widget editor (apps/web scenes/[sceneId]/client.tsx).
  */
-import { WidgetControlType } from '@virvixr/shared'
+import { WidgetControlType, selectorOptions } from '@virvixr/shared'
 
-export interface HUDWidget { id: string; name: string; type: WidgetControlType; value: unknown }
+export interface HUDWidget { id: string; name: string; type: WidgetControlType; value: unknown; options: string[] }
 
 /** The ones worth showing, by name. "None" widgets have no control. */
-export function widgetRows(list: Array<{ id: string; name: string; type: WidgetControlType; value: unknown; enabled?: boolean }>): HUDWidget[] {
+export function widgetRows(list: Array<{ id: string; name: string; type: WidgetControlType; value: unknown; options?: string[]; enabled?: boolean }>): HUDWidget[] {
   return list
     .filter((w) => w.type !== WidgetControlType.NONE && w.enabled !== false)
-    .map((w) => ({ id: w.id, name: w.name || 'Widget', type: w.type, value: w.value }))
+    .map((w) => ({ id: w.id, name: w.name || 'Widget', type: w.type, value: w.value, options: w.options ?? [] }))
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 
@@ -34,14 +34,18 @@ export function parseDatetime(text: string): string | null {
 }
 
 /** The value as the panel shows it. */
-export function widgetValueLabel(w: Pick<HUDWidget, 'type' | 'value'>): string {
+export function widgetValueLabel(w: Pick<HUDWidget, 'type' | 'value'> & { options?: string[] }): string {
   switch (w.type) {
     case WidgetControlType.TOGGLE: return w.value ? 'On' : 'Off'
     case WidgetControlType.SLIDER: return String(sliderValue(w.value))
     case WidgetControlType.TEXT: return typeof w.value === 'string' && w.value ? w.value : '(empty)'
     case WidgetControlType.DATETIME: return typeof w.value === 'string' && w.value ? w.value.replace('T', ' ') : 'Not set'
     case WidgetControlType.TRIGGER: return typeof w.value === 'number' ? 'Pressed before' : 'Not pressed yet'
-    case WidgetControlType.SELECTOR: return typeof w.value === 'string' && w.value ? `Options: ${w.value}` : 'No options'
+    case WidgetControlType.SELECTOR: {
+      const options = selectorOptions({ options: w.options, value: w.value })
+      if (!options.length) return 'No options yet: add them on the dashboard'
+      return typeof w.value === 'string' && options.includes(w.value) ? `Chosen: ${w.value}` : 'Nothing chosen'
+    }
     default: return ''
   }
 }
@@ -56,10 +60,15 @@ export const TYPE_LABEL: Record<WidgetControlType, string> = {
   [WidgetControlType.SLIDER]: 'Slider',
 }
 
-/** The element's properties with a new value; PUT /api/elements replaces properties whole. */
+/** The element's properties with a new value; PUT /api/elements replaces properties whole. A Selector keeps its options. */
 export function withWidgetValue(properties: Record<string, unknown> | null | undefined, value: unknown): Record<string, unknown> {
-  return { ...(properties ?? {}), value }
+  const p = properties ?? {}
+  if (Number(p.controlType) === WidgetControlType.SELECTOR) return { ...p, options: selectorOptions(p), value }
+  return { ...p, value }
 }
+
+/** How many option buttons the HUD shows before pointing to the dashboard. */
+export const HUD_SELECTOR_BUTTONS = 8
 
 /** A text box's value can be up to this long in-world (the dashboard has no cap; keep chat-sized). */
 export const WIDGET_TEXT_MAX = 500

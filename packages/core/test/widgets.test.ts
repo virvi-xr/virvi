@@ -43,6 +43,18 @@ describe('widgets', () => {
     expect(sm.widgets.find('Volume')).toMatchObject({ id: 'w9', type: WidgetControlType.SLIDER, value: 0.4 })
   })
 
+  it("a Selector's options come with it, from the new shape or an old comma list", () => {
+    const { sm } = setup()
+    sm.handlePresetUpdate({ action: 'init', scenePreset: { widgets: [
+      { sk: 'a', name: 'Film', properties: { controlType: WidgetControlType.SELECTOR, options: ['One', 'Two'], value: 'Two' } },
+      { sk: 'b', name: 'Old', properties: { controlType: WidgetControlType.SELECTOR, value: 'x, y' } },
+      { sk: 'c', name: 'Lights', properties: { controlType: WidgetControlType.TOGGLE, value: true } },
+    ] } })
+    expect(sm.widgets.find('Film')).toMatchObject({ options: ['One', 'Two'], value: 'Two' })
+    expect(sm.widgets.find('Old')!.options).toEqual(['x', 'y'])
+    expect(sm.widgets.find('Lights')!.options).toEqual([])
+  })
+
   it('a Trigger fires onWidgetClick when pressed, not when it first loads', () => {
     const { sm, events } = setup()
     const clicks: string[] = []

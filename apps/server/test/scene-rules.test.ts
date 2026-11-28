@@ -281,3 +281,31 @@ describe('slider brightness rules', () => {
     expect(await em(screen.id)).toBe(0.85)
   })
 })
+
+describe('selector rules: a video picker', () => {
+  let app: Awaited<ReturnType<typeof testApp>>
+  beforeEach(async () => { await resetDb(); app = await testApp() })
+  afterEach(async () => { await app.close() })
+
+  it('choosing a film shows its screen and hides the others; nothing chosen hides them all', async () => {
+    const owner = await createUser()
+    const { preset } = await createScene(owner)
+    const picker = await createElement(preset.id, { type: 'widget', name: 'Film', properties: { controlType: 3, options: ['One', 'Two'], value: '' } })
+    const lights = await createElement(preset.id, { type: 'widget', name: 'Lights', properties: { controlType: 1, value: false } })
+    const s1 = await createElement(preset.id, { type: 'video', name: 'Screen 1' })
+    const s2 = await createElement(preset.id, { type: 'video', name: 'Screen 2' })
+    const choose = { type: 'choose', choices: [{ option: 'One', elementId: s1.id }, { option: 'Two', elementId: s2.id }] }
+    const post = (widgetId: string, actions: unknown) => app.inject({ method: 'POST', url: `/api/presets/${preset.id}/rules`, headers: as(owner), payload: { trigger: { type: 'widget', widgetId, when: 'change' }, actions } as any })
+    expect((await post(lights.id, [choose])).json().error).toBe('bad_actions')
+    expect((await post(picker.id, [{ type: 'choose', choices: [{ option: 'One', elementId: lights.id }] }])).json().error).toBe('bad_actions')
+    expect((await post(picker.id, [choose])).statusCode).toBe(201)
+    const pick = (value: string) => app.inject({ method: 'PUT', url: `/api/elements/${picker.id}`, headers: as(owner), payload: { properties: { controlType: 3, options: ['One', 'Two'], value } } })
+    const on = async (id: string) => (await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, id) }))!.enabled
+    await pick('Two')
+    expect([await on(s1.id), await on(s2.id)]).toEqual([false, true])
+    await pick('One')
+    expect([await on(s1.id), await on(s2.id)]).toEqual([true, false])
+    await pick('')
+    expect([await on(s1.id), await on(s2.id)]).toEqual([false, false])
+  })
+})

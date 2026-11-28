@@ -41,3 +41,4 @@ export * from './privacy.js'
 export * from './edit-areas.js'
 export * from './notification-groups.js'
 export * from './volume.js';
+export * from './selector.js';

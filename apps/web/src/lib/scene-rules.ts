@@ -5,12 +5,16 @@ export type RuleWhen = 'on' | 'off' | 'press' | 'change'
 export type RuleTrigger = { type: 'widget'; widgetId: string; when: RuleWhen } | { type: 'time'; widgetId: string; timezone: string } | { type: 'click'; elementId: string }
 /** What the form picks: a widget trigger, or 'time' for a Date and time widget's value arriving. */
 export type DraftWhen = RuleWhen | 'time' | 'click'
-export type RuleAction = { type: 'show' | 'hide' | 'toggle' | 'volume' | 'brightness'; elementId: string } | { type: 'preset'; presetId: string }
+export type RuleAction =
+  | { type: 'show' | 'hide' | 'toggle' | 'volume' | 'brightness'; elementId: string }
+  | { type: 'preset'; presetId: string }
+  | { type: 'choose'; choices: { option: string; elementId: string }[] }
 export interface SceneRule { id: string; presetId: string; name: string; enabled: boolean; trigger: RuleTrigger; actions: RuleAction[] }
 
 export const TOGGLE = 1
 export const DATETIME = 4
 export const TRIGGER = 5
+export const SELECTOR = 3
 export const SLIDER = 6
 export const ACTIONS_PER_RULE = 10
 
@@ -39,6 +43,7 @@ export function describeRule(rule: Pick<SceneRule, 'trigger' | 'actions'>, eleme
   const t = rule.trigger
   const steps = rule.actions.map((a) => {
     if (a.type === 'preset') return `switch to the preset ${pr(a.presetId)}`
+    if (a.type === 'choose') return `show ${a.choices.map((c) => `${el(c.elementId)} for ${c.option}`).join(', ')} (and hide the others)`
     if (a.type === 'volume') return `set the volume of ${el(a.elementId)} to the slider`
     if (a.type === 'brightness') return `set the brightness of ${el(a.elementId)} to the slider`
     // A toggle action flips it: hidden items appear, shown ones go

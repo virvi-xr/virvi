@@ -1,7 +1,8 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
-import { ACTIONS_PER_RULE, CLICKABLE, ITEM_WHEN, SLIDER, describeRule, volumeTargets, brightnessTargets, localTimeZone, ruleTargets, timeZones, triggerFor, whenChoices, type DraftWhen, type RuleAction, type SceneRule } from '@/lib/scene-rules'
+import { selectorOptions } from '@virvixr/shared'
+import { ACTIONS_PER_RULE, CLICKABLE, ITEM_WHEN, SELECTOR, SLIDER, describeRule, volumeTargets, brightnessTargets, localTimeZone, ruleTargets, timeZones, triggerFor, whenChoices, type DraftWhen, type RuleAction, type SceneRule } from '@/lib/scene-rules'
 
 interface El { id: string; name: string; type: string; properties?: any }
 interface Preset { id: string; name: string }
@@ -54,6 +55,9 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
   }
   // A volume action takes the slider's value: only offered for a Slider's change
   const fromSlider = !!draft && !isItem(draft.widgetId) && widgetType(draft.widgetId) === SLIDER
+  const fromSelector = !!draft && !isItem(draft.widgetId) && widgetType(draft.widgetId) === SELECTOR
+  const selectorOpts = draft && fromSelector ? selectorOptions(widgets.find((w) => w.id === draft.widgetId)?.properties) : []
+  const chooseAction = (): RuleAction => ({ type: 'choose', choices: selectorOpts.map((o) => ({ option: o, elementId: targets[0]?.id ?? '' })) })
   const setAction = (i: number, a: RuleAction) => setDraft((d) => d && { ...d, actions: d.actions.map((x, j) => (j === i ? a : x)) })
 
   return (
@@ -78,7 +82,11 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
               onChange={(e) => {
                 const id = e.target.value
                 const slider = !isItem(id) && widgetType(id) === SLIDER
-                const actions = slider ? draft.actions : draft.actions.map((a) => (a.type === 'volume' || a.type === 'brightness' ? { type: 'show' as const, elementId: targets[0]?.id ?? a.elementId } : a))
+                const selector = !isItem(id) && widgetType(id) === SELECTOR
+                const actions = draft.actions.map((a): RuleAction =>
+                  (!slider && (a.type === 'volume' || a.type === 'brightness')) || (!selector && a.type === 'choose')
+                    ? { type: 'show', elementId: targets[0]?.id ?? '' }
+                    : a)
                 setDraft({ ...draft, widgetId: id, when: choicesFor(id)[0].value, actions })
               }}>
               {widgets.length > 0 && <optgroup label="Widgets">{widgets.map((w) => <option key={w.id} value={w.id}>{w.name || 'Widget'}</option>)}</optgroup>}
@@ -99,6 +107,7 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
               <select aria-label={`Action ${i + 1}`} className={SELECT} value={a.type} onChange={(e) => {
                 const type = e.target.value as RuleAction['type']
                 if (type === 'preset') return setAction(i, { type, presetId: presets[0]?.id ?? '' })
+                if (type === 'choose') return setAction(i, chooseAction())
                 const pool = poolFor(type)
                 const keep = 'elementId' in a && pool.some((t) => t.id === a.elementId) ? a.elementId : pool[0]?.id ?? ''
                 setAction(i, { type, elementId: keep })
@@ -107,10 +116,23 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
                 <option value="hide" disabled={!targets.length}>Hide</option>
                 <option value="toggle" disabled={!targets.length}>Show or hide (switch)</option>
                 <option value="preset">Switch to the preset</option>
+                {fromSelector && <option value="choose" disabled={!targets.length || !selectorOpts.length}>Show the item for the chosen option</option>}
                 {fromSlider && <option value="volume" disabled={!loud.length}>Set the volume from the slider</option>}
                 {fromSlider && <option value="brightness" disabled={!bright.length}>Set the brightness from the slider (Decentraland)</option>}
               </select>
-              {a.type === 'preset' ? (
+              {a.type === 'choose' ? (
+                <span className="flex w-full flex-col gap-1 pl-6">
+                  {a.choices.map((c, j) => (
+                    <span key={c.option} className="flex items-center gap-2">
+                      <span className="w-32 truncate text-gray-400">{c.option}</span>
+                      <select aria-label={`Item for ${c.option}`} className={SELECT} value={c.elementId}
+                        onChange={(e) => setAction(i, { type: 'choose', choices: a.choices.map((x, k) => (k === j ? { ...x, elementId: e.target.value } : x)) })}>
+                        {targets.map((t) => <option key={t.id} value={t.id}>{t.name || t.type}</option>)}
+                      </select>
+                    </span>
+                  ))}
+                </span>
+              ) : a.type === 'preset' ? (
                 <select aria-label={`Preset for action ${i + 1}`} className={SELECT} value={a.presetId} onChange={(e) => setAction(i, { type: 'preset', presetId: e.target.value })}>
                   {presets.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>

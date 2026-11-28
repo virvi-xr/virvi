@@ -31,6 +31,8 @@ export type RuleAction =
   | { type: 'volume'; elementId: string }
   /** An image's or screen's brightness (emission) follows the Slider (0 to 100 → 0 to 1). Decentraland draws it. */
   | { type: 'brightness'; elementId: string }
+  /** A Selector's choice shows its item and hides the other options' items: a video picker, say. */
+  | { type: 'choose'; choices: { option: string; elementId: string }[] }
 export interface RuleInput { name?: unknown; enabled?: unknown; trigger?: unknown; actions?: unknown }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -40,7 +42,9 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stri
 const WIDGET_TOGGLE = 1
 const WIDGET_DATETIME = 4
 const WIDGET_TRIGGER = 5
+const WIDGET_SELECTOR = 3
 const WIDGET_SLIDER = 6
+export const CHOICES_MAX = 50
 /** What a volume action can set. */
 const HAS_VOLUME = new Set(['sound', 'video'])
 /** What a brightness action can set. */
@@ -123,12 +127,21 @@ export async function checkRule(presetId: string, sceneId: string, input: RuleIn
           return bad('bad_actions', a.type === 'volume' ? 'Volume works on sounds and video screens of this preset' : 'Brightness works on images and video screens of this preset')
         }
         actions.push({ type: a.type, elementId: a.elementId })
+      } else if (a && a.type === 'choose' && Array.isArray(a.choices)) {
+        if (!a.choices.length || a.choices.length > CHOICES_MAX) return bad('bad_actions', `Give each option an item, up to ${CHOICES_MAX}`)
+        const choices: { option: string; elementId: string }[] = []
+        for (const c of a.choices) {
+          const el = c && typeof c.elementId === 'string' ? byId.get(c.elementId) : undefined
+          if (!c || typeof c.option !== 'string' || !c.option.trim() || !el || el.type === 'widget') return bad('bad_actions', 'Each option needs an item of this preset')
+          choices.push({ option: c.option.trim(), elementId: c.elementId })
+        }
+        actions.push({ type: 'choose', choices })
       } else if (a && a.type === 'preset' && typeof a.presetId === 'string' && UUID.test(a.presetId)) {
         const p = await db.query.scenePresets.findFirst({ where: and(eq(scenePresets.id, a.presetId), eq(scenePresets.sceneId, sceneId)), columns: { id: true } })
         if (!p) return bad('bad_actions', "Switching presets works with this scene's presets")
         actions.push({ type: 'preset', presetId: a.presetId })
       } else {
-        return bad('bad_actions', "An action is { type: 'show' | 'hide' | 'toggle' | 'volume' | 'brightness', elementId } or { type: 'preset', presetId }")
+        return bad('bad_actions', "An action is { type: 'show' | 'hide' | 'toggle' | 'volume' | 'brightness', elementId }, { type: 'choose', choices: [{ option, elementId }] } or { type: 'preset', presetId }")
       }
     }
     out.actions = actions
@@ -139,6 +152,14 @@ export async function checkRule(presetId: string, sceneId: string, input: RuleIn
     const w = t && t.type === 'widget' ? byId.get(t.widgetId) : undefined
     if (!w || Number((w.properties as Record<string, unknown> | null)?.controlType ?? 0) !== WIDGET_SLIDER) {
       return bad('bad_actions', 'Volume and brightness follow a Slider: start the rule from a Slider changing')
+    }
+  }
+  // Choosing follows a Selector
+  if (out.actions?.some((a) => a.type === 'choose')) {
+    const t = out.trigger
+    const w = t && t.type === 'widget' ? byId.get(t.widgetId) : undefined
+    if (!w || Number((w.properties as Record<string, unknown> | null)?.controlType ?? 0) !== WIDGET_SELECTOR) {
+      return bad('bad_actions', 'Showing the chosen item follows a Selector: start the rule from a Selector changing')
     }
   }
   return out
@@ -196,6 +217,14 @@ async function runActions(sceneId: string, presetId: string, rule: typeof sceneR
 }
 
 async function runAction(sceneId: string, presetId: string, a: RuleAction, ruleName: string, elementChanged: ElementChangedHook, actor: ActivityActor, value?: unknown): Promise<void> {
+  if (a.type === 'choose') {
+    // An item listed for several options shows when any of them is chosen; nothing chosen hides them all
+    const shown = new Set(a.choices.filter((c) => c.option === value).map((c) => c.elementId))
+    for (const id of new Set(a.choices.map((c) => c.elementId))) {
+      await runAction(sceneId, presetId, { type: shown.has(id) ? 'show' : 'hide', elementId: id }, ruleName, elementChanged, actor, value)
+    }
+    return
+  }
   if (a.type === 'volume' || a.type === 'brightness') {
     const n = Number(value)
     if (!Number.isFinite(n)) return
@@ -240,7 +269,8 @@ export async function copyRules(tx: { select: typeof db.select; insert: typeof d
     enabled: r.enabled,
     trigger: copyTrigger(r.trigger as RuleTrigger, map),
     firedFor: r.firedFor,
-    actions: ((r.actions as RuleAction[]) ?? []).map((a) => (a.type === 'preset' ? a : { ...a, elementId: map(a.elementId) })),
+    actions: ((r.actions as RuleAction[]) ?? []).map((a) =>
+      a.type === 'preset' ? a : a.type === 'choose' ? { ...a, choices: a.choices.map((c) => ({ ...c, elementId: map(c.elementId) })) } : { ...a, elementId: map(a.elementId) }),
   })))
 }
 

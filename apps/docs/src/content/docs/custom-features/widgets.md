@@ -13,6 +13,7 @@ On the scene's **Widgets** tab, under **Rules**, choose **+ Add rule** and pick:
 2. **Do:** one or more actions, run in order (up to 10):
    - **Show**, **Hide**, or **Show or hide (switch)** an item of the preset.
    - **Switch to the preset** you pick.
+   - **Show the item for the chosen option** (for a rule that starts from a **Selector** changing): give each option an item, and choosing an option shows its item and hides the others'. That's a video picker: one screen per film, and the Selector picks which one is showing. With nothing chosen, all of them are hidden.
    - **Set the volume from the slider** of a sound or video screen (for a rule that starts from a **Slider** changing): the slider's 0 to 100 becomes the volume, so 30 plays at 30%.
    - **Set the brightness from the slider** of an image or video screen (also from a **Slider**): 0 is unlit and 100 is fully bright (Virvi's default is 60). Decentraland draws brightness; Hyperfy and AR Spaces don't, so there it does nothing.
 
@@ -64,7 +65,7 @@ virvi.listWidgets()                   // every widget: id, customId, name, type,
 ```
 
 - `onWidgetChange` also fires when the widget first arrives with the scene, and with `undefined` when it's removed or hidden.
-- `virvi.storage.widgets.configs` holds every widget by its element id.
+- `virvi.storage.widgets.configs` holds every widget by its element id. A Selector's widget has its `options`, and its value is the chosen option.
 - Each press of a **Trigger** on the dashboard stores the press time, so `onWidgetClick` fires once per press.
 - The `widgets` option's `init` runs when the widget first appears, `update(value)` on each change, and `delete` when it goes.
 
@@ -81,7 +82,7 @@ The control types (`WidgetControlType` in `@virvixr/shared`):
 | 0 | None |
 | 1 | Toggle |
 | 2 | Text |
-| 3 | Selector |
+| 3 | Selector: its options (`properties.options`, set on the dashboard as a comma-separated list) and the chosen one (`value`, a string; empty when nothing is chosen) |
 | 4 | Date and time |
 | 5 | Trigger |
 | 6 | Slider |

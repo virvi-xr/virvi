@@ -44,4 +44,9 @@ describe('scene rules wording (LIV-196)', () => {
       .toBe('When Stage lights changes, set the brightness of Light rig 1 to the slider.')
     expect(brightnessTargets([{ type: 'sound' }, { type: 'image' }, { type: 'video' }])).toEqual([{ type: 'image' }, { type: 'video' }])
   })
+
+  it('a selector shows the chosen item', () => {
+    expect(describeRule({ trigger: { type: 'widget', widgetId: 'w', when: 'change' }, actions: [{ type: 'choose', choices: [{ option: 'One', elementId: 'r1' }, { option: 'Two', elementId: 'r2' }] }] }, els, presets))
+      .toBe('When Stage lights changes, show Light rig 1 for One, Light rig 2 for Two (and hide the others).')
+  })
 })
