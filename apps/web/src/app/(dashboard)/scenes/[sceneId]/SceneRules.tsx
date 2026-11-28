@@ -60,7 +60,7 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
         )}
       </div>
       <p className="mb-3 text-sm text-gray-400">
-        Make a widget, a moment in time or a click do something without code: show or hide items, or switch the live preset, for everyone in the scene. Widget and timed rules run on Virvi&apos;s side, so they work the same in Decentraland, Hyperfy and AR Spaces; click rules work in Decentraland for now.
+        Make a widget, a moment in time or a click do something without code: show or hide items, or switch the live preset, for everyone in the scene. Widget and timed rules run on Virvi&apos;s side, so they work the same in Decentraland, Hyperfy and AR Spaces; click rules work in Decentraland and Hyperfy.
       </p>
       {error && <p role="alert" className="mb-3 text-sm text-red-300">{error}</p>}
       {widgets.length === 0 && clickables.length === 0 && <p className="text-sm text-gray-400">Add a widget, or an image, video screen or model to click, first: rules start from one.</p>}
@@ -118,7 +118,7 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
             <button type="button" onClick={() => setDraft(null)} className="text-sm text-gray-400 hover:text-gray-200">Cancel</button>
           </div>
           <p className="text-xs text-gray-400">{describeRule({ trigger: triggerFor(draft.widgetId, draft.when, draft.timezone), actions: draft.actions }, elements, presets)}</p>
-          {draft.when === 'click' && <p className="text-xs text-gray-400">Anyone in the scene can click it, in Decentraland scenes on @virvixr/dcl 2.24.0 or later. Its click action, if it has one, still runs too.</p>}
+          {draft.when === 'click' && <p className="text-xs text-gray-400">Anyone in the scene can click it: in Decentraland on @virvixr/dcl 2.24.0 or later, and in Hyperfy with Virvi app 1.2.0 or later. Its click action, if it has one, still runs too.</p>}
           {draft.when === 'time' && <p className="text-xs text-gray-400">It runs once each time the widget&apos;s date and time arrives, within about 20 seconds. Set a new date and time to run it again.</p>}
         </div>
       )}

@@ -20,6 +20,7 @@ export const PUBLIC_EXACT = [
   'GET /api/setup/models', // public: model list for a set-up location
   'GET /api/hyperfy/feed', // world-key auth
   'POST /api/hyperfy/analytics', // world-key auth
+  'POST /api/hyperfy/rule-click', // world-key auth; the world's app passes on a visitor's click (LIV-196)
   'POST /api/hyperfy/pair', // world-key auth; the HUD starts a pairing
   'GET /api/hyperfy/pair/:code/qr.png', // public: the code is the auth (QR of its approve link)
   'POST /api/hyperfy/pair/:code/claim', // the code plus the browser secret is the auth

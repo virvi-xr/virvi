@@ -22,6 +22,8 @@ export type RenderItem = {
   /** The same transform in Virvi coordinates (Decentraland frame, degrees), as edit mode drafts and saves it. */
   virvi: { position: Vec3; rotation: Vec3; scale: Vec3 }
   clickUrl: string | null
+  /** LIV-196: the element a click rule starts from (Virvi marks it); clicks go to Virvi, which runs the rule. */
+  ruleElement: string | null
   /**
    * What clicking does in Hyperfy (LIV-126): open a link, play a sound at the item, or move the visitor to a spot
    * (app-local Hyperfy coordinates). A teleport to a Decentraland parcel has no meaning here, so it is null.
@@ -83,6 +85,12 @@ function externalUrl(click: unknown): string | null {
   if (!click || typeof click !== 'object') return null
   const c = click as Props
   return c.type === CLICK_EXTERNAL && typeof c.externalLink === 'string' && c.externalLink ? c.externalLink : null
+}
+
+/** The element's click-rule mark (LIV-196), which Virvi puts on the element's clickEvent. */
+function ruleElementOf(el: Props): string | null {
+  const c = el.clickEvent as Props | undefined
+  return c && typeof c === 'object' && typeof c.ruleElement === 'string' && c.ruleElement ? c.ruleElement : null
 }
 
 /** An instance's click applies only when it has a type other than NONE; otherwise the element's does. */
@@ -153,6 +161,7 @@ function planElements(
         transform: toHyperfyTransform(virvi),
         virvi,
         clickUrl: externalUrl(clickOf(inst, el)),
+        ruleElement: ruleElementOf(el),
         click: hyperfyClick(clickOf(inst, el)),
         ...(media.schedule ? { schedule: media.schedule } : {}),
       })

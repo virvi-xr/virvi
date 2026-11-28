@@ -37,7 +37,7 @@ A click rule runs when anyone in the scene clicks the item, such as a light swit
 
 - Visitors don't need a role: anyone can click. Clicks are limited per visitor (a short burst, then a few a second).
 - An item with a click action (open a link, play a sound and so on) still does that too.
-- Click rules work in Decentraland scenes on `@virvixr/dcl` 2.24.0 or later. The Hyperfy app and AR Spaces don't send clicks to rules yet.
+- Click rules work in Decentraland scenes on `@virvixr/dcl` 2.24.0 or later, and in Hyperfy worlds running Virvi app 1.2.0 or later (download the app again from the scene's Sync page and drag it into the world). AR Spaces don't send clicks to rules yet.
 
 Setting volume or brightness from a slider is coming later.
 

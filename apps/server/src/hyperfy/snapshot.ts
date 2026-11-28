@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { withRuleClicks } from '../rules/rules.js'
 import { eq } from 'drizzle-orm'
 import type { SerializedScene } from '@virvixr/shared'
 import { db } from '../db/connection.js'
@@ -33,6 +34,7 @@ export async function sceneSnapshot(sceneId: string): Promise<{ version: string;
         with: { elements: { with: { instances: true } } },
       })
     : null
-  const serialized = preset ? stable((await withLiveStatus(serializePreset(preset))) as unknown as SerializedScene) : null
+  // Click-rule marks (LIV-196) are part of it, so a rule change is news to the feed
+  const serialized = preset ? stable((await withRuleClicks(await withLiveStatus(serializePreset(preset)))) as unknown as SerializedScene) : null
   return { version: createHash('sha256').update(JSON.stringify(serialized)).digest('hex'), scene: serialized }
 }

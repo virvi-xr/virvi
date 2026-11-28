@@ -87,13 +87,27 @@ export function renderedItem(item: RenderItem): RenderedItem {
  * gets one, which opens the link. Undefined means no handler (so Hyperfy shows no pointer for it).
  */
 export function clickHandler(
-  item: { key: string; clickUrl: string | null; click?: HyperfyClick | null },
+  item: { key: string; clickUrl: string | null; click?: HyperfyClick | null; ruleElement?: string | null },
   editing: boolean,
-  on: { select: (key: string) => void; open: (url: string) => void; sound?: (src: string) => void; move?: (position: [number, number, number]) => void },
+  on: { select: (key: string) => void; open: (url: string) => void; sound?: (src: string) => void; move?: (position: [number, number, number]) => void; rule?: (elementId: string) => void },
 ): (() => void) | undefined {
   if (editing) return () => on.select(item.key)
+  const action = clickAction(item, on)
+  // LIV-196: an item a click rule starts from is clickable even with no action, and its clicks go to Virvi too
+  const rule = item.ruleElement && on.rule ? item.ruleElement : null
+  if (!rule) return action
+  return () => {
+    action?.()
+    on.rule!(rule)
+  }
+}
+
+/** The item's own click action (LIV-126); a plan without `click` still opens its link. */
+function clickAction(
+  item: { clickUrl: string | null; click?: HyperfyClick | null },
+  on: { open: (url: string) => void; sound?: (src: string) => void; move?: (position: [number, number, number]) => void },
+): (() => void) | undefined {
   const c = item.click
-  // Click actions (LIV-126); a plan without `click` still opens its link
   if (c?.kind === 'sound' && on.sound) return () => on.sound!(c.src)
   if (c?.kind === 'move' && on.move) return () => on.move!(c.position)
   const url = c?.kind === 'link' ? c.url : item.clickUrl

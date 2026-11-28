@@ -10,7 +10,7 @@ import type { Vec3 } from './types/math.js'
  * both whenever the built app changes. The server serves this release, so it is also the latest. Apps before 1.0.0 send
  * none (they send only the feed protocol, as X-Virvi-App-Version).
  */
-export const HYPERFY_APP_VERSION = '1.1.0'
+export const HYPERFY_APP_VERSION = '1.2.0'
 
 export const HYPERFY_FEED = {
   version: 1,

@@ -10,6 +10,7 @@
  *   server only; the world secret stays in Node); self-run worlds pair from the browser with a code.
  */
 import type { HyperfyFeedResponse, SerializedScene, ShowingInstance } from '@virvixr/shared'
+import { RuleClickLimiter } from './rule-clicks.js'
 import { clickHandler, renderedItem } from './edit/controller.js'
 import { runHud } from './hud/client.js'
 import { runLinkRelay } from './link-relay.js'
@@ -39,6 +40,8 @@ const closeV = (a: V3, b: V3) => Math.abs(a.x - b.x) < 1e-4 && Math.abs(a.y - b.
 const sameTransform = (a: VirviTransform, b: VirviTransform) =>
   closeV(a.position, b.position) && closeV(a.rotation, b.rotation) && closeV(a.scale, b.scale)
 const HELLO = 'virvi:hello'
+/** A visitor clicked an item a click rule starts from (LIV-196): client to the server half, which tells Virvi. */
+const RULE_CLICK = 'virvi:rule-click'
 /** How often playlist and scheduled screens are checked (Hyperfy's video node has no "ended" event). */
 const PLAYLIST_CHECK_MS = 500
 /** A video stopped within this many seconds of its end has ended. */
@@ -85,6 +88,18 @@ function runServer(): void {
 
   app.on(HELLO, (_data, playerId) => {
     if (latest && playerId) app.sendTo(playerId, SCENE, latest)
+  })
+
+  // Click rules (LIV-196): the world key stays here; each visitor may send a few clicks a second
+  const clicks = new RuleClickLimiter()
+  app.on(RULE_CLICK, (data, playerId) => {
+    const elementId = data && typeof data === 'object' ? (data as { elementId?: unknown }).elementId : undefined
+    if (typeof elementId !== 'string' || !elementId || !clicks.take(String(playerId ?? ''), Date.now())) return
+    void fetch(`${feedUrl}/api/hyperfy/rule-click`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${worldKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ elementId }),
+    }).catch(() => {})
   })
 
   const visits = new VisitRecorder({
@@ -161,6 +176,7 @@ function runClient(): ClientEditHooks {
       open: (url) => world.open(url, true),
       sound: (src) => playClickSound(item, src),
       move: moveTo,
+      rule: (elementId) => app.send(RULE_CLICK, { elementId }),
     })
   }
 
