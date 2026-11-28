@@ -166,3 +166,54 @@ describe('timed rules', () => {
     expect((await post({ type: 'time', widgetId: doors.id, timezone: 'America/New_York' })).statusCode).toBe(201)
   })
 })
+
+import { startGameServer, joinScene } from './helpers/game-server.js'
+import { withRuleClicks } from '../src/rules/rules.js'
+
+describe('click rules', () => {
+  let app: Awaited<ReturnType<typeof testApp>>
+  let gs: Awaited<ReturnType<typeof startGameServer>>
+  beforeEach(async () => { await resetDb(); app = await testApp(); gs = await startGameServer() })
+  afterEach(async () => { await app.close(); await gs.stop() })
+
+  it('a visitor clicking the switch flips the lights for everyone; the item is marked clickable', async () => {
+    const owner = await createUser()
+    const visitor = await createUser()
+    const { scene, preset } = await createScene(owner)
+    const button = await createElement(preset.id, { type: 'model', name: 'Wall switch', properties: { modelSrc: 'https://x/s.glb' } })
+    const lamp = await createElement(preset.id, { type: 'image', name: 'Lamp', properties: { imageSrc: 'https://x/l.png' } })
+    const widget = await createElement(preset.id, { type: 'widget', name: 'W', properties: { controlType: 1, value: false } })
+    const post = (trigger: unknown) => app.inject({ method: 'POST', url: `/api/presets/${preset.id}/rules`, headers: as(owner), payload: { trigger, actions: [{ type: 'toggle', elementId: lamp.id }] } as any })
+    expect((await post({ type: 'click', elementId: widget.id })).json().error).toBe('bad_trigger')
+    expect((await post({ type: 'click', elementId: button.id })).statusCode).toBe(201)
+
+    const host = await joinScene(gs.url, scene.id, tokenFor(owner))
+    const guest = await joinScene(gs.url, scene.id, tokenFor(visitor))
+    const init = await guest.waitFor('scene_preset_update')
+    await host.waitFor('scene_preset_update')
+    expect(init.scenePreset.models[0].clickEvent).toMatchObject({ ruleElement: button.id })
+    expect(init.scenePreset.images[0].clickEvent?.ruleElement).toBeUndefined()
+
+    guest.room.send('rule_click', { elementId: button.id })
+    const update = await host.waitFor('scene_preset_update')
+    expect(update).toMatchObject({ action: 'upsert', element: 'image', elementData: { sk: lamp.id, enabled: false } })
+    expect((await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, lamp.id) }))!.enabled).toBe(false)
+
+    // An item no rule starts from does nothing
+    guest.room.send('rule_click', { elementId: lamp.id })
+    await host.expectNone('scene_preset_update')
+  })
+
+  it('withRuleClicks marks only enabled click rules of the preset', async () => {
+    const owner = await createUser()
+    const { preset } = await createScene(owner)
+    const a = await createElement(preset.id, { type: 'image', name: 'A' })
+    const b = await createElement(preset.id, { type: 'image', name: 'B' })
+    await db.insert(sceneRules).values([
+      { presetId: preset.id, trigger: { type: 'click', elementId: a.id }, actions: [{ type: 'hide', elementId: b.id }] },
+      { presetId: preset.id, enabled: false, trigger: { type: 'click', elementId: b.id }, actions: [{ type: 'hide', elementId: a.id }] },
+    ])
+    const out = await withRuleClicks({ sk: preset.id, images: [{ sk: a.id, clickEvent: { type: 1, externalLink: 'https://x' } }, { sk: b.id }] })
+    expect(out.images).toEqual([{ sk: a.id, clickEvent: { type: 1, externalLink: 'https://x', ruleElement: a.id } }, { sk: b.id }])
+  })
+})

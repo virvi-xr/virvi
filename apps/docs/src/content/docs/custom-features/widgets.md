@@ -9,14 +9,14 @@ A widget is a scene element that holds one control value, such as an on/off swit
 
 On the scene's **Widgets** tab, under **Rules**, choose **+ Add rule** and pick:
 
-1. **When:** a widget, and what it does. A **Toggle** can be turned on, turned off, or switched either way. A **Trigger** is pressed. A **Date and time** widget's date and time arrives, in the time zone you pick (your own, to start with). Any widget can also just change.
+1. **When:** an image, video screen or model being **clicked in-world**, or a widget and what it does. A **Toggle** can be turned on, turned off, or switched either way. A **Trigger** is pressed. A **Date and time** widget's date and time arrives, in the time zone you pick (your own, to start with). Any widget can also just change.
 2. **Do:** one or more actions, run in order (up to 10):
    - **Show**, **Hide**, or **Show or hide (switch)** an item of the preset.
    - **Switch to the preset** you pick.
 
 For example: *When Stage lights is turned off, hide Light rig 1, then hide Light rig 2.*
 
-Rules run on Virvi's servers the moment a widget changes (or a timed rule's time arrives), whether it changed on the dashboard, in the in-world HUD, from the Virvi Assistant or through the API. So they work the same in Decentraland, Hyperfy and AR Spaces, for everyone in the scene, on any SDK version, with no redeploy.
+Rules run on Virvi's servers the moment a widget changes (or a timed rule's time arrives, or an item is clicked), whether the widget changed on the dashboard, in the in-world HUD, from the Virvi Assistant or through the API. So widget and timed rules work the same in Decentraland, Hyperfy and AR Spaces, for everyone in the scene, on any SDK version, with no redeploy.
 
 - Each preset has its own rules, up to 50. Copying a preset copies its rules too.
 - Switch a rule off with its **On** box to keep it without running it.
@@ -31,7 +31,15 @@ A timed rule runs once when its widget's date and time arrives, within about 20 
 - A date and time already more than 10 minutes in the past when it's set is skipped, rather than running late.
 - The Activity tab shows timed rules' changes as done by **Virvi**.
 
-Item clicks as triggers, and setting volume or brightness from a slider, are coming later.
+### Click rules
+
+A click rule runs when anyone in the scene clicks the item, such as a light switch on a wall: *When someone clicks Wall switch, show or hide Lamp.* Everyone sees the result.
+
+- Visitors don't need a role: anyone can click. Clicks are limited per visitor (a short burst, then a few a second).
+- An item with a click action (open a link, play a sound and so on) still does that too.
+- Click rules work in Decentraland scenes on `@virvixr/dcl` 2.24.0 or later. The Hyperfy app and AR Spaces don't send clicks to rules yet.
+
+Setting volume or brightness from a slider is coming later.
 
 ## In your scene's code
 

@@ -1,14 +1,23 @@
 import type { FastifyInstance } from 'fastify'
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { scenePresets, sceneRules } from '../db/schema.js'
+import { sceneElements, scenePresets, sceneRules } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess, hasScope } from '../auth/permissions.js'
 import { recordSceneActivity, requestActor } from '../scenes/activity.js'
-import { checkRule, countRules, rulesOf, RULES_PER_PRESET } from '../rules/rules.js'
+import { checkRule, clickItemsOf, countRules, rulesOf, RULES_PER_PRESET } from '../rules/rules.js'
+import { publishElementChanged } from '../realtime/bus.js'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** A click rule came, went or changed: the items it starts from go out again, so the SDK makes them clickable (or not). */
+async function resendClickItems(sceneId: string, presetId: string, ...triggers: unknown[]): Promise<void> {
+  const ids = clickItemsOf(...triggers)
+  if (!ids.length) return
+  const els = await db.select({ id: sceneElements.id, type: sceneElements.type }).from(sceneElements).where(inArray(sceneElements.id, ids))
+  for (const el of els) await publishElementChanged({ sceneId, presetId, elementId: el.id, elementType: el.type, deleted: false })
+}
 
 const view = (r: typeof sceneRules.$inferSelect) => ({ id: r.id, presetId: r.presetId, name: r.name, enabled: r.enabled, trigger: r.trigger, actions: r.actions, createdAt: r.createdAt, updatedAt: r.updatedAt })
 
@@ -47,6 +56,7 @@ export default async function sceneRuleRoutes(app: FastifyInstance) {
     if ('error' in clean) return reply.status(400).send(clean)
     const [rule] = await db.insert(sceneRules).values({ presetId: p.preset.id, name: clean.name ?? '', enabled: clean.enabled ?? true, trigger: clean.trigger!, actions: clean.actions! }).returning()
     await recordSceneActivity(p.preset.sceneId, requestActor(request.user), 'rule.created', { type: 'rule', id: rule.id, name: rule.name || null })
+    await resendClickItems(p.preset.sceneId, p.preset.id, rule.trigger)
     return reply.status(201).send({ rule: view(rule) })
   })
 
@@ -57,6 +67,7 @@ export default async function sceneRuleRoutes(app: FastifyInstance) {
     if ('error' in clean) return reply.status(400).send(clean)
     const [rule] = await db.update(sceneRules).set({ ...clean, updatedAt: new Date() }).where(eq(sceneRules.id, r.rule.id)).returning()
     await recordSceneActivity(r.preset.sceneId, requestActor(request.user), 'rule.updated', { type: 'rule', id: rule.id, name: rule.name || null })
+    await resendClickItems(r.preset.sceneId, r.preset.id, r.rule.trigger, rule.trigger)
     return { rule: view(rule) }
   })
 
@@ -65,6 +76,7 @@ export default async function sceneRuleRoutes(app: FastifyInstance) {
     if ('status' in r) return reply.status(r.status!).send({ error: r.error })
     await db.delete(sceneRules).where(eq(sceneRules.id, r.rule.id))
     await recordSceneActivity(r.preset.sceneId, requestActor(request.user), 'rule.deleted', { type: 'rule', id: r.rule.id, name: r.rule.name || null })
+    await resendClickItems(r.preset.sceneId, r.preset.id, r.rule.trigger)
     return reply.status(204).send()
   })
 }

@@ -65,12 +65,28 @@ export function clickRun(click: Click | null, adapter: VirviPlatformAdapter, ent
   }
 }
 
-/** Puts the copy's click on its entity (with the configured hover text), or takes any old one off. */
+/** Sends a click to the scene's room for its click rules (LIV-196); set by Virvi. */
+let ruleClickSender: ((elementId: string) => void) | null = null
+export function setRuleClickSender(fn: ((elementId: string) => void) | null): void {
+  ruleClickSender = fn
+}
+
+/**
+ * Puts the copy's click on its entity (with the configured hover text), or takes any old one off. An item a click
+ * rule starts from (the server marks its clickEvent with `ruleElement`) is clickable even with no action, and each
+ * click also goes to the room, where its rules run.
+ */
 export function bindClick(adapter: VirviPlatformAdapter, entity: EntityHandle, own: unknown, element: unknown): void {
+  const el = asClick(element)
+  const ruleElement = typeof el?.ruleElement === 'string' && el.ruleElement ? el.ruleElement : null
   const click = effectiveClick(own, element)
   const run = clickRun(click, adapter, entity)
   adapter.removePointerEvents?.(entity)
-  if (!run) return
-  const hoverText = typeof click!.hoverText === 'string' ? click!.hoverText : ''
-  adapter.onPointerDown(entity, { hoverText, showFeedback: click!.showFeedback === true }, () => run())
+  if (!run && !ruleElement) return
+  const hoverText = typeof click?.hoverText === 'string' ? click.hoverText : typeof el?.hoverText === 'string' ? el.hoverText : ''
+  const showFeedback = run ? click!.showFeedback === true : true
+  adapter.onPointerDown(entity, { hoverText, showFeedback }, () => {
+    run?.()
+    if (ruleElement) ruleClickSender?.(ruleElement)
+  })
 }

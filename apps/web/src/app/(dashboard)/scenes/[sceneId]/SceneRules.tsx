@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
-import { ACTIONS_PER_RULE, describeRule, localTimeZone, ruleTargets, timeZones, triggerFor, whenChoices, type DraftWhen, type RuleAction, type SceneRule } from '@/lib/scene-rules'
+import { ACTIONS_PER_RULE, CLICKABLE, ITEM_WHEN, describeRule, localTimeZone, ruleTargets, timeZones, triggerFor, whenChoices, type DraftWhen, type RuleAction, type SceneRule } from '@/lib/scene-rules'
 
 interface El { id: string; name: string; type: string; properties?: any }
 interface Preset { id: string; name: string }
@@ -19,7 +19,10 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
   const [draft, setDraft] = useState<Draft | null>(null)
   const [busy, setBusy] = useState(false)
   const widgets = elements.filter((e) => e.type === 'widget' && Number(e.properties?.controlType ?? 0) !== 0)
+  const clickables = elements.filter((e) => CLICKABLE.has(e.type))
   const targets = ruleTargets(elements)
+  const isItem = (id: string) => clickables.some((c) => c.id === id)
+  const choicesFor = (id: string) => (isItem(id) ? ITEM_WHEN : whenChoices(widgetType(id)))
 
   const load = async () => {
     try { const r = await api.getPresetRules(presetId); setRules(r.rules); setLimit(r.limit); setError(null) } catch (e: any) { setError(e?.message ?? 'Could not load the rules') }
@@ -29,9 +32,9 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
 
   const widgetType = (id: string) => Number(widgets.find((w) => w.id === id)?.properties?.controlType ?? 0)
   const start = () => {
-    const w = widgets[0]
+    const w = widgets[0] ?? clickables[0]
     if (!w) return
-    setDraft({ name: '', widgetId: w.id, when: whenChoices(widgetType(w.id))[0].value, timezone: localTimeZone(), actions: [targets[0] ? { type: 'show', elementId: targets[0].id } : { type: 'preset', presetId: presets[0]?.id ?? '' }] })
+    setDraft({ name: '', widgetId: w.id, when: choicesFor(w.id)[0].value, timezone: localTimeZone(), actions: [targets[0] ? { type: 'show', elementId: targets[0].id } : { type: 'preset', presetId: presets[0]?.id ?? '' }] })
   }
   const save = async () => {
     if (!draft) return
@@ -52,26 +55,27 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
     <section aria-labelledby="rules-heading" className="mt-6 rounded-lg border border-gray-800 bg-gray-900 p-4">
       <div className="mb-1 flex items-center justify-between">
         <h2 id="rules-heading" className="text-sm font-medium text-gray-300">Rules</h2>
-        {!draft && widgets.length > 0 && rules && rules.length < limit && (
+        {!draft && (widgets.length > 0 || clickables.length > 0) && rules && rules.length < limit && (
           <button type="button" onClick={start} className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500">+ Add rule</button>
         )}
       </div>
       <p className="mb-3 text-sm text-gray-400">
-        Make a widget do something without code: when it changes, show or hide items or switch the live preset. Rules run on Virvi&apos;s side, so they work the same in Decentraland, Hyperfy and AR Spaces, for everyone in the scene.
+        Make a widget, a moment in time or a click do something without code: show or hide items, or switch the live preset, for everyone in the scene. Widget and timed rules run on Virvi&apos;s side, so they work the same in Decentraland, Hyperfy and AR Spaces; click rules work in Decentraland for now.
       </p>
       {error && <p role="alert" className="mb-3 text-sm text-red-300">{error}</p>}
-      {widgets.length === 0 && <p className="text-sm text-gray-400">Add a Toggle, Trigger or other widget first; rules start from a widget.</p>}
+      {widgets.length === 0 && clickables.length === 0 && <p className="text-sm text-gray-400">Add a widget, or an image, video screen or model to click, first: rules start from one.</p>}
 
       {draft && (
         <div className="mb-4 space-y-3 rounded border border-gray-800 p-3">
           <div className="flex flex-wrap items-center gap-2 text-sm text-gray-300">
             <span>When</span>
-            <select aria-label="Widget" className={SELECT} value={draft.widgetId}
-              onChange={(e) => setDraft({ ...draft, widgetId: e.target.value, when: whenChoices(widgetType(e.target.value))[0].value })}>
-              {widgets.map((w) => <option key={w.id} value={w.id}>{w.name || 'Widget'}</option>)}
+            <select aria-label="Widget or item" className={SELECT} value={draft.widgetId}
+              onChange={(e) => setDraft({ ...draft, widgetId: e.target.value, when: choicesFor(e.target.value)[0].value })}>
+              {widgets.length > 0 && <optgroup label="Widgets">{widgets.map((w) => <option key={w.id} value={w.id}>{w.name || 'Widget'}</option>)}</optgroup>}
+              {clickables.length > 0 && <optgroup label="Items to click">{clickables.map((c) => <option key={c.id} value={c.id}>{c.name || c.type}</option>)}</optgroup>}
             </select>
             <select aria-label="When it" className={SELECT} value={draft.when} onChange={(e) => setDraft({ ...draft, when: e.target.value as DraftWhen })}>
-              {whenChoices(widgetType(draft.widgetId)).map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+              {choicesFor(draft.widgetId).map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
             {draft.when === 'time' && (
               <select aria-label="Time zone" className={SELECT} value={draft.timezone} onChange={(e) => setDraft({ ...draft, timezone: e.target.value })}>
@@ -114,11 +118,12 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
             <button type="button" onClick={() => setDraft(null)} className="text-sm text-gray-400 hover:text-gray-200">Cancel</button>
           </div>
           <p className="text-xs text-gray-400">{describeRule({ trigger: triggerFor(draft.widgetId, draft.when, draft.timezone), actions: draft.actions }, elements, presets)}</p>
+          {draft.when === 'click' && <p className="text-xs text-gray-400">Anyone in the scene can click it, in Decentraland scenes on @virvixr/dcl 2.24.0 or later. Its click action, if it has one, still runs too.</p>}
           {draft.when === 'time' && <p className="text-xs text-gray-400">It runs once each time the widget&apos;s date and time arrives, within about 20 seconds. Set a new date and time to run it again.</p>}
         </div>
       )}
 
-      {rules && rules.length === 0 && !draft && widgets.length > 0 && <p className="text-sm text-gray-400">No rules yet.</p>}
+      {rules && rules.length === 0 && !draft && (widgets.length > 0 || clickables.length > 0) && <p className="text-sm text-gray-400">No rules yet.</p>}
       {rules && rules.length > 0 && (
         <ul className="divide-y divide-gray-800 text-sm">
           {rules.map((r) => (

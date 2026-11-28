@@ -22,6 +22,8 @@ export type RuleTrigger =
   | { type: 'widget'; widgetId: string; when: WidgetWhen }
   /** A Date and time widget's value arriving, read in `timezone` (the widget stores a wall time with no zone). */
   | { type: 'time'; widgetId: string; timezone: string }
+  /** A visitor clicking a placed item (any copy) in-world; the SDK sends `rule_click`. */
+  | { type: 'click'; elementId: string }
 export type RuleAction =
   | { type: 'show' | 'hide' | 'toggle'; elementId: string }
   | { type: 'preset'; presetId: string }
@@ -36,6 +38,8 @@ const WIDGET_DATETIME = 4
 const WIDGET_TRIGGER = 5
 /** A timed rule whose time passed longer ago than this (the server was down, or the time was set in the past) is skipped. */
 export const TIMED_GRACE_MS = 10 * 60_000
+/** What a visitor can click in-world (the types whose copies take click actions). */
+export const CLICKABLE = new Set(['image', 'video', 'model'])
 
 /** Whether a widget going from `prev` to `next` sets off `when`. */
 export function triggerFires(when: WidgetWhen, controlType: number, prev: unknown, next: unknown): boolean {
@@ -70,20 +74,26 @@ export async function checkRule(presetId: string, sceneId: string, input: RuleIn
   const byId = new Map(elements.map((e) => [e.id, e]))
   if (input.trigger !== undefined || !partial) {
     const t = input.trigger as any
-    const shape = "A trigger is { type: 'widget', widgetId, when: 'on' | 'off' | 'press' | 'change' } or { type: 'time', widgetId, timezone }"
-    if (!t || typeof t.widgetId !== 'string' || (t.type !== 'widget' && t.type !== 'time')) return bad('bad_trigger', shape)
-    const w = byId.get(t.widgetId)
-    if (!w || w.type !== 'widget') return bad('bad_trigger', "The trigger's widget isn't in this preset")
-    const controlType = Number((w.properties as Record<string, unknown> | null)?.controlType ?? 0)
-    if (t.type === 'time') {
-      if (controlType !== WIDGET_DATETIME) return bad('bad_trigger', 'A timed rule starts from a Date and time widget')
-      if (typeof t.timezone !== 'string' || !isTimeZone(t.timezone)) return bad('bad_trigger', 'A timed rule needs a time zone, such as Europe/London')
-      out.trigger = { type: 'time', widgetId: t.widgetId, timezone: t.timezone }
+    const shape = "A trigger is { type: 'widget', widgetId, when: 'on' | 'off' | 'press' | 'change' }, { type: 'time', widgetId, timezone } or { type: 'click', elementId }"
+    if (t?.type === 'click') {
+      const el = typeof t.elementId === 'string' ? byId.get(t.elementId) : undefined
+      if (!el || !CLICKABLE.has(el.type)) return bad('bad_trigger', 'A click rule starts from an image, video screen or model of this preset')
+      out.trigger = { type: 'click', elementId: t.elementId }
     } else {
-      if (!WIDGET_WHEN.includes(t.when)) return bad('bad_trigger', shape)
-      if ((t.when === 'on' || t.when === 'off') && controlType !== WIDGET_TOGGLE) return bad('bad_trigger', "'on' and 'off' are for Toggle widgets")
-      if (t.when === 'press' && controlType !== WIDGET_TRIGGER) return bad('bad_trigger', "'press' is for Trigger widgets")
-      out.trigger = { type: 'widget', widgetId: t.widgetId, when: t.when as WidgetWhen }
+      if (!t || typeof t.widgetId !== 'string' || (t.type !== 'widget' && t.type !== 'time')) return bad('bad_trigger', shape)
+      const w = byId.get(t.widgetId)
+      if (!w || w.type !== 'widget') return bad('bad_trigger', "The trigger's widget isn't in this preset")
+      const controlType = Number((w.properties as Record<string, unknown> | null)?.controlType ?? 0)
+      if (t.type === 'time') {
+        if (controlType !== WIDGET_DATETIME) return bad('bad_trigger', 'A timed rule starts from a Date and time widget')
+        if (typeof t.timezone !== 'string' || !isTimeZone(t.timezone)) return bad('bad_trigger', 'A timed rule needs a time zone, such as Europe/London')
+        out.trigger = { type: 'time', widgetId: t.widgetId, timezone: t.timezone }
+      } else {
+        if (!WIDGET_WHEN.includes(t.when)) return bad('bad_trigger', shape)
+        if ((t.when === 'on' || t.when === 'off') && controlType !== WIDGET_TOGGLE) return bad('bad_trigger', "'on' and 'off' are for Toggle widgets")
+        if (t.when === 'press' && controlType !== WIDGET_TRIGGER) return bad('bad_trigger', "'press' is for Trigger widgets")
+        out.trigger = { type: 'widget', widgetId: t.widgetId, when: t.when as WidgetWhen }
+      }
     }
   }
   if (input.actions !== undefined || !partial) {
@@ -176,6 +186,10 @@ async function runAction(sceneId: string, presetId: string, a: RuleAction, ruleN
   await elementChanged({ sceneId, presetId, elementId: el.id, elementType: el.type, deleted: false }, el.name, ruleName)
 }
 
+function copyTrigger(t: RuleTrigger, map: (id: string) => string): RuleTrigger {
+  return t.type === 'click' ? { ...t, elementId: map(t.elementId) } : { ...t, widgetId: map(t.widgetId) }
+}
+
 /** A preset was copied: copy its rules too, pointing at the copies of its elements. */
 export async function copyRules(tx: { select: typeof db.select; insert: typeof db.insert }, fromPresetId: string, toPresetId: string, elementIds: Map<string, string>): Promise<void> {
   const rules = await tx.select().from(sceneRules).where(eq(sceneRules.presetId, fromPresetId))
@@ -185,7 +199,7 @@ export async function copyRules(tx: { select: typeof db.select; insert: typeof d
     presetId: toPresetId,
     name: r.name,
     enabled: r.enabled,
-    trigger: { ...(r.trigger as RuleTrigger), widgetId: map((r.trigger as RuleTrigger).widgetId) },
+    trigger: copyTrigger(r.trigger as RuleTrigger, map),
     firedFor: r.firedFor,
     actions: ((r.actions as RuleAction[]) ?? []).map((a) => (a.type === 'preset' ? a : { ...a, elementId: map(a.elementId) })),
   })))
@@ -240,3 +254,61 @@ export async function sweepTimedRules(elementChanged: ElementChangedHook, now = 
 }
 
 export const TIMED_SWEEP_MS = 20_000
+
+
+// ── Click rules ──────────────────────────────────────────────────────────
+
+/** The items of this preset that an enabled click rule starts from. */
+export async function clickRuleTargets(presetId: string): Promise<Set<string>> {
+  const rows = await db.select({ trigger: sceneRules.trigger }).from(sceneRules)
+    .where(and(eq(sceneRules.presetId, presetId), eq(sceneRules.enabled, true), sql`${sceneRules.trigger}->>'type' = 'click'`))
+  return new Set(rows.map((r) => (r.trigger as Extract<RuleTrigger, { type: 'click' }>).elementId))
+}
+
+type Tagged = { sk: string; clickEvent?: unknown }
+/** The element's clickEvent marked for click rules: the SDK makes the item clickable and sends `rule_click` with this id. */
+function tag<E extends Tagged>(el: E, targets: Set<string>): E {
+  if (!targets.has(el.sk)) return el
+  const click = el.clickEvent && typeof el.clickEvent === 'object' ? el.clickEvent as Record<string, unknown> : { type: 0 }
+  return { ...el, clickEvent: { ...click, ruleElement: el.sk } }
+}
+
+/** A serialized preset (sk = its id) with its click-rule items marked. Never throws: unmarked on a failure. */
+export async function withRuleClicks<P extends { sk: string; images?: Tagged[]; videos?: Tagged[]; models?: Tagged[] }>(preset: P): Promise<P> {
+  try {
+    const targets = await clickRuleTargets(preset.sk)
+    if (!targets.size) return preset
+    return {
+      ...preset,
+      ...(preset.images ? { images: preset.images.map((e) => tag(e, targets)) } : {}),
+      ...(preset.videos ? { videos: preset.videos.map((e) => tag(e, targets)) } : {}),
+      ...(preset.models ? { models: preset.models.map((e) => tag(e, targets)) } : {}),
+    }
+  } catch (err) {
+    console.error('[rules] click marks failed:', err)
+    return preset
+  }
+}
+
+/** One serialized element of `presetId`, marked if a click rule starts from it. */
+export async function withRuleClickElement<E extends Tagged>(presetId: string, type: string, element: E): Promise<E> {
+  if (!CLICKABLE.has(type)) return element
+  try { return tag(element, await clickRuleTargets(presetId)) } catch { return element }
+}
+
+/** A visitor clicked `elementId` in-world: run the enabled click rules of its preset. Returns how many ran. */
+export async function runClickRules(opts: { sceneId: string; presetId: string; elementId: string; elementChanged: ElementChangedHook; actor: ActivityActor }): Promise<number> {
+  const rules = await db.select().from(sceneRules).where(and(eq(sceneRules.presetId, opts.presetId), eq(sceneRules.enabled, true), sql`${sceneRules.trigger}->>'type' = 'click'`))
+  let ran = 0
+  for (const rule of rules) {
+    if ((rule.trigger as Extract<RuleTrigger, { type: 'click' }>).elementId !== opts.elementId) continue
+    ran++
+    await runActions(opts.sceneId, opts.presetId, rule, opts.elementChanged, opts.actor)
+  }
+  return ran
+}
+
+/** Items whose click marks may have changed when a rule changed: its click trigger's item, before and after. */
+export function clickItemsOf(...triggers: unknown[]): string[] {
+  return [...new Set(triggers.filter((t): t is Extract<RuleTrigger, { type: 'click' }> => !!t && (t as any).type === 'click').map((t) => t.elementId))]
+}

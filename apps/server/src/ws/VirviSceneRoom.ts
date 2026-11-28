@@ -28,6 +28,8 @@ import { pairingActive, pairingLive } from '../hyperfy/pairing.js'
 import { deviceActive, deviceLive } from '../ar/devices.js'
 import { ANONYMOUS, type Actor } from '../auth/actor.js'
 import { checkedActor } from '../auth/admin.js'
+import { runClickRules, withRuleClickElement, withRuleClicks } from '../rules/rules.js'
+import { elementChanged } from '../routes/scenes.js'
 import { checkState, deleteSceneState, getSceneState, setSceneState, stateWritesFor, STATE_ERROR_MESSAGES } from '../scenes/state.js'
 import { getSceneAccess, hasScope, isFullAccess, toVenueAccessMessage, type SceneAccess } from '../auth/permissions.js'
 import { authorizeSceneMessage, propertiesOf, type GuardResult, type GuardTarget } from './scene-guard.js'
@@ -377,7 +379,7 @@ export class VirviSceneRoom extends Room {
           noteSceneActivity(this.sceneId, roomActor(client.auth as Actor), 'preset.activated', { type: 'preset', id: presetId, name: preset?.name ?? null })
 
           if (preset) {
-            const serialized = await withKioskPreset(await withLiveStatus(serializePreset(preset)))
+            const serialized = await withRuleClicks(await withKioskPreset(await withLiveStatus(serializePreset(preset))))
             this.broadcast('scene_change_preset', {
               scenePreset: serialized,
               user: this.getClientMeta(client),
@@ -466,6 +468,30 @@ export class VirviSceneRoom extends Room {
         }
       })
     }
+
+    // ── Click rules (LIV-196) ─────────────────────────────────────────────
+    // Anyone in the scene may click a placed item; the item's click rules run on the server, shared with everyone.
+    // Limited per client; only items of the live preset count.
+    this.onMessage('rule_click', async (client, message) => {
+      const elementId = typeof message?.elementId === 'string' ? message.elementId : null
+      if (!elementId || !this.sceneId || !this.relayLimit.take(client.sessionId, 'rule_click')) return
+      try {
+        const presetId = await this.getActivePresetId()
+        if (!presetId) return
+        const el = await db.query.sceneElements.findFirst({ where: and(eq(sceneElements.id, elementId), eq(sceneElements.presetId, presetId)), columns: { id: true } })
+        if (!el) return
+        const actor = roomActor(client.auth as Actor)
+        await runClickRules({
+          sceneId: this.sceneId, presetId, elementId, actor,
+          elementChanged: async (e, name, rule) => {
+            await elementChanged(e)
+            noteSceneActivity(e.sceneId, actor, 'element.updated', { type: e.elementType, id: e.elementId, name }, { changed: ['enabled'], rule })
+          },
+        })
+      } catch (err) {
+        console.error('[VirviSceneRoom] rule_click failed:', err)
+      }
+    })
 
     // ── Moderator Actions ─────────────────────────────────────────────────
     this.guarded('scene_moderator_message', (client, message) => {
@@ -804,7 +830,7 @@ export class VirviSceneRoom extends Room {
           with: { elements: { with: { instances: true } } },
         })
         if (preset) {
-          this.broadcast('scene_change_preset', { scenePreset: await withKioskPreset(await withLiveStatus(serializePreset(preset))), user: null })
+          this.broadcast('scene_change_preset', { scenePreset: await withRuleClicks(await withKioskPreset(await withLiveStatus(serializePreset(preset)))), user: null })
           await this.sendShowings()
         }
         return
@@ -852,7 +878,7 @@ export class VirviSceneRoom extends Room {
     this.broadcast('scene_preset_update', {
       action: 'upsert',
       element: element.type,
-      elementData: element.type === 'video' ? await withLiveVideo(serializeSingleElement(element)) : await withKioskElement(element.type, serializeSingleElement(element)),
+      elementData: await withRuleClickElement(e.presetId, element.type, element.type === 'video' ? await withLiveVideo(serializeSingleElement(element)) : await withKioskElement(element.type, serializeSingleElement(element))),
     })
   }
 
@@ -937,7 +963,7 @@ export class VirviSceneRoom extends Room {
         return
       }
 
-      const serialized = await withKioskPreset(await withLiveStatus(serializePreset(preset)))
+      const serialized = await withRuleClicks(await withKioskPreset(await withLiveStatus(serializePreset(preset))))
 
       client.send('scene_preset_update', {
         action: 'init',

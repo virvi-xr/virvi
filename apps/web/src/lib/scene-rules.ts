@@ -2,9 +2,9 @@
  * Scene rules (LIV-196): types and plain-words wording for the dashboard. Mirrors apps/server src/rules/rules.ts.
  */
 export type RuleWhen = 'on' | 'off' | 'press' | 'change'
-export type RuleTrigger = { type: 'widget'; widgetId: string; when: RuleWhen } | { type: 'time'; widgetId: string; timezone: string }
+export type RuleTrigger = { type: 'widget'; widgetId: string; when: RuleWhen } | { type: 'time'; widgetId: string; timezone: string } | { type: 'click'; elementId: string }
 /** What the form picks: a widget trigger, or 'time' for a Date and time widget's value arriving. */
-export type DraftWhen = RuleWhen | 'time'
+export type DraftWhen = RuleWhen | 'time' | 'click'
 export type RuleAction = { type: 'show' | 'hide' | 'toggle'; elementId: string } | { type: 'preset'; presetId: string }
 export interface SceneRule { id: string; presetId: string; name: string; enabled: boolean; trigger: RuleTrigger; actions: RuleAction[] }
 
@@ -14,6 +14,12 @@ export const TRIGGER = 5
 export const ACTIONS_PER_RULE = 10
 
 /** What a widget of this control type can set off. */
+/** What a visitor can click in-world to start a rule. */
+export const CLICKABLE = new Set(['image', 'video', 'model'])
+
+/** What an item (not a widget) can set off. */
+export const ITEM_WHEN: { value: DraftWhen; label: string }[] = [{ value: 'click', label: 'is clicked in-world' }]
+
 export function whenChoices(controlType: number): { value: DraftWhen; label: string }[] {
   if (controlType === DATETIME) return [{ value: 'time', label: 'its date and time arrives' }, { value: 'change', label: 'changes' }]
   if (controlType === TOGGLE) return [{ value: 'on', label: 'is turned on' }, { value: 'off', label: 'is turned off' }, { value: 'change', label: 'is switched either way' }]
@@ -37,8 +43,8 @@ export function describeRule(rule: Pick<SceneRule, 'trigger' | 'actions'>, eleme
     return `${verb} ${el(a.elementId)}`
   })
   const list = steps.length <= 1 ? steps.join('') : `${steps.slice(0, -1).join(', ')}, then ${steps[steps.length - 1]}`
-  const start = t.type === 'time'
-    ? `When the date and time in ${el(t.widgetId)} arrives (${t.timezone.replace(/_/g, ' ')} time)`
+  const start = t.type === 'click' ? `When someone clicks ${el(t.elementId)}`
+    : t.type === 'time' ? `When the date and time in ${el(t.widgetId)} arrives (${t.timezone.replace(/_/g, ' ')} time)`
     : `When ${el(t.widgetId)} ${WHEN_WORDS[t.when]}`
   return `${start}, ${list}.`
 }
@@ -48,6 +54,7 @@ export const ruleTargets = <T extends { type: string }>(elements: T[]): T[] => e
 
 /** The trigger the form's choice makes. */
 export function triggerFor(widgetId: string, when: DraftWhen, timezone: string): RuleTrigger {
+  if (when === 'click') return { type: 'click', elementId: widgetId }
   return when === 'time' ? { type: 'time', widgetId, timezone } : { type: 'widget', widgetId, when }
 }
 

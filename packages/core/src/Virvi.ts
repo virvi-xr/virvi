@@ -11,6 +11,7 @@ import { AdHost } from './ads/host.js'
 
 import type { KioskClick } from './managers/KioskManager.js'
 import type { DrawnType } from './CustomRendering.js'
+import { setRuleClickSender } from './managers/click.js'
 
 /** LIV-158: (type, element, instance?): `instance` is set when the event is about one placed copy. */
 export type ElementListener = (type: DrawnType, element: Record<string, any>, instance?: Record<string, any>) => void
@@ -106,6 +107,11 @@ export class Virvi {
       postEvents: (batch) => this.http.sendAdEvents(adapter, batch),
     })
     this.sceneManager = new SceneManager(adapter, this.storage, this.events, this.ads)
+    // Click rules (LIV-196): a click on an item a rule starts from goes to the room
+    setRuleClickSender((elementId) => {
+      if (!this.colyseus.isConnected()) return
+      try { this.colyseus.send('rule_click', { elementId }) } catch { /* not in a room */ }
+    })
     this.state = new SceneState({
       send: (type, message) => {
         if (!this.colyseus.isConnected()) return false

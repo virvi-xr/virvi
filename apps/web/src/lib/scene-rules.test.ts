@@ -26,4 +26,10 @@ describe('scene rules wording (LIV-196)', () => {
     expect(describeRule({ trigger: { type: 'time', widgetId: 'w', timezone: 'America/New_York' }, actions: [{ type: 'hide', elementId: 'r1' }] }, els, presets))
       .toBe('When the date and time in Stage lights arrives (America/New York time), hide Light rig 1.')
   })
+
+  it('click rules', () => {
+    expect(triggerFor('r1', 'click', 'UTC')).toEqual({ type: 'click', elementId: 'r1' })
+    expect(describeRule({ trigger: { type: 'click', elementId: 'r1' }, actions: [{ type: 'toggle', elementId: 'r2' }] }, els, presets))
+      .toBe('When someone clicks Light rig 1, show or hide Light rig 2.')
+  })
 })
