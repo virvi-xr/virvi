@@ -1,11 +1,11 @@
 import type { FastifyInstance } from 'fastify'
-import { randomBytes, createHash } from 'node:crypto'
 import { eq, and, isNull } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { apiKeys, organizations, orgMembers } from '../db/schema.js'
 import { authenticate, isReadOnlyKey, keySceneIds } from '../middleware/auth.js'
 import { getSceneAccess } from '../auth/permissions.js'
 import { callsOfKey } from '../mcp/calls.js'
+import { issueApiKey } from '../oauth/keys.js'
 import { actorFromClaims } from '../auth/actor.js'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -73,28 +73,12 @@ export default async function apiKeyRoutes(app: FastifyInstance) {
         if (!member) return reply.status(400).send({ error: 'Not a member of that organization' })
       }
 
-      // Generate the raw key: virvi_k1_ + 32 random hex chars
-      const randomPart = randomBytes(16).toString('hex') // 32 hex chars
-      const rawKey = `virvi_k1_${randomPart}`
-
-      // Hash for storage
-      const keyHash = createHash('sha256').update(rawKey).digest('hex')
-
-      // First 8 chars for identification
-      const keyPrefix = rawKey.slice(0, 8)
-
-      const [apiKey] = await db
-        .insert(apiKeys)
-        .values({
-          userId: request.user.id,
-          orgId: orgId ?? (await liveOrg(request.user.orgId)),
-          name,
-          keyHash,
-          keyPrefix,
-          scopes: access === 'read' || sceneIds.length ? [...(access === 'read' ? ['read'] : ['full']), ...sceneIds.map((id) => `scene:${id}`)] : null,
-          expiresAt: expiresAt ? new Date(expiresAt) : null,
-        })
-        .returning()
+      const { apiKey, rawKey } = await issueApiKey({
+        userId: request.user.id,
+        orgId: orgId ?? (await liveOrg(request.user.orgId)),
+        name, access, sceneIds,
+        expiresAt: expiresAt ? new Date(expiresAt) : null,
+      })
 
       return reply.status(201).send({
         id: apiKey.id,
@@ -124,6 +108,7 @@ export default async function apiKeyRoutes(app: FastifyInstance) {
           expiresAt: apiKeys.expiresAt,
           createdAt: apiKeys.createdAt,
           scopes: apiKeys.scopes,
+          oauthClientId: apiKeys.oauthClientId,
         })
         .from(apiKeys)
         .where(eq(apiKeys.userId, request.user.id))

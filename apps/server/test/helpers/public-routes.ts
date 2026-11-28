@@ -26,6 +26,12 @@ export const PUBLIC_EXACT = [
   'POST /api/hyperfy/pairings/:id/renew', // the pairing's browser secret is the auth
   'POST /api/hyperfy/pairings/vouch', // world-secret auth; a hosted world speaks for its player
   'GET /api/hyperfy/app.hyp', // public: the built Virvi Hyperfy app download
+  'GET /.well-known/oauth-protected-resource', // public: OAuth metadata for MCP clients (LIV-170)
+  'GET /.well-known/oauth-protected-resource/mcp', // public: the same, at the resource's path
+  'GET /.well-known/oauth-authorization-server', // public: OAuth server metadata
+  'POST /oauth/register', // public: dynamic client registration (an app, not a person)
+  'POST /oauth/token', // the one-time code plus its PKCE verifier is the auth
+  'GET /api/oauth/clients/:clientId', // public: an app's name and redirect URIs, for the approval page
   'POST /api/ar/spaces/:id/analytics', // public for a published space (visits from a headset)
   'POST /api/ar/spaces/:id/report', // public for a published space (a visitor reports it from the headset menu)
   'POST /api/ar/pair', // public: a headset starts a pairing with the hash of its secret

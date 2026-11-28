@@ -24,6 +24,10 @@ If your agent can't browse, download `llms-full.txt` and add it to the conversat
 
 Agents that support the Model Context Protocol (MCP), such as Claude, Cursor and others, can connect to Virvi directly and work on your scenes with tools, without writing requests themselves.
 
+**Sign in through the agent (OAuth).** In an agent that connects with OAuth, such as Claude's custom connectors, add `https://api.virvi.io/mcp` as a remote MCP server and choose to connect. Your browser opens virvi.io, where you sign in and choose what the agent can do: **Read only** or **Full access**, and optionally **Only some scenes**. Choose **Allow**, and you're sent back to the agent. The connection lasts 90 days and shows in **Settings → API Keys** as a **Connected app**, with its activity; delete it there to cut the agent off.
+
+**Or use an API key.** For agents that take a header instead:
+
 1. In the dashboard, open **Settings → API Keys** and create a key. Choose **Read only** if the agent should only look, or **Full access** to let it change things. Tick **Only some scenes** and pick them to keep the agent to those scenes: it then can't see or change anything else, including your other scenes, media, events and the Design Studio.
 2. Add a remote MCP server to your agent, with the URL `https://api.virvi.io/mcp` (on a self-hosted install, your server's address followed by `/mcp`) and the header `Authorization: Bearer <your key>`.
 
@@ -48,7 +52,7 @@ The server also offers:
 - **Resources:** each of your scenes as `virvi://scene/<id>`, its current presets, elements and placements, which an agent can attach as context, and `virvi://guide`, a short note on how Virvi's scenes work.
 - **Prompts:** starter workflows your agent may show in its prompt menu: **Set up an event** (create it, link a scene and schedule a preset), **Build a gallery from my media** and **Weekly report for a scene**.
 
-Signing in with your Virvi account through the agent, instead of a key, comes later, along with more tools (events, schedules, uploads, the Design Studio).
+More tools (uploads, the Design Studio's prompts) come later.
 
 ## Prompts that work
 

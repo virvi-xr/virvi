@@ -1203,10 +1203,33 @@ export const apiKeys = pgTable('api_keys', {
   name: text('name').notNull(),
   keyHash: text('key_hash').notNull(), // SHA-256 hash of the key
   keyPrefix: text('key_prefix').notNull(), // first 8 chars for identification (e.g., "virvi_k1")
-  scopes: text('scopes').array(), // ['scenes:read', 'scenes:write', 'media:read', 'media:write']
+  scopes: text('scopes').array(), // ['read'] read-only, 'scene:<id>' limits (LIV-170); null acts as the account
+  /** The connected app this key was issued to through OAuth (LIV-170); null for keys made in Settings. */
+  oauthClientId: text('oauth_client_id'),
   lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
   expiresAt: timestamp('expires_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/** Apps that registered themselves to connect through OAuth (LIV-170, RFC 7591): public clients, PKCE only. */
+export const oauthClients = pgTable('oauth_clients', {
+  id: text('id').primaryKey(), // 'vc_' + random
+  name: text('name').notNull(),
+  redirectUris: text('redirect_uris').array().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/** One-time authorization codes (10 minutes), kept by hash, with what the person allowed. */
+export const oauthCodes = pgTable('oauth_codes', {
+  codeHash: text('code_hash').primaryKey(),
+  clientId: text('client_id').notNull().references(() => oauthClients.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  redirectUri: text('redirect_uri').notNull(),
+  codeChallenge: text('code_challenge').notNull(),
+  access: text('access').notNull(), // 'read' | 'full'
+  sceneIds: text('scene_ids').array().notNull().default(sql`'{}'::text[]`),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }),
 })
 
 /**

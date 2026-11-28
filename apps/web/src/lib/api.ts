@@ -633,6 +633,9 @@ function useRealApi() {
         method: 'POST', body: JSON.stringify({ name, access, ...(sceneIds.length ? { sceneIds } : {}) }),
       }),
     deleteApiKey: (keyId: string) => apiFetch(`/api/keys/${keyId}`, { method: 'DELETE' }),
+    /** LIV-170: approve an AI app's OAuth request; the reply is where to send the browser (the app's redirect with a code). */
+    approveOAuth: (body: { clientId: string; redirectUri: string; codeChallenge: string; codeChallengeMethod: 'S256'; state: string | null; access: 'read' | 'full'; sceneIds?: string[] }) =>
+      apiFetch<{ redirect: string }>('/api/oauth/authorize', { method: 'POST', body: JSON.stringify({ ...body, state: body.state ?? undefined }) }),
     /** LIV-170: the key's recent MCP tool calls, newest first. */
     getApiKeyCalls: (keyId: string) =>
       apiFetch<{ calls: Array<{ tool: string; sceneId: string | null; sceneName: string | null; ok: boolean; error: string | null; at: string }> }>(`/api/keys/${keyId}/calls`),

@@ -610,6 +610,7 @@ const CASES: Case[] = [
 
 // Collected routes with a `:param` (or a body id) that are not another account's resource, each with its reason.
 const NOT_CROSS_ACCOUNT: Record<string, string> = {
+  'GET /api/oauth/clients/:clientId': "public: an OAuth app's name and redirect URIs, owned by no account (LIV-170)",
   'GET /api/upload/:code': 'the upload code is the auth (companion phone upload)',
   'GET /api/upload/:code/qr.png': 'the upload code is the auth (companion phone upload)',
   'POST /api/upload/:code/start': 'the upload code is the auth (companion phone upload)',

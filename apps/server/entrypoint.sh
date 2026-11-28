@@ -163,6 +163,13 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS hyperfy_worlds_slug_uq ON hyperfy_worlds (slug) WHERE purged_at IS NULL\`;
         console.log('[virvi-server] hyperfy worlds ensured');
       } catch(e) { console.log('[virvi-server] hyperfy worlds:', e.message); }
+      // OAuth for MCP clients (LIV-170); matches oauthClients, oauthCodes and apiKeys.oauthClientId in src/db/schema.ts
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS oauth_clients (id TEXT PRIMARY KEY, name TEXT NOT NULL, redirect_uris TEXT[] NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE TABLE IF NOT EXISTS oauth_codes (code_hash TEXT PRIMARY KEY, client_id TEXT NOT NULL CONSTRAINT oauth_codes_client_id_oauth_clients_id_fk REFERENCES oauth_clients(id) ON DELETE CASCADE, user_id UUID NOT NULL CONSTRAINT oauth_codes_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, redirect_uri TEXT NOT NULL, code_challenge TEXT NOT NULL, access TEXT NOT NULL, scene_ids TEXT[] NOT NULL DEFAULT '{}'::text[], expires_at TIMESTAMPTZ NOT NULL, used_at TIMESTAMPTZ)\`;
+        await sql\`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS oauth_client_id TEXT\`;
+        console.log('[virvi-server] oauth tables ensured');
+      } catch(e) { console.log('[virvi-server] oauth tables:', e.message); }
       // MCP call log (LIV-170); matches mcpCalls in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS mcp_calls (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), api_key_id UUID NOT NULL CONSTRAINT mcp_calls_api_key_id_api_keys_id_fk REFERENCES api_keys(id) ON DELETE CASCADE, user_id UUID NOT NULL CONSTRAINT mcp_calls_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, tool TEXT NOT NULL, scene_id UUID, ok BOOLEAN NOT NULL, error TEXT, at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;

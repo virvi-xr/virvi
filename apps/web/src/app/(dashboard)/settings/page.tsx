@@ -681,7 +681,7 @@ export default function SettingsPage() {
             {apiKeys.map(key => (
               <div key={key.id} className="flex flex-wrap items-center justify-between gap-y-3 rounded-lg border border-gray-800 bg-gray-900 p-4">
                 <div className="min-w-0">
-                  <p className="font-medium text-white">{key.name}{key.access === 'read' && <span className="ml-2 rounded bg-gray-800 px-2 py-0.5 text-xs font-normal text-gray-300">Read only</span>}{key.sceneIds?.length > 0 && <span className="ml-2 rounded bg-gray-800 px-2 py-0.5 text-xs font-normal text-gray-300">{key.sceneIds.length === 1 ? '1 scene' : `${key.sceneIds.length} scenes`}</span>}</p>
+                  <p className="font-medium text-white">{key.name}{key.oauthClientId && <span className="ml-2 rounded bg-blue-900/60 px-2 py-0.5 text-xs font-normal text-blue-200">Connected app</span>}{key.access === 'read' && <span className="ml-2 rounded bg-gray-800 px-2 py-0.5 text-xs font-normal text-gray-300">Read only</span>}{key.sceneIds?.length > 0 && <span className="ml-2 rounded bg-gray-800 px-2 py-0.5 text-xs font-normal text-gray-300">{key.sceneIds.length === 1 ? '1 scene' : `${key.sceneIds.length} scenes`}</span>}</p>
                   <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-400">
                     <span className="font-mono">{key.keyPrefix ? `${key.keyPrefix}...` : '---'}</span>
                     <span>Created {key.createdAt ? new Date(key.createdAt).toLocaleDateString() : '---'}</span>

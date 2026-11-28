@@ -69,6 +69,13 @@ export function toolsFor(readOnly: boolean) {
 }
 
 export default async function mcpRoutes(app: FastifyInstance, opts: { version: string }) {
+  // A client with no token learns where to sign in (RFC 9728): the 401 names the protected-resource metadata
+  app.addHook('onSend', async (request, reply, payload) => {
+    if (reply.statusCode === 401 && request.routeOptions.url === '/mcp') {
+      reply.header('www-authenticate', `Bearer resource_metadata="${config.publicUrl.replace(/\/+$/, '')}/.well-known/oauth-protected-resource"`)
+    }
+    return payload
+  })
   const call = (request: FastifyRequest): Call => async (method, url, payload) => {
     const res = await app.inject({
       method, url, remoteAddress: request.ip,
