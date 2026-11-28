@@ -20,6 +20,7 @@ No release so far has needed changes to scene code, so none is marked as breakin
 - **Who sent a message:** `onMessage` callbacks get a second argument, `from`, stamped by the server: the sender's `sessionId`, `userId`, `wallet`, and whether they're a `guest` or `staff`. `onMessage` now returns a remover, and `offMessage(id)` is new. See [Multiplayer Events](/docs/custom-features/multiplayer-events/#who-sent-it).
 - **Custom rendering:** your scene's code can draw an image, video screen, model or sound itself. Set `customRendering` on an element or one placed copy, or pass `createVirvi({ customRendering: true })` for everything. Virvi then calls `onElementCreate`, `onElementUpdate` and `onElementDelete` instead of drawing it. `onStorageChange` reports every change to the scene's elements. See [Custom Rendering](/docs/custom-features/custom-rendering/).
 - **Click rules:** items that a scene rule starts from are clickable in-world, and each click runs the rule for everyone (show or hide items, switch the preset). See [Rules](/docs/custom-features/widgets/#click-rules).
+- **Volume fixed:** sounds and video screens play at the volume set on the dashboard. Before, Decentraland read the dashboard's 0 to 1 volume as a percentage, so they played at about 1%.
 
 ## 2.23.0 — 2026-11-27
 

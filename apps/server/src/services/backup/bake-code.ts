@@ -4,6 +4,7 @@
  * managers in packages/core/src/managers), with the rulings R1–R4 of Scene Import Plan 3.
  * Every string is written with JSON.stringify so names and URLs cannot break out of their literals.
  */
+import { normalizeVolume } from '@virvixr/shared'
 import { FRAMEABLE_TYPES, frameOf, frameParts } from '@virvixr/shared'
 import type { AssetPlan, BackupSnapshot, BakedItem } from './snapshot.js'
 
@@ -70,7 +71,7 @@ function videoPlayer(src: string, volume: number, loop: boolean): string[] {
 
 function bakeVideo(it: BakedItem): Baked {
   const p = it.props
-  const volume = numOr(p.volume, 100) / 100
+  const volume = normalizeVolume(p.volume)
   // R4: a screen live at download time keeps its stream URL (always a link).
   if (p.isLive && p.enableLiveStream && it.assets.liveSrc) {
     return { lines: plane(it, videoPlayer(srcOf(it.assets.liveSrc), volume, true)) }
@@ -109,7 +110,7 @@ function bakeItem(it: BakedItem): Baked | null {
       const audio = it.assets.audio
       if (!audio) return null
       const loop = it.props.sourceType === 1 // clips wait for a trigger, as today (R4)
-      const volume = numOr(it.props.volume, 100) / 100
+      const volume = normalizeVolume(it.props.volume)
       return { lines: [`AudioSource.create(e, { audioClipUrl: ${str(srcOf(audio))}, playing: ${loop}, loop: ${loop}, volume: ${num(volume)} })`] }
     }
     case 'ad_space': {

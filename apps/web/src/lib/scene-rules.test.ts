@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { describeRule, ruleTargets, triggerFor, whenChoices, DATETIME, TOGGLE, TRIGGER } from './scene-rules'
+import { describeRule, ruleTargets, triggerFor, volumeTargets, whenChoices, DATETIME, TOGGLE, TRIGGER } from './scene-rules'
 
 const els = [{ id: 'w', name: 'Stage lights' }, { id: 'r1', name: 'Light rig 1' }, { id: 'r2', name: 'Light rig 2' }]
 const presets = [{ id: 'p', name: 'Show time' }]
@@ -31,5 +31,11 @@ describe('scene rules wording (LIV-196)', () => {
     expect(triggerFor('r1', 'click', 'UTC')).toEqual({ type: 'click', elementId: 'r1' })
     expect(describeRule({ trigger: { type: 'click', elementId: 'r1' }, actions: [{ type: 'toggle', elementId: 'r2' }] }, els, presets))
       .toBe('When someone clicks Light rig 1, show or hide Light rig 2.')
+  })
+
+  it('volume from a slider', () => {
+    expect(describeRule({ trigger: { type: 'widget', widgetId: 'w', when: 'change' }, actions: [{ type: 'volume', elementId: 'r1' }] }, els, presets))
+      .toBe('When Stage lights changes, set the volume of Light rig 1 to the slider.')
+    expect(volumeTargets([{ type: 'sound' }, { type: 'image' }, { type: 'video' }])).toEqual([{ type: 'sound' }, { type: 'video' }])
   })
 })

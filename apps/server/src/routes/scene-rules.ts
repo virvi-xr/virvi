@@ -63,7 +63,13 @@ export default async function sceneRuleRoutes(app: FastifyInstance) {
   app.patch<{ Params: { ruleId: string }; Body: Record<string, unknown> }>('/api/rules/:ruleId', async (request, reply) => {
     const r = await ruleFor(request.params.ruleId, request)
     if ('status' in r) return reply.status(r.status!).send({ error: r.error })
-    const clean = await checkRule(r.preset.id, r.preset.sceneId, request.body ?? {}, true)
+    // A new trigger or actions are checked with the rest of the rule, as it will be, so they always fit together.
+    // Only renaming or switching it on or off is checked alone, so a rule whose item was deleted can still be switched off.
+    const body = request.body ?? {}
+    const onlyLabels = Object.keys(body).every((k) => k === 'name' || k === 'enabled')
+    const clean = onlyLabels
+      ? await checkRule(r.preset.id, r.preset.sceneId, body, true)
+      : await checkRule(r.preset.id, r.preset.sceneId, { name: r.rule.name, enabled: r.rule.enabled, trigger: r.rule.trigger, actions: r.rule.actions, ...body })
     if ('error' in clean) return reply.status(400).send(clean)
     const [rule] = await db.update(sceneRules).set({ ...clean, updatedAt: new Date() }).where(eq(sceneRules.id, r.rule.id)).returning()
     await recordSceneActivity(r.preset.sceneId, requestActor(request.user), 'rule.updated', { type: 'rule', id: rule.id, name: rule.name || null })

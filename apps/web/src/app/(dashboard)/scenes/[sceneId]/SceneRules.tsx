@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
-import { ACTIONS_PER_RULE, CLICKABLE, ITEM_WHEN, describeRule, localTimeZone, ruleTargets, timeZones, triggerFor, whenChoices, type DraftWhen, type RuleAction, type SceneRule } from '@/lib/scene-rules'
+import { ACTIONS_PER_RULE, CLICKABLE, ITEM_WHEN, SLIDER, describeRule, volumeTargets, localTimeZone, ruleTargets, timeZones, triggerFor, whenChoices, type DraftWhen, type RuleAction, type SceneRule } from '@/lib/scene-rules'
 
 interface El { id: string; name: string; type: string; properties?: any }
 interface Preset { id: string; name: string }
@@ -21,6 +21,7 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
   const widgets = elements.filter((e) => e.type === 'widget' && Number(e.properties?.controlType ?? 0) !== 0)
   const clickables = elements.filter((e) => CLICKABLE.has(e.type))
   const targets = ruleTargets(elements)
+  const loud = volumeTargets(elements)
   const isItem = (id: string) => clickables.some((c) => c.id === id)
   const choicesFor = (id: string) => (isItem(id) ? ITEM_WHEN : whenChoices(widgetType(id)))
 
@@ -49,6 +50,8 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
     setBusy(true)
     try { await fn(); await load() } catch (e: any) { setError(e?.message ?? 'Could not save') } finally { setBusy(false) }
   }
+  // A volume action takes the slider's value: only offered for a Slider's change
+  const fromSlider = !!draft && !isItem(draft.widgetId) && widgetType(draft.widgetId) === SLIDER
   const setAction = (i: number, a: RuleAction) => setDraft((d) => d && { ...d, actions: d.actions.map((x, j) => (j === i ? a : x)) })
 
   return (
@@ -70,7 +73,12 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
           <div className="flex flex-wrap items-center gap-2 text-sm text-gray-300">
             <span>When</span>
             <select aria-label="Widget or item" className={SELECT} value={draft.widgetId}
-              onChange={(e) => setDraft({ ...draft, widgetId: e.target.value, when: choicesFor(e.target.value)[0].value })}>
+              onChange={(e) => {
+                const id = e.target.value
+                const slider = !isItem(id) && widgetType(id) === SLIDER
+                const actions = slider ? draft.actions : draft.actions.map((a) => (a.type === 'volume' ? { type: 'show' as const, elementId: targets[0]?.id ?? a.elementId } : a))
+                setDraft({ ...draft, widgetId: id, when: choicesFor(id)[0].value, actions })
+              }}>
               {widgets.length > 0 && <optgroup label="Widgets">{widgets.map((w) => <option key={w.id} value={w.id}>{w.name || 'Widget'}</option>)}</optgroup>}
               {clickables.length > 0 && <optgroup label="Items to click">{clickables.map((c) => <option key={c.id} value={c.id}>{c.name || c.type}</option>)}</optgroup>}
             </select>
@@ -88,12 +96,16 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
               <span>{i === 0 ? 'Do' : 'Then'}</span>
               <select aria-label={`Action ${i + 1}`} className={SELECT} value={a.type} onChange={(e) => {
                 const type = e.target.value as RuleAction['type']
-                setAction(i, type === 'preset' ? { type, presetId: presets[0]?.id ?? '' } : { type, elementId: 'elementId' in a ? a.elementId : targets[0]?.id ?? '' })
+                if (type === 'preset') return setAction(i, { type, presetId: presets[0]?.id ?? '' })
+                const pool = type === 'volume' ? loud : targets
+                const keep = 'elementId' in a && pool.some((t) => t.id === a.elementId) ? a.elementId : pool[0]?.id ?? ''
+                setAction(i, { type, elementId: keep })
               }}>
                 <option value="show" disabled={!targets.length}>Show</option>
                 <option value="hide" disabled={!targets.length}>Hide</option>
                 <option value="toggle" disabled={!targets.length}>Show or hide (switch)</option>
                 <option value="preset">Switch to the preset</option>
+                {fromSlider && <option value="volume" disabled={!loud.length}>Set the volume from the slider</option>}
               </select>
               {a.type === 'preset' ? (
                 <select aria-label={`Preset for action ${i + 1}`} className={SELECT} value={a.presetId} onChange={(e) => setAction(i, { type: 'preset', presetId: e.target.value })}>
@@ -101,7 +113,7 @@ export function SceneRules({ presetId, elements, presets }: { presetId: string; 
                 </select>
               ) : (
                 <select aria-label={`Item for action ${i + 1}`} className={SELECT} value={a.elementId} onChange={(e) => setAction(i, { type: a.type, elementId: e.target.value })}>
-                  {targets.map((t) => <option key={t.id} value={t.id}>{t.name || t.type}</option>)}
+                  {(a.type === 'volume' ? loud : targets).map((t) => <option key={t.id} value={t.id}>{t.name || t.type}</option>)}
                 </select>
               )}
               {draft.actions.length > 1 && (

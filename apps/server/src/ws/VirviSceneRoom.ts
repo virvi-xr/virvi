@@ -485,7 +485,7 @@ export class VirviSceneRoom extends Room {
           sceneId: this.sceneId, presetId, elementId, actor,
           elementChanged: async (e, name, rule) => {
             await elementChanged(e)
-            noteSceneActivity(e.sceneId, actor, 'element.updated', { type: e.elementType, id: e.elementId, name }, { changed: ['enabled'], rule })
+            noteSceneActivity(e.sceneId, actor, 'element.updated', { type: e.elementType, id: e.elementId, name }, { rule })
           },
         })
       } catch (err) {

@@ -27,6 +27,8 @@ export type RuleTrigger =
 export type RuleAction =
   | { type: 'show' | 'hide' | 'toggle'; elementId: string }
   | { type: 'preset'; presetId: string }
+  /** A sound's or screen's volume follows the Slider that set the rule off (0 to 100 → 0 to 1). */
+  | { type: 'volume'; elementId: string }
 export interface RuleInput { name?: unknown; enabled?: unknown; trigger?: unknown; actions?: unknown }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -36,6 +38,9 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stri
 const WIDGET_TOGGLE = 1
 const WIDGET_DATETIME = 4
 const WIDGET_TRIGGER = 5
+const WIDGET_SLIDER = 6
+/** What a volume action can set. */
+const HAS_VOLUME = new Set(['sound', 'video'])
 /** A timed rule whose time passed longer ago than this (the server was down, or the time was set in the past) is skipped. */
 export const TIMED_GRACE_MS = 10 * 60_000
 /** What a visitor can click in-world (the types whose copies take click actions). */
@@ -106,15 +111,27 @@ export async function checkRule(presetId: string, sceneId: string, input: RuleIn
         const el = byId.get(a.elementId)
         if (!el || el.type === 'widget') return bad('bad_actions', 'Show and hide work on items of this preset')
         actions.push({ type: a.type, elementId: a.elementId })
+      } else if (a && a.type === 'volume' && typeof a.elementId === 'string') {
+        const el = byId.get(a.elementId)
+        if (!el || !HAS_VOLUME.has(el.type)) return bad('bad_actions', 'Volume works on sounds and video screens of this preset')
+        actions.push({ type: 'volume', elementId: a.elementId })
       } else if (a && a.type === 'preset' && typeof a.presetId === 'string' && UUID.test(a.presetId)) {
         const p = await db.query.scenePresets.findFirst({ where: and(eq(scenePresets.id, a.presetId), eq(scenePresets.sceneId, sceneId)), columns: { id: true } })
         if (!p) return bad('bad_actions', "Switching presets works with this scene's presets")
         actions.push({ type: 'preset', presetId: a.presetId })
       } else {
-        return bad('bad_actions', "An action is { type: 'show' | 'hide' | 'toggle', elementId } or { type: 'preset', presetId }")
+        return bad('bad_actions', "An action is { type: 'show' | 'hide' | 'toggle' | 'volume', elementId } or { type: 'preset', presetId }")
       }
     }
     out.actions = actions
+  }
+  // A volume action takes its value from a Slider: only a Slider's change can set it off
+  if (out.actions?.some((a) => a.type === 'volume')) {
+    const t = out.trigger
+    const w = t && t.type === 'widget' ? byId.get(t.widgetId) : undefined
+    if (!w || Number((w.properties as Record<string, unknown> | null)?.controlType ?? 0) !== WIDGET_SLIDER) {
+      return bad('bad_actions', 'Volume follows a Slider: start the rule from a Slider changing')
+    }
   }
   return out
 }
@@ -154,23 +171,35 @@ export async function runWidgetRules(opts: {
     const t = rule.trigger as RuleTrigger
     if (t?.type !== 'widget' || t.widgetId !== opts.widget.id || !triggerFires(t.when, controlType, opts.prev, opts.next)) continue
     ran++
-    await runActions(opts.sceneId, opts.presetId, rule, opts.elementChanged, opts.actor)
+    await runActions(opts.sceneId, opts.presetId, rule, opts.elementChanged, opts.actor, opts.next)
   }
   return ran
 }
 
-/** A rule's actions, in order; one failing doesn't stop the rest. */
-async function runActions(sceneId: string, presetId: string, rule: typeof sceneRules.$inferSelect, elementChanged: ElementChangedHook, actor: ActivityActor): Promise<void> {
+/** A rule's actions, in order; one failing doesn't stop the rest. `value`: the widget's new value, for volume. */
+async function runActions(sceneId: string, presetId: string, rule: typeof sceneRules.$inferSelect, elementChanged: ElementChangedHook, actor: ActivityActor, value?: unknown): Promise<void> {
   for (const a of (rule.actions as RuleAction[]) ?? []) {
     try {
-      await runAction(sceneId, presetId, a, rule.name, elementChanged, actor)
+      await runAction(sceneId, presetId, a, rule.name, elementChanged, actor, value)
     } catch (err) {
       console.error(`[rules] rule ${rule.id} action failed:`, err)
     }
   }
 }
 
-async function runAction(sceneId: string, presetId: string, a: RuleAction, ruleName: string, elementChanged: ElementChangedHook, actor: ActivityActor): Promise<void> {
+async function runAction(sceneId: string, presetId: string, a: RuleAction, ruleName: string, elementChanged: ElementChangedHook, actor: ActivityActor, value?: unknown): Promise<void> {
+  if (a.type === 'volume') {
+    const n = Number(value)
+    if (!Number.isFinite(n)) return
+    const el = await db.query.sceneElements.findFirst({ where: and(eq(sceneElements.id, a.elementId), eq(sceneElements.presetId, presetId)) })
+    if (!el || !HAS_VOLUME.has(el.type)) return
+    const volume = Math.round(Math.min(100, Math.max(0, n))) / 100
+    const props = (el.properties as Record<string, unknown> | null) ?? {}
+    if (props.volume === volume) return
+    await db.update(sceneElements).set({ properties: { ...props, volume }, updatedAt: new Date() }).where(eq(sceneElements.id, el.id))
+    await elementChanged({ sceneId, presetId, elementId: el.id, elementType: el.type, deleted: false }, el.name, ruleName)
+    return
+  }
   if (a.type === 'preset') {
     const p = await db.query.scenePresets.findFirst({ where: and(eq(scenePresets.id, a.presetId), eq(scenePresets.sceneId, sceneId)), columns: { id: true, name: true } })
     if (!p) return
@@ -195,6 +224,7 @@ export async function copyRules(tx: { select: typeof db.select; insert: typeof d
   const rules = await tx.select().from(sceneRules).where(eq(sceneRules.presetId, fromPresetId))
   if (!rules.length) return
   const map = (id: string) => elementIds.get(id) ?? id
+  // Every action but a preset switch points at an element
   await tx.insert(sceneRules).values(rules.map((r) => ({
     presetId: toPresetId,
     name: r.name,

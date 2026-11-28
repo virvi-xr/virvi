@@ -783,7 +783,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
         if (JSON.stringify(prev ?? null) !== JSON.stringify(next ?? null)) {
           await runWidgetRules({
             sceneId: element.preset.sceneId, presetId: element.presetId, widget: updated, prev, next, actor: requestActor(request.user),
-            elementChanged: (e, name, rule) => elementChanged(e, { user: request.user, action: 'element.updated', name, detail: { changed: ['enabled'], rule } }),
+            elementChanged: (e, name, rule) => elementChanged(e, { user: request.user, action: 'element.updated', name, detail: { rule } }),
           })
         }
       }

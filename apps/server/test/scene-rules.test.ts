@@ -217,3 +217,45 @@ describe('click rules', () => {
     expect(out.images).toEqual([{ sk: a.id, clickEvent: { type: 1, externalLink: 'https://x', ruleElement: a.id } }, { sk: b.id }])
   })
 })
+
+describe('slider volume rules', () => {
+  let app: Awaited<ReturnType<typeof testApp>>
+  beforeEach(async () => { await resetDb(); app = await testApp() })
+  afterEach(async () => { await app.close() })
+
+  it('a slider sets a sound’s and a screen’s volume; only from a Slider', async () => {
+    const owner = await createUser()
+    const { preset } = await createScene(owner)
+    const knob = await createElement(preset.id, { type: 'widget', name: 'Volume', properties: { controlType: 6, value: 50 } })
+    const lights = await createElement(preset.id, { type: 'widget', name: 'Lights', properties: { controlType: 1, value: false } })
+    const music = await createElement(preset.id, { type: 'sound', name: 'Music', properties: { audioSrc: 'https://x/m.mp3', volume: 1 } })
+    const screen = await createElement(preset.id, { type: 'video', name: 'Screen' })
+    const pic = await createElement(preset.id, { type: 'image', name: 'Pic' })
+    const post = (body: unknown) => app.inject({ method: 'POST', url: `/api/presets/${preset.id}/rules`, headers: as(owner), payload: body as any })
+    expect((await post({ trigger: { type: 'widget', widgetId: lights.id, when: 'change' }, actions: [{ type: 'volume', elementId: music.id }] })).json().error).toBe('bad_actions')
+    expect((await post({ trigger: { type: 'widget', widgetId: knob.id, when: 'change' }, actions: [{ type: 'volume', elementId: pic.id }] })).json().error).toBe('bad_actions')
+    const made = await post({ trigger: { type: 'widget', widgetId: knob.id, when: 'change' }, actions: [{ type: 'volume', elementId: music.id }, { type: 'volume', elementId: screen.id }] })
+    expect(made.statusCode).toBe(201)
+    await app.inject({ method: 'PUT', url: `/api/elements/${knob.id}`, headers: as(owner), payload: { properties: { controlType: 6, value: 30 } } })
+    const vol = async (id: string) => ((await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, id) }))!.properties as any).volume
+    expect(await vol(music.id)).toBe(0.3)
+    expect(await vol(screen.id)).toBe(0.3)
+    // Its other properties stay
+    expect(((await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, music.id) }))!.properties as any).audioSrc).toBe('https://x/m.mp3')
+    // Changing the trigger to a Toggle is refused while it has a volume action
+    const ruleId = made.json().rule.id
+    expect((await app.inject({ method: 'PATCH', url: `/api/rules/${ruleId}`, headers: as(owner), payload: { trigger: { type: 'widget', widgetId: lights.id, when: 'on' } } })).json().error).toBe('bad_actions')
+  })
+
+  it("a rule whose item was deleted can still be switched off and renamed", async () => {
+    const owner = await createUser()
+    const { preset } = await createScene(owner)
+    const lights = await createElement(preset.id, { type: 'widget', name: 'Lights', properties: { controlType: 1, value: false } })
+    const rig = await createElement(preset.id, { type: 'image', name: 'Rig' })
+    const { rule } = (await app.inject({ method: 'POST', url: `/api/presets/${preset.id}/rules`, headers: as(owner), payload: { trigger: { type: 'widget', widgetId: lights.id, when: 'on' }, actions: [{ type: 'show', elementId: rig.id }] } })).json()
+    await db.delete(sceneElements).where(eq(sceneElements.id, rig.id))
+    const res = await app.inject({ method: 'PATCH', url: `/api/rules/${rule.id}`, headers: as(owner), payload: { enabled: false, name: 'Old' } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().rule).toMatchObject({ enabled: false, name: 'Old' })
+  })
+})

@@ -5,12 +5,13 @@ export type RuleWhen = 'on' | 'off' | 'press' | 'change'
 export type RuleTrigger = { type: 'widget'; widgetId: string; when: RuleWhen } | { type: 'time'; widgetId: string; timezone: string } | { type: 'click'; elementId: string }
 /** What the form picks: a widget trigger, or 'time' for a Date and time widget's value arriving. */
 export type DraftWhen = RuleWhen | 'time' | 'click'
-export type RuleAction = { type: 'show' | 'hide' | 'toggle'; elementId: string } | { type: 'preset'; presetId: string }
+export type RuleAction = { type: 'show' | 'hide' | 'toggle' | 'volume'; elementId: string } | { type: 'preset'; presetId: string }
 export interface SceneRule { id: string; presetId: string; name: string; enabled: boolean; trigger: RuleTrigger; actions: RuleAction[] }
 
 export const TOGGLE = 1
 export const DATETIME = 4
 export const TRIGGER = 5
+export const SLIDER = 6
 export const ACTIONS_PER_RULE = 10
 
 /** What a widget of this control type can set off. */
@@ -38,6 +39,7 @@ export function describeRule(rule: Pick<SceneRule, 'trigger' | 'actions'>, eleme
   const t = rule.trigger
   const steps = rule.actions.map((a) => {
     if (a.type === 'preset') return `switch to the preset ${pr(a.presetId)}`
+    if (a.type === 'volume') return `set the volume of ${el(a.elementId)} to the slider`
     // A toggle action flips it: hidden items appear, shown ones go
     const verb = a.type === 'show' ? 'show' : a.type === 'hide' ? 'hide' : 'show or hide'
     return `${verb} ${el(a.elementId)}`
@@ -71,3 +73,6 @@ export function timeZones(): string[] {
   } catch { /* older browsers */ }
   return ['UTC', 'Europe/London', 'Europe/Paris', 'America/New_York', 'America/Chicago', 'America/Los_Angeles', 'Asia/Tokyo', 'Australia/Sydney']
 }
+
+/** What a volume action can set: sounds and video screens. */
+export const volumeTargets = <T extends { type: string }>(elements: T[]): T[] => elements.filter((e) => e.type === 'sound' || e.type === 'video')

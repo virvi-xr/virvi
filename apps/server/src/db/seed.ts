@@ -88,7 +88,7 @@ async function seed() {
         offImageSrc: 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=Stream+Offline',
         offType: 1,
         playlist: [],
-        volume: 80,
+        volume: 0.8,
         emission: 0.6,
       },
     })

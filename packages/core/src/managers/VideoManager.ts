@@ -1,3 +1,4 @@
+import { normalizeVolume } from '@virvixr/shared'
 import { needsResync, screenStateAt, showingSign, type ScreenState, type ShowingInstance } from '@virvixr/shared'
 import { AD_LIMITS, VideoSourceType, frameOf } from '@virvixr/shared'
 import type { VirviPlatformAdapter, VirviStorage, EntityHandle, TransformData, FrameSettings } from '@virvixr/shared'
@@ -254,7 +255,7 @@ export class VideoManager {
       offImageSrc: data.offImageSrc,
       offType: data.offType ?? 0,
       playlist: data.playlist || [],
-      volume: (data.volume ?? 100) / 100, // Convert 0-100 to 0-1
+      volume: normalizeVolume(data.volume), // 0 to 1, as the dashboard stores it
       playlistIndex: 0,
       emission: data.emission ?? 0.6,
       clickEvent: data.clickEvent,
@@ -499,7 +500,7 @@ export class VideoManager {
     if (elementData.offImageSrc !== undefined) config.offImageSrc = elementData.offImageSrc
     if (elementData.offType !== undefined) config.offType = elementData.offType
     if (elementData.playlist !== undefined) config.playlist = elementData.playlist
-    if (elementData.volume !== undefined) config.volume = elementData.volume / 100
+    if (elementData.volume !== undefined) config.volume = normalizeVolume(elementData.volume)
     if (elementData.emission !== undefined) config.emission = elementData.emission
     if (elementData.clickEvent !== undefined) config.clickEvent = elementData.clickEvent
     if (elementData.enabled !== undefined) config.enabled = elementData.enabled

@@ -6,7 +6,7 @@ import { sweepTimedRules, TIMED_SWEEP_MS, type ElementChangedHook } from './rule
 /** A timed rule's change goes out like any edit, and the activity says Virvi did it, through the rule. */
 export const timedRuleChanged: ElementChangedHook = async (e, name, rule) => {
   await elementChanged(e)
-  await recordSceneActivity(e.sceneId, { userId: null, wallet: null, via: 'rule' }, 'element.updated', { type: e.elementType, id: e.elementId, name }, { changed: ['enabled'], rule })
+  await recordSceneActivity(e.sceneId, { userId: null, wallet: null, via: 'rule' }, 'element.updated', { type: e.elementType, id: e.elementId, name }, { rule })
 }
 
 /** Timed scene rules (LIV-196): checked every 20 s, one server at a time. Returns a stop function. */

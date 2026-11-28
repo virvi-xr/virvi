@@ -1,3 +1,4 @@
+import { normalizeVolume } from '@virvixr/shared'
 import type { VirviPlatformAdapter, VirviStorage, EntityHandle, TransformData } from '@virvixr/shared'
 import { listTransformable, previewOn, restoreOn } from './transform-ops.js'
 import type { ListedInstance } from './transform-ops.js'
@@ -55,7 +56,7 @@ export class SoundManager {
       enabled: data.enabled ?? true,
       customId: data.customId,
       audioSrc: data.audioSrc,
-      volume: (data.volume ?? 100) / 100, // Convert 0-100 to 0-1
+      volume: normalizeVolume(data.volume), // 0 to 1, as the dashboard stores it
       sourceType: data.sourceType ?? 0,
     }
     this.configs.set(config.sk, config)
